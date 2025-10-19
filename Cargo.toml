@@ -1,0 +1,21 @@
+[package]
+name = "fast-dav-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Fast CalDAV client with hyper + rustls, HTTP/2, compression, batching, and streaming XML parsing."
+license = "GPL-3"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+bytes = "1"
+futures = "0.3"
+futures-util = "0.3"
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-rustls = { version = "0.27", features = ["http2", "webpki-roots"] }
+quick-xml = { version = "0.38.3", features = ["async-tokio"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio-util = "0.7"
+async-compression = { version = "0.4", features = ["tokio", "brotli", "gzip", "zstd"] }
+hyper-util = { version = "0.1", features = ["client", "http1", "http2", "tokio"] }
+http-body-util = "0.1"
