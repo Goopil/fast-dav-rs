@@ -41,32 +41,33 @@ If you prefer to manage the test environment manually:
    cargo test --test e2e_tests
    ```
 
-## Test Coverage
+## Test Organization
 
-The E2E tests verify the following CalDAV operations:
+The E2E tests are organized into functional domains:
 
-### Basic Operations
-- Connectivity testing with GET requests
-- PROPFIND operations on various WebDAV resources
-- Compression support (gzip, Brotli, zstd)
-- Response handling for compressed content
+### Core Functionality (`core/`)
+- Basic connectivity and HTTP methods
 
-### Calendar Management
-- Creating calendars with MKCALENDAR
-- Listing and discovering calendars
-- Updating calendar properties with PROPPATCH
-- Deleting calendars
-
-### Event Management
-- Creating calendar events with PUT
-- Retrieving events with GET
-- Updating events with conditional PUT (If-Match)
-- Deleting events with DELETE
-
-### Resource Operations
-- Copying resources with COPY
-- Moving resources with MOVE
+### Discovery Operations (`discovery/`)
 - Principal and calendar discovery
+- Resource enumeration
+
+### Calendar Operations (`operations/`)
+- Calendar creation and management
+- Property updates
+
+### Event Operations (`operations/`)
+- Event CRUD operations
+- Conditional updates with ETags
+
+### Resource Operations (`operations/`)
+- COPY and MOVE operations
+
+### Compression Support (`compression/`)
+- Request/response compression
+- All supported algorithms
+
+See `tests/caldav/README.md` for detailed test organization.
 
 ## Resetting the Test Environment
 

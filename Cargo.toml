@@ -24,15 +24,8 @@ chrono = { version = "0.4", features = ["serde"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
 
 [[test]]
 name = "e2e_tests"
-path = "tests/caldav/e2e_tests.rs"
-
-[[bin]]
-name = "debug_test"
-path = "debug_test.rs"
-
-[[bin]]
-name = "validation_test"
-path = "validation_test.rs"
+path = "tests/caldav/mod.rs"

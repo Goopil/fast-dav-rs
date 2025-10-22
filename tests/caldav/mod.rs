@@ -1,1 +1,4 @@
-mod e2e_tests;
+mod core;
+mod discovery;
+mod operations;
+mod compression;
