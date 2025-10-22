@@ -47,6 +47,7 @@ $server->addPlugin(new Sabre\DAVACL\Plugin());
 $server->addPlugin(new Sabre\CalDAV\Plugin());
 $server->addPlugin(new Sabre\CalDAV\ICSExportPlugin());
 $server->addPlugin(new Sabre\DAV\Browser\Plugin());
+$server->addPlugin(new Sabre\DAV\Sync\Plugin());
 
 // Start server
 $server->exec();

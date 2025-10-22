@@ -33,6 +33,26 @@ This directory contains a comprehensive test suite for the fast-dav-rs CalDAV cl
 - **Response Handling** - Decompression capabilities
 - Located in: `compression/compression_tests.rs`
 
+### 🌊 Streaming Operations
+- **Streamed PROPFIND** - Memory-efficient large responses
+- **Streamed REPORT** - Streaming WebDAV reports
+- **Parser Tests** - Streaming XML parsing capabilities
+- Located in: `streaming/streaming_tests.rs`
+
+### ⚡ Parallel Operations
+- **Batch PROPFIND** - Concurrent property queries
+- **Batch REPORT** - Parallel WebDAV reports
+- **Manual Parallelism** - Custom concurrent operations
+- Located in: `parallel/parallel_tests.rs`
+
+### 🔁 Sync Operations
+- **WebDAV Sync Support** - Server capability detection
+- **Initial Sync** - Baseline synchronization
+- **Incremental Sync** - Delta updates
+- **Sync Best Practices** - Production-ready patterns
+- **Parallel Sync** - Multi-calendar optimization
+- Located in: `sync/sync_tests.rs`
+
 ## Running Tests
 
 ### Prerequisites
@@ -63,6 +83,15 @@ cargo test --test e2e_tests operations::resource_tests
 
 # Compression tests
 cargo test --test e2e_tests compression
+
+# Streaming tests
+cargo test --test e2e_tests streaming
+
+# Parallel tests
+cargo test --test e2e_tests parallel
+
+# Sync tests
+cargo test --test e2e_tests sync
 ```
 
 ## Test Coverage
@@ -78,6 +107,11 @@ The test suite validates:
 - ✅ Proper error handling
 - ✅ ETag support
 - ✅ WebDAV Sync capabilities
+- ✅ Streaming response handling
+- ✅ Parallel/batch operations
+- ✅ Memory-efficient processing
+- ✅ Incremental synchronization
+- ✅ Production best practices
 
 ## Continuous Integration
 

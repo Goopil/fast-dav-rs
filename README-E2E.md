@@ -67,7 +67,48 @@ The E2E tests are organized into functional domains:
 - Request/response compression
 - All supported algorithms
 
+### Streaming Operations (`streaming/`)
+- Streamed PROPFIND and REPORT operations
+- Memory-efficient response handling
+
+### Parallel Operations (`parallel/`)
+- Batch PROPFIND and REPORT operations
+- Concurrent request handling
+
 See `tests/caldav/README.md` for detailed test organization.
+
+## Test Coverage
+
+The E2E tests verify the following CalDAV operations:
+
+### Basic Operations
+- Connectivity testing with GET, OPTIONS, HEAD requests
+- PROPFIND operations on various WebDAV resources
+- Compression support (gzip, Brotli, zstd)
+- Response handling for compressed content
+
+### Calendar Management
+- Creating calendars with MKCALENDAR
+- Listing and discovering calendars
+- Updating calendar properties with PROPPATCH
+- Deleting calendars
+
+### Event Management
+- Creating calendar events with PUT
+- Retrieving events with GET
+- Updating events with conditional PUT (If-Match)
+- Deleting events with DELETE
+
+### Resource Operations
+- Copying resources with COPY
+- Moving resources with MOVE
+- Principal and calendar discovery
+
+### Advanced Features
+- Streaming response handling for large collections
+- Parallel/batch operations for efficient processing
+- Memory-efficient XML parsing
+- Concurrent request execution
 
 ## Resetting the Test Environment
 
