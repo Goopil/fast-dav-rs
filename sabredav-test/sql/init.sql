@@ -28,6 +28,25 @@ CREATE TABLE IF NOT EXISTS `groupmembers` (
   UNIQUE(principal_id, member_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `calendarinstances` (
+  id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
+  calendarid INTEGER UNSIGNED NOT NULL,
+  principaluri VARCHAR(255),
+  access TINYINT(1) NOT NULL DEFAULT '1',
+  displayname VARCHAR(100),
+  uri VARCHAR(255),
+  description TEXT,
+  calendarorder INTEGER UNSIGNED NOT NULL DEFAULT '0',
+  calendarcolor VARCHAR(10),
+  timezone TEXT,
+  transparent TINYINT(1) NOT NULL DEFAULT '0',
+  share_href VARCHAR(255),
+  share_displayname VARCHAR(100),
+  share_invitestatus TINYINT(1) NOT NULL DEFAULT '2',
+  UNIQUE(principaluri, uri),
+  UNIQUE(calendarid, principaluri)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `calendarobjects` (
   id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
   calendardata MEDIUMBLOB,
@@ -45,17 +64,8 @@ CREATE TABLE IF NOT EXISTS `calendarobjects` (
 
 CREATE TABLE IF NOT EXISTS `calendars` (
   id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
-  principaluri VARCHAR(255),
-  displayname VARCHAR(100),
-  uri VARCHAR(255),
   synctoken INTEGER UNSIGNED NOT NULL DEFAULT '1',
-  description TEXT,
-  calendarorder INTEGER UNSIGNED NOT NULL DEFAULT '0',
-  calendarcolor VARCHAR(10),
-  timezone TEXT,
-  components VARCHAR(50),
-  transparent TINYINT(1) NOT NULL DEFAULT '0',
-  UNIQUE(principaluri, uri)
+  components VARCHAR(50)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `calendarchanges` (
@@ -68,6 +78,31 @@ CREATE TABLE IF NOT EXISTS `calendarchanges` (
   INDEX calendarid_synctoken (calendarid, synctoken)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `calendarsubscriptions` (
+  id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
+  uri VARCHAR(255),
+  principaluri VARCHAR(255),
+  source TEXT,
+  displayname VARCHAR(100),
+  refreshrate VARCHAR(10),
+  calendarorder INTEGER UNSIGNED NOT NULL DEFAULT '0',
+  calendarcolor VARCHAR(10),
+  striptodos TINYINT(1) NULL,
+  stripalarms TINYINT(1) NULL,
+  stripattachments TINYINT(1) NULL,
+  lastmodified INT(11)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `schedulingobjects` (
+  id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
+  principaluri VARCHAR(255),
+  calendardata MEDIUMBLOB,
+  uri VARCHAR(255),
+  lastmodified INT(11),
+  etag VARCHAR(32),
+  size INT(11) UNSIGNED NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Insert test user (username: test, password: test - plain text for development)
 INSERT INTO `users` (`username`, `digesta1`) VALUES
 ('test', 'test');
@@ -77,5 +112,8 @@ INSERT INTO `principals` (`uri`, `email`, `displayname`) VALUES
 ('principals/test', 'test@example.com', 'Test User');
 
 -- Create a default calendar for the test user
-INSERT INTO `calendars` (`principaluri`, `displayname`, `uri`, `description`, `components`) VALUES
-('principals/test', 'Default Calendar', 'default', 'Default calendar', 'VEVENT,VTODO');
+INSERT INTO `calendars` (`components`) VALUES
+('VEVENT,VTODO');
+
+INSERT INTO `calendarinstances` (`calendarid`, `principaluri`, `displayname`, `uri`, `description`) VALUES
+(1, 'principals/test', 'Default Calendar', 'default', 'Default calendar');

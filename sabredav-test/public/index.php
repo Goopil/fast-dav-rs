@@ -36,6 +36,7 @@ class BasicPdoAuthBackend extends Sabre\DAV\Auth\Backend\AbstractBasic {
         $stmt = $this->pdo->prepare('SELECT username, digesta1 FROM users WHERE username = ?');
         $stmt->execute([$username]);
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        // For development, we're storing plain text passwords
         return $result && $result['digesta1'] === $password;
     }
 }
