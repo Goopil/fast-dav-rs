@@ -1,7 +1,7 @@
-mod core;
-mod discovery;
-mod operations;
-mod compression;
-mod streaming;
-mod parallel;
-mod sync;
+pub mod core;
+pub mod discovery;
+pub mod operations;
+pub mod compression;
+pub mod streaming;
+pub mod parallel;
+pub mod sync;

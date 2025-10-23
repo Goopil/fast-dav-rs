@@ -1,1 +1,1 @@
-mod streaming_tests;
+pub mod streaming_tests;

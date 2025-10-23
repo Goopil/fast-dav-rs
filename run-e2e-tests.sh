@@ -11,6 +11,6 @@ echo "Waiting for services to be ready..."
 sleep 5
 
 echo "Running E2E tests..."
-cargo test --manifest-path Cargo.toml --test '*' || true
+cargo test --manifest-path Cargo.toml --test e2e_tests
 
 echo "Test run completed!"

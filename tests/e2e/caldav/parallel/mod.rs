@@ -1,1 +1,1 @@
-mod parallel_tests;
+pub mod parallel_tests;

@@ -1,1 +1,1 @@
-mod connectivity_tests;
+pub mod connectivity_tests;

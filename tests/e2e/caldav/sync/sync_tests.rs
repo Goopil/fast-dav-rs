@@ -1,7 +1,6 @@
 use fast_dav_rs::CalDavClient;
 use bytes::Bytes;
 use std::time::Duration;
-use tokio::time::sleep;
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
 const TEST_USER: &str = "test";

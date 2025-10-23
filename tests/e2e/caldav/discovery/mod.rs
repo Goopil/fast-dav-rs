@@ -1,1 +1,1 @@
-mod discovery_tests;
+pub mod discovery_tests;
