@@ -53,6 +53,36 @@ This directory contains a comprehensive test suite for the fast-dav-rs CalDAV cl
 - **Parallel Sync** - Multi-calendar optimization
 - Located in: `sync/sync_tests.rs`
 
+### 🛡️ Resilience Tests
+- **Network Disconnect/Reconnect** - Connection recovery scenarios
+- **High Concurrency Load** - Stress testing with many parallel requests
+- **Large Payload Handling** - Processing large calendar events
+- **Batch Operations** - Testing calendar-multiget and other batch operations
+- Located in: `resilience/resilience_tests.rs`
+
+### 🔄 Compatibility Tests
+- **Different Depth Levels** - Testing PROPFIND with various depth settings
+- **XML Namespace Variations** - Handling different namespace declarations
+- **Special Characters** - Names with international characters
+- **Date Format Support** - Various timestamp formats
+- **ETag Handling** - Cross-server ETag compatibility
+- Located in: `compatibility/compatibility_tests.rs`
+
+### 🔐 Security Tests
+- **Invalid Credential Handling** - Authentication failure scenarios
+- **Path Traversal Prevention** - Rejecting malicious path attempts
+- **Malformed Request Handling** - Graceful error handling
+- **Unauthorized Access Attempts** - Permission validation
+- Located in: `security/security_tests.rs`
+
+### 📝 Parsing Tests
+- **Special Characters in Properties** - Accented characters, symbols
+- **Multiline Properties** - Descriptions spanning multiple lines
+- **Edge Case Timezones** - Complex timezone definitions
+- **Recurring Events** - RRULE and recurrence handling
+- **Events with Attachments** - Attachment reference parsing
+- Located in: `parsing/parsing_tests.rs`
+
 ## Running Tests
 
 ### Prerequisites
@@ -92,6 +122,18 @@ cargo test --test e2e_tests parallel
 
 # Sync tests
 cargo test --test e2e_tests sync
+
+# Resilience tests
+cargo test --test e2e_tests resilience
+
+# Compatibility tests
+cargo test --test e2e_tests compatibility
+
+# Security tests
+cargo test --test e2e_tests security
+
+# Parsing tests
+cargo test --test e2e_tests parsing
 ```
 
 ## Test Coverage
@@ -112,6 +154,10 @@ The test suite validates:
 - ✅ Memory-efficient processing
 - ✅ Incremental synchronization
 - ✅ Production best practices
+- ✅ Network resilience and recovery
+- ✅ Cross-server compatibility
+- ✅ Security hardening
+- ✅ Edge case parsing
 
 ## Continuous Integration
 

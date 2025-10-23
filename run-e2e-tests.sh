@@ -3,7 +3,7 @@
 # Script to run E2E tests against the SabreDAV server
 
 echo "Starting SabreDAV test environment..."
-cd sabredav-test
+cd sabredav-test || exit
 ./setup.sh
 cd ..
 

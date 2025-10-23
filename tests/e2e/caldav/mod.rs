@@ -5,3 +5,7 @@ pub mod compression;
 pub mod streaming;
 pub mod parallel;
 pub mod sync;
+pub mod resilience;
+pub mod compatibility;
+pub mod security;
+pub mod parsing;

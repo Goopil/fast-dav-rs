@@ -7,7 +7,7 @@ use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Request, Response, Uri, header};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, OwnedSemaphorePermit};
 use tokio::time::{Duration, timeout};
 
 use crate::caldav::streaming::parse_multistatus_bytes;
@@ -724,12 +724,13 @@ impl CalDavClient {
         let mut tasks = FuturesUnordered::new();
 
         for path in paths {
-            let permit = sem.clone().acquire_owned().await;
+            let sem_clone = sem.clone();
             let this = self.clone();
             let body = xml_body.clone();
             let p = path.clone();
             tasks.push(async move {
-                let _permit = permit.expect("semaphore closed");
+                // Acquire permit inside the task, not before spawning
+                let _permit: OwnedSemaphorePermit = sem_clone.acquire_owned().await.expect("semaphore closed");
                 let mut h = HeaderMap::new();
                 h.insert(
                     "Depth",
@@ -776,12 +777,13 @@ impl CalDavClient {
         let mut tasks = FuturesUnordered::new();
 
         for path in paths {
-            let permit = sem.clone().acquire_owned().await;
+            let sem_clone = sem.clone();
             let this = self.clone();
             let body = xml_body.clone();
             let p = path.clone();
             tasks.push(async move {
-                let _permit = permit.expect("semaphore closed");
+                // Acquire permit inside the task, not before spawning
+                let _permit: OwnedSemaphorePermit = sem_clone.acquire_owned().await.expect("semaphore closed");
                 let mut h = HeaderMap::new();
                 h.insert(
                     "Depth",
