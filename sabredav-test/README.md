@@ -32,6 +32,13 @@ This directory contains a complete SabreDAV test environment with Docker Compose
 - `Dockerfile` - Custom SabreDAV Docker image with PHP-FPM
 - `nginx/` - Nginx configuration and custom build with compression modules
 
+## Requirements
+
+- Docker Engine 20.10+
+- Docker Compose V2 (included with Docker Desktop, or install separately)
+
+Note: This setup uses the modern `docker compose` command (V2) rather than the legacy `docker-compose` command.
+
 ## Features
 
 - Nginx with gzip, Brotli, and zstd compression modules

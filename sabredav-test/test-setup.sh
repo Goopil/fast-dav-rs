@@ -3,17 +3,17 @@
 echo "Testing SabreDAV setup..."
 
 # Check if containers are running
-if [[ $(docker-compose ps | grep -c "Up") -eq 3 ]]; then
+if [[ $(docker compose ps | grep -c "Up") -eq 3 ]]; then
     echo "✅ All containers are running"
 else
     echo "❌ Some containers are not running"
-    docker-compose ps
+    docker compose ps
     exit 1
 fi
 
 # Check if database is initialized
 echo "Checking database..."
-docker-compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) as user_count FROM users;" > /dev/null 2>&1
+docker compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) as user_count FROM users;" > /dev/null 2>&1
 if [[ $? -eq 0 ]]; then
     echo "✅ Database is initialized"
 else
@@ -22,7 +22,7 @@ else
 fi
 
 # Check if test user exists
-USER_COUNT=$(docker-compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) FROM users WHERE username='test';" -sN)
+USER_COUNT=$(docker compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) FROM users WHERE username='test';" -sN)
 if [[ $USER_COUNT -eq 1 ]]; then
     echo "✅ Test user exists"
 else
@@ -31,7 +31,7 @@ else
 fi
 
 # Check if calendar exists
-CAL_COUNT=$(docker-compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) FROM calendars;" -sN)
+CAL_COUNT=$(docker compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) FROM calendars;" -sN)
 if [[ $CAL_COUNT -eq 1 ]]; then
     echo "✅ Default calendar created"
 else

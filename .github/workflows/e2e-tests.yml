@@ -35,23 +35,28 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
     
-    - name: Start services with docker-compose
+    - name: Install Docker Compose
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y docker-compose-plugin
+    
+    - name: Start services with docker compose
       run: |
         cd sabredav-test
-        docker-compose up -d
+        docker compose up -d
     
     - name: Wait for services to be ready
       run: |
         echo "Waiting for services to start..."
         sleep 30
-        docker-compose ps
+        docker compose ps
         echo "Checking if services are responding..."
         curl -f http://localhost:8080/ || (echo "Failed to connect to service" && exit 1)
     
     - name: Install Composer dependencies
       run: |
         cd sabredav-test
-        docker-compose run --rm sabredav composer install
+        docker compose run --rm sabredav composer install
     
     - name: Reset and seed database
       run: |
@@ -78,10 +83,10 @@ jobs:
       run: |
         cd sabredav-test
         echo "=== Docker Compose Logs ==="
-        docker-compose logs
+        docker compose logs
     
     - name: Stop services
       if: always()
       run: |
         cd sabredav-test
-        docker-compose down -v
+        docker compose down -v
