@@ -58,7 +58,8 @@ async fn test_propfind_stream() {
                 Ok(parsed_items) => {
                     println!("Parsed {} items from stream", parsed_items.len());
                     // This should succeed even if there are no items
-                    assert!(true, "Should be able to parse stream"); // Just verify it doesn't panic
+                    // Just verify it doesn't panic - remove the assert!(true) as it's optimized out
+                    println!("Successfully parsed stream");
                 }
                 Err(e) => {
                     panic!("Failed to parse streamed response: {}", e);
@@ -131,7 +132,8 @@ async fn test_report_stream() {
                 match items {
                     Ok(parsed_items) => {
                         println!("Parsed {} items from report stream", parsed_items.len());
-                        assert!(true, "Should be able to parse report stream"); // Just verify it doesn't panic
+                        // Just verify it doesn't panic - remove the assert!(true) as it's optimized out
+                        println!("Successfully parsed report stream");
                     }
                     Err(e) => {
                         println!("Failed to parse report stream (may be expected): {}", e);
@@ -187,10 +189,8 @@ async fn test_streaming_parser() {
                         "Streaming parser parsed {} items from regular response",
                         parsed_items.len()
                     );
-                    assert!(
-                        true,
-                        "Should be able to parse regular response with streaming parser"
-                    ); // Just verify it doesn't panic
+                    // Just verify it doesn't panic - remove the assert!(true) as it's optimized out
+                    println!("Successfully parsed regular response with streaming parser");
                 }
                 Err(e) => {
                     panic!(

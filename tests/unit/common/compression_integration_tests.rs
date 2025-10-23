@@ -99,7 +99,7 @@ async fn test_compress_empty_data() {
     ] {
         let compressed = compress_payload(empty_data.clone(), *encoding)
             .await
-            .expect(&format!("Compression with {:?} should succeed", encoding));
+            .unwrap_or_else(|_| panic!("Compression with {:?} should succeed", encoding));
         // Just verify it doesn't panic and returns some data
         println!(
             "Empty data compressed with {:?} resulted in {} bytes",
