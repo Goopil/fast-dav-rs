@@ -1,11 +1,11 @@
+pub mod compatibility;
+pub mod compression;
 pub mod core;
 pub mod discovery;
 pub mod operations;
-pub mod compression;
-pub mod streaming;
 pub mod parallel;
-pub mod sync;
-pub mod resilience;
-pub mod compatibility;
-pub mod security;
 pub mod parsing;
+pub mod resilience;
+pub mod security;
+pub mod streaming;
+pub mod sync;

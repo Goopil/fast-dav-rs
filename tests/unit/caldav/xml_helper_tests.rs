@@ -17,7 +17,10 @@ fn test_escape_xml_comprehensive() {
     assert_eq!(escape_xml("&<>\"'"), "&amp;&lt;&gt;&quot;&apos;");
 
     // Test repeated special characters
-    assert_eq!(escape_xml("&&<<>>\"\"''"), "&amp;&amp;&lt;&lt;&gt;&gt;&quot;&quot;&apos;&apos;");
+    assert_eq!(
+        escape_xml("&&<<>>\"\"''"),
+        "&amp;&amp;&lt;&lt;&gt;&gt;&quot;&quot;&apos;&apos;"
+    );
 
     // Test unicode characters mixed with special characters
     assert_eq!(escape_xml("café & résumé"), "café &amp; résumé");

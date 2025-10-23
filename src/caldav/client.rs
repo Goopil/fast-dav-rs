@@ -7,7 +7,7 @@ use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Request, Response, Uri, header};
 use std::sync::Arc;
-use tokio::sync::{Semaphore, OwnedSemaphorePermit};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
 
 use crate::caldav::streaming::parse_multistatus_bytes;
@@ -730,7 +730,8 @@ impl CalDavClient {
             let p = path.clone();
             tasks.push(async move {
                 // Acquire permit inside the task, not before spawning
-                let _permit: OwnedSemaphorePermit = sem_clone.acquire_owned().await.expect("semaphore closed");
+                let _permit: OwnedSemaphorePermit =
+                    sem_clone.acquire_owned().await.expect("semaphore closed");
                 let mut h = HeaderMap::new();
                 h.insert(
                     "Depth",
@@ -783,7 +784,8 @@ impl CalDavClient {
             let p = path.clone();
             tasks.push(async move {
                 // Acquire permit inside the task, not before spawning
-                let _permit: OwnedSemaphorePermit = sem_clone.acquire_owned().await.expect("semaphore closed");
+                let _permit: OwnedSemaphorePermit =
+                    sem_clone.acquire_owned().await.expect("semaphore closed");
                 let mut h = HeaderMap::new();
                 h.insert(
                     "Depth",

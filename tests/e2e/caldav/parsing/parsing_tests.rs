@@ -22,10 +22,8 @@ fn generate_unique_event_uid() -> String {
 }
 
 fn create_test_client() -> CalDavClient {
-    let client = CalDavClient::new(SABREDAV_URL, Some(TEST_USER), Some(TEST_PASS))
-        .expect("Failed to create CalDAV client");
-
-    client
+    CalDavClient::new(SABREDAV_URL, Some(TEST_USER), Some(TEST_PASS))
+        .expect("Failed to create CalDAV client")
 }
 
 #[tokio::test]
