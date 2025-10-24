@@ -104,8 +104,52 @@ async fn main() -> Result<()> {
 - `cargo build` — fast local compile.
 - `cargo fmt` / `cargo clippy --all-targets --all-features` — mandatory formatting and linting before you push.
 - `cargo test --all-features` and `cargo test --doc` — run unit, integration, and doctests to keep examples accurate.
+- `./run-e2e-tests.sh` — run end-to-end tests against a local SabreDAV server.
 
-## Contributing
+## End-to-End Testing
+
+This project includes a complete E2E testing environment with a SabreDAV server that supports all major CalDAV features including compression.
+
+See [E2E_TESTING.md](E2E_TESTING.md) for detailed documentation on the testing environment and how to run the tests.
+
+### Prerequisites
+
+1. Docker and Docker Compose
+2. The SabreDAV test environment (located in `sabredav-test/`)
+
+### Setting up the Test Environment
+
+```bash
+cd sabredav-test
+./setup.sh
+```
+
+This will start a complete SabreDAV environment with:
+- Nginx with gzip, Brotli, and zstd compression modules
+- PHP-FPM for better performance
+- MySQL database with preconfigured SabreDAV tables
+- Test user (test/test) and sample calendar events
+
+### Running E2E Tests
+
+```bash
+./run-e2e-tests.sh
+```
+
+Or manually:
+
+```bash
+cargo test --test caldav_suite -- e2e_tests --nocapture
+```
+
+### Resetting the Test Environment
+
+To reset the database to a clean state:
+
+```bash
+cd sabredav-test
+./reset-db.sh
+```
 
 See `CONTRIBUTING.md` for the standard workflow and `AGENTS.md` for repository-specific guidelines. Pull requests
 improving server compatibility, ergonomics, or documentation are very welcome.
