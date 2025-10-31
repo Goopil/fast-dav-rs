@@ -40,25 +40,25 @@ jobs:
         mkdir -p ~/.docker/cli-plugins
         curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
         chmod +x ~/.docker/cli-plugins/docker-compose
-       docker compose version
+        docker compose version
 
-    - name: Start services withdocker compose
+    - name: Start services with Docker Compose
       run: |
         cd sabredav-test
-       docker compose up -d
+        docker compose up -d
 
     - name: Wait for services to be ready
       run: |
         echo "Waiting for services to start..."
         sleep 30
-       docker compose ps
+        docker compose ps
         echo "Checking if services are responding..."
         curl -f http://localhost:8080/ || (echo "Failed to connect to service" && exit 1)
 
     - name: Install Composer dependencies
       run: |
         cd sabredav-test
-       docker compose run --rm sabredav composer install
+        docker compose run --rm sabredav composer install
 
     - name: Reset and seed database
       run: |
@@ -74,7 +74,7 @@ jobs:
 
     - name: Run E2E tests
       run: |
-        cargo test --manifest-path Cargo.toml --test e2e_tests
+        cargo test --manifest-path Cargo.toml --features e2e-tests --test e2e_tests
       env:
         CALDAV_SERVER_URL: http://localhost:8080
         CALDAV_USERNAME: test
@@ -85,10 +85,10 @@ jobs:
       run: |
         cd sabredav-test
         echo "===docker compose Logs ==="
-       docker compose logs
+        docker compose logs
 
     - name: Stop services
       if: always()
       run: |
         cd sabredav-test
-       docker compose down -v
+        docker compose down -v
