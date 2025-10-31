@@ -1,0 +1,134 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: stable-rust
+
+    - name: Run unit tests
+      run: |
+        cargo test --manifest-path Cargo.toml --test unit_tests
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v2
+
+    - name: Install docker compose V2
+      run: |
+        mkdir -p ~/.docker/cli-plugins
+        curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
+        chmod +x ~/.docker/cli-plugins/docker-compose
+        docker compose version
+
+    - name: Build SabreDAV PHP image (cached)
+      uses: docker/build-push-action@v5
+      with:
+        context: sabredav-test
+        file: sabredav-test/Dockerfile
+        load: true
+        push: false
+        tags: local/sabredav-app:latest
+        cache-from: type=gha,scope=sabredav-app
+        cache-to: type=gha,scope=sabredav-app,mode=max
+
+    - name: Build nginx image (cached)
+      uses: docker/build-push-action@v5
+      with:
+        context: sabredav-test/nginx
+        file: sabredav-test/nginx/Dockerfile
+        load: true
+        push: false
+        tags: local/sabredav-nginx:latest
+        cache-from: type=gha,scope=sabredav-nginx
+        cache-to: type=gha,scope=sabredav-nginx,mode=max
+
+    - name: Start services with Docker Compose
+      run: |
+        cd sabredav-test
+        docker compose up -d --no-build
+
+    - name: Wait for services to be ready
+      run: |
+        echo "Waiting for services to start..."
+        sleep 30
+        (
+          cd sabredav-test
+          docker compose ps
+        )
+        echo "Checking if services are responding..."
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
+        if [ "$STATUS" != "200" ] && [ "$STATUS" != "401" ] && [ "$STATUS" != "207" ]; then
+          echo "Health check failed with HTTP status $STATUS"
+          exit 1
+        fi
+        echo "Service responded with HTTP $STATUS (acceptable)"
+
+    - name: Install Composer dependencies
+      run: |
+        cd sabredav-test
+        docker compose run --rm sabredav composer install
+
+    - name: Reset and seed database
+      run: |
+        cd sabredav-test
+        ./reset-db.sh
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: stable-rust
+
+    - name: Run E2E tests
+      run: |
+        cargo test --manifest-path Cargo.toml --test e2e_tests
+      env:
+        CALDAV_SERVER_URL: http://localhost:8080
+        CALDAV_USERNAME: test
+        CALDAV_PASSWORD: test
+
+    - name: Debug - Show test logs if failed
+      if: failure()
+      run: |
+        cd sabredav-test
+        echo "===docker compose Logs ==="
+        docker compose logs
+
+    - name: Stop services
+      if: always()
+      run: |
+        cd sabredav-test
+        docker compose down -v

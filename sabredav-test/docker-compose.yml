@@ -1,0 +1,44 @@
+services:
+  nginx:
+    image: local/sabredav-nginx:latest
+    build: 
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - sabredav
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./public:/var/www/html/public
+
+  sabredav:
+    image: local/sabredav-app:latest
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - mysql
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_DATABASE=sabredav
+      - MYSQL_USER=sabredav
+      - MYSQL_PASSWORD=sabredav
+    volumes:
+      - ./public:/var/www/html/public
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=sabredav
+      - MYSQL_USER=sabredav
+      - MYSQL_PASSWORD=sabredav
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d
+
+volumes:
+  mysql_data:

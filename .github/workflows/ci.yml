@@ -25,16 +25,10 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          shared-key: stable-rust
 
       - name: Cargo fmt
         run: cargo fmt --all --check
@@ -43,4 +37,4 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Cargo test
-        run: cargo test --all-features --locked
+        run: cargo test --all-features --locked --test unit_tests

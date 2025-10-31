@@ -19,3 +19,18 @@ tokio-util = "0.7"
 async-compression = { version = "0.4", features = ["tokio", "brotli", "gzip", "zstd"] }
 hyper-util = { version = "0.1", features = ["client", "http1", "http2", "tokio"] }
 http-body-util = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+
+[[test]]
+name = "unit_tests"
+path = "tests/unit/mod.rs"
+
+[[test]]
+name = "e2e_tests"
+path = "tests/e2e/mod.rs"
