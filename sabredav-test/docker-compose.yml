@@ -1,5 +1,6 @@
 services:
   nginx:
+    image: local/sabredav-nginx:latest
     build: 
       context: ./nginx
       dockerfile: Dockerfile
@@ -12,6 +13,7 @@ services:
       - ./public:/var/www/html/public
 
   sabredav:
+    image: local/sabredav-app:latest
     build: 
       context: .
       dockerfile: Dockerfile
