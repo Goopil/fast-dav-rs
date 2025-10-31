@@ -92,7 +92,7 @@ jobs:
 
     - name: Run E2E tests
       run: |
-        cargo test --manifest-path Cargo.toml --features e2e-tests --test e2e_tests
+        cargo test --manifest-path Cargo.toml --test e2e_tests
       env:
         CALDAV_SERVER_URL: http://localhost:8080
         CALDAV_USERNAME: test
