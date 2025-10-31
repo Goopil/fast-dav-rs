@@ -21,6 +21,11 @@ jobs:
         toolchain: stable
         override: true
 
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: stable-rust
+
     - name: Run unit tests
       run: |
         cargo test --manifest-path Cargo.toml --test unit_tests
@@ -51,7 +56,10 @@ jobs:
       run: |
         echo "Waiting for services to start..."
         sleep 30
-        docker compose ps
+        (
+          cd sabredav-test
+          docker compose ps
+        )
         echo "Checking if services are responding..."
         curl -f http://localhost:8080/ || (echo "Failed to connect to service" && exit 1)
 
@@ -71,6 +79,11 @@ jobs:
         profile: minimal
         toolchain: stable
         override: true
+
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: stable-rust
 
     - name: Run E2E tests
       run: |
