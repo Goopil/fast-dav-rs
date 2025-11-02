@@ -56,6 +56,25 @@ fn test_detect_encoding_multiple_encodings() {
 }
 
 #[test]
+fn test_detect_encodings_chain_order() {
+    let mut headers = HeaderMap::new();
+    headers.insert(http::header::CONTENT_ENCODING, "gzip, br".parse().unwrap());
+    let chain = detect_encodings(&headers);
+    assert_eq!(chain, vec![ContentEncoding::Gzip, ContentEncoding::Br]);
+}
+
+#[test]
+fn test_detect_encodings_ignores_unknowns() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_ENCODING,
+        "gzip, unknown, br".parse().unwrap(),
+    );
+    let chain = detect_encodings(&headers);
+    assert_eq!(chain, vec![ContentEncoding::Gzip, ContentEncoding::Br]);
+}
+
+#[test]
 fn test_detect_encoding_case_insensitive() {
     let mut headers = HeaderMap::new();
     headers.insert(http::header::CONTENT_ENCODING, "GZIP".parse().unwrap());

@@ -37,45 +37,40 @@ impl ContentEncoding {
     }
 }
 
-/// Detect the response `Content-Encoding` header and map it to [`ContentEncoding`].
+/// Detect the response `Content-Encoding` header and return the ordered chain of encodings.
 ///
-/// Returns [`ContentEncoding::Identity`] if the header is missing or not recognized.
-///
-/// # Example
-/// ```
-/// use fast_dav_rs::compression::{detect_encoding, ContentEncoding};
-/// use hyper::{header, HeaderMap};
-///
-/// let mut headers = HeaderMap::new();
-/// headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
-/// assert_eq!(detect_encoding(&headers), ContentEncoding::Gzip);
-/// ```
-pub fn detect_encoding(headers: &HeaderMap) -> ContentEncoding {
-    if let Some(val) = headers.get(header::CONTENT_ENCODING)
-        && let Ok(s) = val.to_str()
-    {
-        let enc = s
-            .split(',')
-            .next()
-            .map(|t| t.trim().to_ascii_lowercase())
-            .unwrap_or_default();
-        return match enc.as_str() {
-            "br" => ContentEncoding::Br,
-            "gzip" => ContentEncoding::Gzip,
-            "zstd" | "zst" => ContentEncoding::Zstd,
-            _ => ContentEncoding::Identity,
-        };
-    }
-    ContentEncoding::Identity
+/// The vector is ordered from outermost encoding to innermost (as received). When empty, the
+/// payload is identity encoded.
+pub fn detect_encodings(headers: &HeaderMap) -> Vec<ContentEncoding> {
+    let Some(val) = headers.get(header::CONTENT_ENCODING) else {
+        return Vec::new();
+    };
+
+    let Ok(raw) = val.to_str() else {
+        return Vec::new();
+    };
+
+    raw.split(',')
+        .filter_map(|token| {
+            let enc = token.trim().to_ascii_lowercase();
+            Some(match enc.as_str() {
+                "br" => ContentEncoding::Br,
+                "gzip" => ContentEncoding::Gzip,
+                "zstd" | "zst" => ContentEncoding::Zstd,
+                "identity" => return None,
+                _ => return None,
+            })
+        })
+        .collect()
 }
 
 /// Insert an `Accept-Encoding` header (`br, zstd, gzip`) if not already present.
 ///
 /// This hints to the server that the client supports compressed responses.
 pub fn add_accept_encoding(h: &mut HeaderMap) {
-    if !h.contains_key(http::header::ACCEPT_ENCODING) {
+    if !h.contains_key(header::ACCEPT_ENCODING) {
         h.insert(
-            http::header::ACCEPT_ENCODING,
+            header::ACCEPT_ENCODING,
             http::HeaderValue::from_static("br, zstd, gzip"),
         );
     }
@@ -88,7 +83,7 @@ pub fn add_accept_encoding(h: &mut HeaderMap) {
 /// supported by both parties. Returns `None` when the header is absent or when
 /// no mutually supported encoding is advertised.
 pub fn detect_request_compression_preference(headers: &HeaderMap) -> Option<ContentEncoding> {
-    let raw = headers.get(http::header::ACCEPT_ENCODING)?.to_str().ok()?;
+    let raw = headers.get(header::ACCEPT_ENCODING)?.to_str().ok()?;
 
     let mut wildcard_q: Option<f32> = None;
     let mut identity_q: f32 = 1.0;
@@ -173,36 +168,38 @@ pub fn detect_request_compression_preference(headers: &HeaderMap) -> Option<Cont
     None
 }
 
+/// Backwards-compatible helper that returns the first encoding in the chain or identity when none.
+pub fn detect_encoding(headers: &HeaderMap) -> ContentEncoding {
+    detect_encodings(headers)
+        .into_iter()
+        .next()
+        .unwrap_or(ContentEncoding::Identity)
+}
+
 /// Decompress a response body based on the content encoding.
 ///
 /// This function takes an aggregated response body and decompresses it according
 /// to the specified encoding.
-pub async fn decompress_body(body: Incoming, encoding: ContentEncoding) -> Result<Bytes> {
+pub async fn decompress_body(body: Incoming, encodings: &[ContentEncoding]) -> Result<Bytes> {
     let stream = BodyStream::new(body)
         .map_ok(|frame| frame.into_data().unwrap_or_default())
         .map_err(std::io::Error::other);
     let reader = StreamReader::new(stream);
     let reader = BufReader::new(reader);
     let mut out = Vec::with_capacity(32 * 1024);
+    let mut current: Box<dyn AsyncBufRead + Unpin + Send> = Box::new(reader);
 
-    match encoding {
-        ContentEncoding::Identity => {
-            let mut r = reader;
-            r.read_to_end(&mut out).await?;
-        }
-        ContentEncoding::Br => {
-            let mut dec = BrotliDecoder::new(reader);
-            dec.read_to_end(&mut out).await?;
-        }
-        ContentEncoding::Gzip => {
-            let mut dec = GzipDecoder::new(reader);
-            dec.read_to_end(&mut out).await?;
-        }
-        ContentEncoding::Zstd => {
-            let mut dec = ZstdDecoder::new(reader);
-            dec.read_to_end(&mut out).await?;
-        }
+    for encoding in encodings.iter().rev() {
+        current = match encoding {
+            ContentEncoding::Identity => current,
+            ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(current))),
+            ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(current))),
+            ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(current))),
+        };
     }
+
+    let mut decoder = current;
+    decoder.read_to_end(&mut out).await?;
 
     Ok(Bytes::from(out))
 }
@@ -213,7 +210,7 @@ pub async fn decompress_body(body: Incoming, encoding: ContentEncoding) -> Resul
 /// based on the content encoding.
 pub fn decompress_stream(
     body: Incoming,
-    encoding: ContentEncoding,
+    encodings: &[ContentEncoding],
 ) -> Result<Box<dyn AsyncBufRead + Unpin + Send>> {
     let stream = BodyStream::new(body)
         .map_ok(|frame| frame.into_data().unwrap_or_default())
@@ -221,14 +218,17 @@ pub fn decompress_stream(
     let reader: Box<dyn AsyncBufRead + Unpin + Send> =
         Box::new(BufReader::new(StreamReader::new(stream)));
 
-    let decompressed_reader: Box<dyn AsyncBufRead + Unpin + Send> = match encoding {
-        ContentEncoding::Identity => reader,
-        ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(reader))),
-        ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(reader))),
-        ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(reader))),
-    };
+    let mut current = reader;
+    for encoding in encodings.iter().rev() {
+        current = match encoding {
+            ContentEncoding::Identity => current,
+            ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(current))),
+            ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(current))),
+            ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(current))),
+        };
+    }
 
-    Ok(decompressed_reader)
+    Ok(current)
 }
 
 /// Compress a byte payload using the specified encoding.
@@ -288,7 +288,7 @@ pub async fn compress_payload(data: Bytes, encoding: ContentEncoding) -> Result<
     }
 }
 
-/// Add Content-Encoding header for outgoing requests that will be compressed.
+/// Add a Content-Encoding header for outgoing requests that will be compressed.
 ///
 /// This function adds the appropriate Content-Encoding header to indicate
 /// to the server how the request body is compressed.

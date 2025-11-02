@@ -245,8 +245,8 @@
 //!     </D:propfind>"#;
 //!     
 //!     let response = client.propfind_stream("large-calendar/", Depth::One, propfind_xml).await?;
-//!     let encoding = detect_encoding(response.headers());
-//!     let items = parse_multistatus_stream(response.into_body(), encoding).await?;
+//!     let encodings = detect_encodings(response.headers());
+//!     let items = parse_multistatus_stream(response.into_body(), &encodings).await?;
 //!     
 //!     // Process items one by one without loading everything into memory
 //!     for item in items {
@@ -502,7 +502,7 @@ pub use caldav::{
 };
 pub use common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, detect_encoding,
-    detect_request_compression_preference,
+    detect_encodings, detect_request_compression_preference,
 };
 
 // Legacy module paths kept for compatibility with existing imports.

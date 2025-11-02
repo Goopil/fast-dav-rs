@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures::{StreamExt, stream::FuturesUnordered};
 use http_body_util::Full;
 use hyper::body::Incoming;
-use hyper::{HeaderMap, Method, Request, Response, Uri, header};
+use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
 use std::sync::{Arc, RwLock};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
@@ -16,7 +16,7 @@ use crate::caldav::types::{
 };
 use crate::common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
-    detect_encoding, detect_request_compression_preference,
+    detect_encodings,
 };
 use crate::common::http::{HyperClient, build_hyper_client};
 
@@ -34,6 +34,7 @@ use crate::common::http::{HyperClient, build_hyper_client};
 /// Strategy for compressing outgoing request bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestCompressionMode {
+    /// Negotiate automatically: attempt gzip on first use and cache the result; fall back to identity on 415/501.
     Auto,
     Disabled,
     Force(ContentEncoding),
@@ -44,6 +45,14 @@ impl RequestCompressionMode {
         matches!(self, Self::Auto)
     }
 }
+
+const AUTO_DEFAULT_ENCODING: ContentEncoding = ContentEncoding::Gzip;
+const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:current-user-principal/>
+  </D:prop>
+</D:propfind>"#;
 
 #[derive(Clone)]
 pub struct CalDavClient {
@@ -131,22 +140,29 @@ impl CalDavClient {
     /// # }
     /// ```
     pub fn set_request_compression(&mut self, encoding: ContentEncoding) {
-        self.request_compression_mode = RequestCompressionMode::Force(encoding);
+        self.set_request_compression_mode(RequestCompressionMode::Force(encoding));
     }
 
     /// Configure the request compression strategy.
     pub fn set_request_compression_mode(&mut self, mode: RequestCompressionMode) {
         self.request_compression_mode = mode;
+        match mode {
+            RequestCompressionMode::Auto => self.set_negotiated_encoding(None),
+            RequestCompressionMode::Disabled => {
+                self.set_negotiated_encoding(Some(ContentEncoding::Identity))
+            }
+            RequestCompressionMode::Force(enc) => self.set_negotiated_encoding(Some(enc)),
+        }
     }
 
     /// Enable adaptive request compression (default behaviour).
     pub fn set_request_compression_auto(&mut self) {
-        self.request_compression_mode = RequestCompressionMode::Auto;
+        self.set_request_compression_mode(RequestCompressionMode::Auto);
     }
 
     /// Disable request compression entirely.
     pub fn disable_request_compression(&mut self) {
-        self.request_compression_mode = RequestCompressionMode::Disabled;
+        self.set_request_compression_mode(RequestCompressionMode::Disabled);
     }
 
     /// Get the current request compression strategy.
@@ -213,40 +229,172 @@ impl CalDavClient {
             RequestCompressionMode::Force(enc) => enc,
             RequestCompressionMode::Auto => {
                 if let Ok(guard) = self.negotiated_request_compression.read() {
-                    (*guard).unwrap_or(ContentEncoding::Identity)
+                    guard.unwrap_or(AUTO_DEFAULT_ENCODING)
                 } else {
-                    ContentEncoding::Identity
+                    AUTO_DEFAULT_ENCODING
                 }
             }
         }
     }
 
-    fn update_request_compression_from_response(&self, headers: &HeaderMap) {
+    fn handle_request_compression_outcome(
+        &self,
+        attempted: Option<ContentEncoding>,
+        status: StatusCode,
+    ) -> bool {
         if !self.request_compression_mode.is_auto() {
-            return;
+            return false;
         }
 
-        if let Some(preferred) = detect_request_compression_preference(headers)
-            && let Ok(mut guard) = self.negotiated_request_compression.write()
-        {
-            *guard = Some(preferred);
+        let Some(encoding) = attempted else {
+            return false;
+        };
+
+        if matches!(
+            status,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE
+                | StatusCode::NOT_IMPLEMENTED
+                | StatusCode::BAD_REQUEST
+        ) {
+            if let Ok(mut guard) = self.negotiated_request_compression.write() {
+                *guard = Some(ContentEncoding::Identity);
+            }
+            return true;
         }
+
+        if let Ok(mut guard) = self.negotiated_request_compression.write() {
+            *guard = Some(encoding);
+        }
+        false
     }
 
-    async fn prepare_request_body(&self, payload: Bytes, headers: &mut HeaderMap) -> Bytes {
+    async fn prepare_request_body(
+        &self,
+        payload: Bytes,
+        headers: &mut HeaderMap,
+    ) -> (Bytes, Option<ContentEncoding>) {
+        if self.request_compression_mode.is_auto() {
+            let negotiated = self
+                .negotiated_request_compression
+                .read()
+                .ok()
+                .and_then(|g| *g);
+            if negotiated.is_none() {
+                self.probe_request_compression_support().await;
+            }
+        }
+
         headers.remove(header::CONTENT_ENCODING);
 
         let encoding = self.resolve_request_encoding();
         if encoding == ContentEncoding::Identity {
-            return payload;
+            return (payload, None);
         }
 
         match compress_payload(payload.clone(), encoding).await {
             Ok(compressed) => {
                 add_content_encoding(headers, encoding);
-                compressed
+                (compressed, Some(encoding))
             }
-            Err(_) => payload,
+            Err(_) => (payload, None),
+        }
+    }
+
+    fn normalize_decompressed_headers(
+        &self,
+        headers: &mut HeaderMap,
+        encodings: &[ContentEncoding],
+        body_len: usize,
+    ) {
+        if encodings.is_empty() {
+            return;
+        }
+
+        headers.remove(header::CONTENT_ENCODING);
+        if let Ok(value) = header::HeaderValue::from_str(&body_len.to_string()) {
+            headers.insert(header::CONTENT_LENGTH, value);
+        } else {
+            headers.remove(header::CONTENT_LENGTH);
+        }
+    }
+
+    fn set_negotiated_encoding(&self, encoding: Option<ContentEncoding>) {
+        if let Ok(mut guard) = self.negotiated_request_compression.write() {
+            *guard = encoding;
+        }
+    }
+
+    async fn probe_request_compression_support(&self) {
+        if !self.request_compression_mode.is_auto() {
+            return;
+        }
+
+        if let Ok(guard) = self.negotiated_request_compression.read()
+            && guard.is_some()
+        {
+            return;
+        }
+
+        let propfind = match Method::from_bytes(b"PROPFIND") {
+            Ok(m) => m,
+            Err(_) => {
+                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
+                return;
+            }
+        };
+
+        let uri = match self.build_uri("") {
+            Ok(u) => u,
+            Err(_) => {
+                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
+                return;
+            }
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert("Depth", header::HeaderValue::from_static("0"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/xml; charset=utf-8"),
+        );
+
+        let mut req_builder = Request::builder().method(propfind).uri(uri);
+        if let Some(auth) = &self.auth_header {
+            req_builder = req_builder.header(header::AUTHORIZATION, auth);
+        }
+
+        add_accept_encoding(&mut headers);
+
+        let probe_payload = Bytes::from_static(PROBE_BODY.as_bytes());
+        let mut encoded_body = probe_payload.clone();
+        if let Ok(compressed) = compress_payload(probe_payload.clone(), AUTO_DEFAULT_ENCODING).await
+        {
+            encoded_body = compressed;
+            add_content_encoding(&mut headers, AUTO_DEFAULT_ENCODING);
+        }
+
+        for (k, v) in headers.iter() {
+            req_builder = req_builder.header(k, v);
+        }
+
+        let req = match req_builder.body(Full::new(encoded_body)) {
+            Ok(r) => r,
+            Err(_) => {
+                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
+                return;
+            }
+        };
+
+        let fut = self.client.request(req);
+        let result = timeout(Duration::from_secs(5), fut).await;
+
+        match result {
+            Ok(Ok(resp)) if resp.status().is_success() => {
+                self.set_negotiated_encoding(Some(AUTO_DEFAULT_ENCODING));
+            }
+            _ => {
+                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
+            }
         }
     }
 
@@ -272,56 +420,72 @@ impl CalDavClient {
         &self,
         method: Method,
         path: &str,
-        mut headers: HeaderMap,
+        headers: HeaderMap,
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
     ) -> Result<Response<Bytes>> {
         let uri = self.build_uri(path)?;
-        let mut req_builder = Request::builder().method(method).uri(uri);
+        let auth = self.auth_header.clone();
+        let base_headers = headers;
+        let base_body = body_bytes.clone();
+        let mut attempt = 0;
 
-        if let Some(auth) = &self.auth_header {
-            req_builder = req_builder.header(header::AUTHORIZATION, auth);
-        }
+        loop {
+            let mut headers = base_headers.clone();
+            add_accept_encoding(&mut headers);
 
-        add_accept_encoding(&mut headers);
+            let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
 
-        let mut final_body: Option<Bytes> = None;
-
-        if let Some(body) = body_bytes {
-            if !headers.contains_key(header::CONTENT_TYPE) {
-                req_builder = req_builder.header(
-                    header::CONTENT_TYPE,
-                    header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                );
+            if let Some(ref auth_header) = auth {
+                req_builder = req_builder.header(header::AUTHORIZATION, auth_header);
             }
 
-            let payload = self.prepare_request_body(body, &mut headers).await;
-            final_body = Some(payload);
+            let mut final_body: Option<Bytes> = None;
+            let mut attempted_encoding: Option<ContentEncoding> = None;
+
+            if let Some(body) = base_body.clone() {
+                if !headers.contains_key(header::CONTENT_TYPE) {
+                    req_builder = req_builder.header(
+                        header::CONTENT_TYPE,
+                        header::HeaderValue::from_static("application/xml; charset=utf-8"),
+                    );
+                }
+
+                let (payload, encoding) = self.prepare_request_body(body, &mut headers).await;
+                attempted_encoding = encoding;
+                final_body = Some(payload);
+            }
+
+            for (k, v) in headers.iter() {
+                req_builder = req_builder.header(k, v);
+            }
+
+            let req = match final_body {
+                Some(b) => req_builder.body(Full::new(b))?,
+                None => req_builder.body(Full::new(Bytes::new()))?,
+            };
+
+            let fut = self.client.request(req);
+            let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
+                .await
+                .map_err(|_| anyhow!("request timed out"))??;
+
+            let should_retry =
+                self.handle_request_compression_outcome(attempted_encoding, resp.status());
+            if should_retry && attempt == 0 && base_body.is_some() {
+                attempt += 1;
+                continue;
+            }
+
+            let encodings = detect_encodings(resp.headers());
+            let (mut parts, body) = resp.into_parts();
+
+            // Decompress in memory (aggregated)
+            let decompressed = decompress_body(body, &encodings).await?;
+            self.normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
+
+            break Ok(Response::from_parts(parts, decompressed));
         }
-
-        for (k, v) in headers.iter() {
-            req_builder = req_builder.header(k, v);
-        }
-
-        let req = match final_body {
-            Some(b) => req_builder.body(Full::new(b))?,
-            None => req_builder.body(Full::new(Bytes::new()))?,
-        };
-
-        let fut = self.client.request(req);
-        let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
-            .await
-            .map_err(|_| anyhow!("request timed out"))??;
-
-        self.update_request_compression_from_response(resp.headers());
-
-        let encoding = detect_encoding(resp.headers());
-        let (parts, body) = resp.into_parts();
-
-        // Decompress in memory (aggregated)
-        let decompressed = decompress_body(body, encoding).await?;
-
-        Ok(Response::from_parts(parts, decompressed))
     }
 
     // ----------- Streaming send (for parsing on the fly) -----------
@@ -334,50 +498,65 @@ impl CalDavClient {
         &self,
         method: Method,
         path: &str,
-        mut headers: HeaderMap,
+        headers: HeaderMap,
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
     ) -> Result<Response<Incoming>> {
         let uri = self.build_uri(path)?;
-        let mut req_builder = Request::builder().method(method).uri(uri);
+        let auth = self.auth_header.clone();
+        let base_headers = headers;
+        let base_body = body_bytes.clone();
+        let mut attempt = 0;
 
-        if let Some(auth) = &self.auth_header {
-            req_builder = req_builder.header(header::AUTHORIZATION, auth);
-        }
+        loop {
+            let mut headers = base_headers.clone();
+            add_accept_encoding(&mut headers);
 
-        add_accept_encoding(&mut headers);
+            let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
 
-        let mut final_body: Option<Bytes> = None;
-
-        if let Some(body) = body_bytes {
-            if !headers.contains_key(header::CONTENT_TYPE) {
-                req_builder = req_builder.header(
-                    header::CONTENT_TYPE,
-                    header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                );
+            if let Some(ref auth_header) = auth {
+                req_builder = req_builder.header(header::AUTHORIZATION, auth_header);
             }
 
-            let payload = self.prepare_request_body(body, &mut headers).await;
-            final_body = Some(payload);
+            let mut final_body: Option<Bytes> = None;
+            let mut attempted_encoding: Option<ContentEncoding> = None;
+
+            if let Some(body) = base_body.clone() {
+                if !headers.contains_key(header::CONTENT_TYPE) {
+                    req_builder = req_builder.header(
+                        header::CONTENT_TYPE,
+                        header::HeaderValue::from_static("application/xml; charset=utf-8"),
+                    );
+                }
+
+                let (payload, encoding) = self.prepare_request_body(body, &mut headers).await;
+                attempted_encoding = encoding;
+                final_body = Some(payload);
+            }
+
+            for (k, v) in headers.iter() {
+                req_builder = req_builder.header(k, v);
+            }
+
+            let req = match final_body {
+                Some(body) => req_builder.body(Full::new(body))?,
+                None => req_builder.body(Full::new(Bytes::new()))?,
+            };
+
+            let fut = self.client.request(req);
+            let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
+                .await
+                .map_err(|_| anyhow!("request timed out"))??;
+
+            let should_retry =
+                self.handle_request_compression_outcome(attempted_encoding, resp.status());
+            if should_retry && attempt == 0 && base_body.is_some() {
+                attempt += 1;
+                continue;
+            }
+
+            break Ok(resp);
         }
-
-        for (k, v) in headers.iter() {
-            req_builder = req_builder.header(k, v);
-        }
-
-        let req = match final_body {
-            Some(body) => req_builder.body(Full::new(body))?,
-            None => req_builder.body(Full::new(Bytes::new()))?,
-        };
-
-        let fut = self.client.request(req);
-        let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
-            .await
-            .map_err(|_| anyhow!("request timed out"))??;
-
-        self.update_request_compression_from_response(resp.headers());
-
-        Ok(resp)
     }
 
     // ----------- HTTP/WebDAV Verbs -----------

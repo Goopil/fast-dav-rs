@@ -366,7 +366,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
 
 async fn parse_multistatus_stream_with<C>(
     resp_body: Incoming,
-    content_encoding: ContentEncoding,
+    encodings: &[ContentEncoding],
     sink: C,
 ) -> Result<C>
 where
@@ -377,14 +377,16 @@ where
     let stream = BodyStream::new(resp_body)
         .map_ok(|frame| frame.into_data().unwrap_or_default())
         .map_err(std::io::Error::other);
-    let reader: Box<dyn AsyncBufRead + Unpin + Send> =
+    let mut reader: Box<dyn AsyncBufRead + Unpin + Send> =
         Box::new(BufReader::new(StreamReader::new(stream)));
-    let reader = match content_encoding {
-        ContentEncoding::Identity => reader,
-        ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(reader))),
-        ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(reader))),
-        ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(reader))),
-    };
+    for encoding in encodings.iter().rev() {
+        reader = match encoding {
+            ContentEncoding::Identity => reader,
+            ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(reader))),
+            ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(reader))),
+            ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(reader))),
+        };
+    }
 
     let mut xml = Reader::from_reader(reader);
     xml.config_mut().trim_text(false);
@@ -462,21 +464,21 @@ where
 /// for very large CalDAV/WebDAV collections.
 pub async fn parse_multistatus_stream(
     resp_body: Incoming,
-    content_encoding: ContentEncoding,
+    encodings: &[ContentEncoding],
 ) -> Result<Vec<DavItem>> {
-    parse_multistatus_stream_with(resp_body, content_encoding, Vec::<DavItem>::new()).await
+    parse_multistatus_stream_with(resp_body, encodings, Vec::<DavItem>::new()).await
 }
 
 /// Stream parse a WebDAV `207 Multi-Status` response and invoke a callback for each item.
 pub async fn parse_multistatus_stream_visit<F>(
     resp_body: Incoming,
-    content_encoding: ContentEncoding,
+    encodings: &[ContentEncoding],
     on_item: F,
 ) -> Result<()>
 where
     F: FnMut(DavItem) -> Result<()> + Send,
 {
-    let _ = parse_multistatus_stream_with(resp_body, content_encoding, on_item).await?;
+    let _ = parse_multistatus_stream_with(resp_body, encodings, on_item).await?;
     Ok(())
 }
 

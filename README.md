@@ -64,8 +64,8 @@ async fn main() -> Result<()> {
 - **Filter collections**: `calendar_query_timerange` builds a `REPORT` to fetch events within a date range.
 - **Safe deletion**: `delete_if_match` ensures you do not remove an event that changed on the server.
 - **Batch work**: `propfind_many` and the `map_*` helpers run multiple requests concurrently with bounded concurrency.
-- **Compression**: automatic negotiation picks the most efficient request encoding advertised by the server; override
-  or disable it through `RequestCompressionMode`.
+- **Compression**: automatic negotiation eagerly probes gzip once and caches the result; override or disable it
+  through `RequestCompressionMode`.
 
 ```rust
 use fast_dav_rs::{CalDavClient, ContentEncoding, RequestCompressionMode};
@@ -108,9 +108,8 @@ async fn main() -> Result<()> {
 
 ## End-to-End Testing
 
-This project includes a complete E2E testing environment with a SabreDAV server that supports all major CalDAV features including compression.
-
-See [E2E_TESTING.md](E2E_TESTING.md) for detailed documentation on the testing environment and how to run the tests.
+This project includes a complete E2E testing environment with a SabreDAV server that supports all major CalDAV features
+including compression.
 
 ### Prerequisites
 
@@ -125,6 +124,7 @@ cd sabredav-test
 ```
 
 This will start a complete SabreDAV environment with:
+
 - Nginx with gzip, Brotli, and zstd compression modules
 - PHP-FPM for better performance
 - MySQL database with preconfigured SabreDAV tables
