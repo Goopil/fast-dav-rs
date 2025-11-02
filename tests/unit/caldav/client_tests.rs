@@ -296,3 +296,31 @@ fn test_map_sync_response() {
     );
     assert!(response.items[1].is_deleted); // Should be marked as deleted
 }
+
+#[test]
+#[cfg(feature = "query-builder")]
+fn test_query_builder_creation() {
+    let client = CalDavClient::new("https://example.com/dav/", None, None)
+        .expect("Failed to create client");
+    
+    let _query_builder = client.query("/calendars/user/main/");
+    // Just test that we can create it; most functionality requires async execution
+    // which is harder to test in a unit test without a mock server
+}
+
+#[test]
+#[cfg(feature = "query-builder")]
+fn test_query_builder_methods() {
+    let client = CalDavClient::new("https://example.com/dav/", None, None)
+        .expect("Failed to create client");
+    
+    let _query = client
+        .query("/calendars/user/main/")
+        .component("VTODO")
+        .timerange("20240101T000000Z", "20240201T000000Z")
+        .include_data()
+        .limit(50);
+    
+    // Test that we can chain the methods without errors
+    // The actual execution would require a real server or mocking
+}

@@ -1375,3 +1375,36 @@ pub fn map_sync_response(headers: &HeaderMap, items: Vec<DavItem>) -> SyncRespon
         items: out,
     }
 }
+
+impl CalDavClient {
+    /// Create a new CalendarQueryBuilder for constructing queries fluently.
+    ///
+    /// This method is only available when the "query-builder" feature is enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `calendar_path` - The path to the calendar collection to query
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use fast_dav_rs::CalDavClient;
+    /// # use anyhow::Result;
+    /// #
+    /// # #[cfg(feature = "query-builder")]
+    /// # async fn example(client: CalDavClient) -> Result<()> {
+    /// let events = client
+    ///     .query("/calendars/user/main/")
+    ///     .component("VEVENT")
+    ///     .timerange("20240101T000000Z", "20240201T000000Z")
+    ///     .include_data()
+    ///     .execute()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "query-builder")]
+    pub fn query(&self, calendar_path: &str) -> crate::caldav::query::CalendarQueryBuilder {
+        crate::caldav::query::CalendarQueryBuilder::new(self.clone(), calendar_path)
+    }
+}
