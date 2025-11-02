@@ -1,8 +1,8 @@
+use crate::util::{unique_calendar_name, unique_uid};
 use bytes::Bytes;
 use fast_dav_rs::{CalDavClient, Depth};
 use std::sync::Arc;
 use std::time::Duration;
-use crate::util::{unique_calendar_name, unique_uid};
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
 const TEST_USER: &str = "test";
