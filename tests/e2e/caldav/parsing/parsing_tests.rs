@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use fast_dav_rs::CalDavClient;
+use crate::util::{unique_calendar_name, unique_uid};
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
 const TEST_USER: &str = "test";
@@ -7,18 +8,12 @@ const TEST_PASS: &str = "test";
 
 /// Helper function to generate unique calendar names
 fn generate_unique_calendar_name() -> String {
-    format!(
-        "parsing_test_calendar_{}",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_calendar_name("parsing_test_calendar")
 }
 
 /// Helper function to generate unique event UIDs
 fn generate_unique_event_uid() -> String {
-    format!(
-        "parsing-event-{}@example.com",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_uid("parsing-event")
 }
 
 fn create_test_client() -> CalDavClient {

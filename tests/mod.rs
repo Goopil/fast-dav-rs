@@ -1,2 +1,2 @@
-mod e2e;
+pub mod e2e;
 mod unit;

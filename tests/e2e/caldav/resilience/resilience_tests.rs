@@ -2,6 +2,7 @@ use bytes::Bytes;
 use fast_dav_rs::{CalDavClient, Depth};
 use std::sync::Arc;
 use std::time::Duration;
+use crate::util::{unique_calendar_name, unique_uid};
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
 const TEST_USER: &str = "test";
@@ -9,18 +10,12 @@ const TEST_PASS: &str = "test";
 
 /// Helper function to generate unique calendar names
 fn generate_unique_calendar_name() -> String {
-    format!(
-        "resilience_test_calendar_{}",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_calendar_name("resilience_test_calendar")
 }
 
 /// Helper function to generate unique event UIDs
 fn generate_unique_event_uid() -> String {
-    format!(
-        "resilience-event-{}@example.com",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_uid("resilience-event")
 }
 
 fn create_test_client() -> CalDavClient {

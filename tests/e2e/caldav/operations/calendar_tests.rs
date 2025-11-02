@@ -1,4 +1,5 @@
 use fast_dav_rs::CalDavClient;
+use crate::util::unique_calendar_name;
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
 const TEST_USER: &str = "test";
@@ -6,7 +7,7 @@ const TEST_PASS: &str = "test";
 
 /// Helper function to generate unique calendar names
 fn generate_unique_calendar_name() -> String {
-    format!("test_calendar_{}", chrono::Utc::now().timestamp_millis())
+    unique_calendar_name("test_calendar")
 }
 
 fn create_test_client() -> CalDavClient {
