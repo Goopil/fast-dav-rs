@@ -1,3 +1,4 @@
+use crate::util::unique_calendar_name;
 use fast_dav_rs::{CalDavClient, Depth};
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
@@ -6,10 +7,7 @@ const TEST_PASS: &str = "test";
 
 /// Helper function to generate unique calendar names
 fn generate_unique_calendar_name() -> String {
-    format!(
-        "stream_test_calendar_{}",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_calendar_name("stream_test_calendar")
 }
 
 fn create_test_client() -> CalDavClient {
@@ -50,9 +48,10 @@ async fn test_propfind_stream() {
             );
 
             // Test that we can read the streamed response
-            let encoding = fast_dav_rs::detect_encoding(stream_response.headers());
+            let encodings = fast_dav_rs::detect_encodings(stream_response.headers());
             let items =
-                fast_dav_rs::parse_multistatus_stream(stream_response.into_body(), encoding).await;
+                fast_dav_rs::parse_multistatus_stream(stream_response.into_body(), &encodings)
+                    .await;
 
             match items {
                 Ok(parsed_items) => {
@@ -124,9 +123,9 @@ async fn test_report_stream() {
             );
             // Report may succeed or fail depending on server support
             if stream_response.status().is_success() {
-                let encoding = fast_dav_rs::detect_encoding(stream_response.headers());
+                let encodings = fast_dav_rs::detect_encodings(stream_response.headers());
                 let items =
-                    fast_dav_rs::parse_multistatus_stream(stream_response.into_body(), encoding)
+                    fast_dav_rs::parse_multistatus_stream(stream_response.into_body(), &encodings)
                         .await;
 
                 match items {
@@ -176,11 +175,9 @@ async fn test_streaming_parser() {
             );
 
             let _status = regular_response.status();
-            let headers = regular_response.headers().clone();
             let body_bytes = regular_response.into_body();
 
             // Test the streaming parser on regular response body
-            let _encoding = fast_dav_rs::detect_encoding(&headers);
             let items = fast_dav_rs::parse_multistatus_bytes(&body_bytes);
 
             match items {

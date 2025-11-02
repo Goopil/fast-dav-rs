@@ -56,6 +56,25 @@ fn test_detect_encoding_multiple_encodings() {
 }
 
 #[test]
+fn test_detect_encodings_chain_order() {
+    let mut headers = HeaderMap::new();
+    headers.insert(http::header::CONTENT_ENCODING, "gzip, br".parse().unwrap());
+    let chain = detect_encodings(&headers);
+    assert_eq!(chain, vec![ContentEncoding::Gzip, ContentEncoding::Br]);
+}
+
+#[test]
+fn test_detect_encodings_ignores_unknowns() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_ENCODING,
+        "gzip, unknown, br".parse().unwrap(),
+    );
+    let chain = detect_encodings(&headers);
+    assert_eq!(chain, vec![ContentEncoding::Gzip, ContentEncoding::Br]);
+}
+
+#[test]
 fn test_detect_encoding_case_insensitive() {
     let mut headers = HeaderMap::new();
     headers.insert(http::header::CONTENT_ENCODING, "GZIP".parse().unwrap());
@@ -100,6 +119,61 @@ fn test_add_content_encoding_identity() {
     let mut headers = HeaderMap::new();
     add_content_encoding(&mut headers, ContentEncoding::Identity);
     assert!(!headers.contains_key("Content-Encoding"));
+}
+
+#[test]
+fn test_detect_request_compression_preference_absent() {
+    let headers = HeaderMap::new();
+    assert!(detect_request_compression_preference(&headers).is_none());
+}
+
+#[test]
+fn test_detect_request_compression_preference_prefers_quality() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::ACCEPT_ENCODING,
+        "gzip;q=0.4, br;q=0.9".parse().unwrap(),
+    );
+    assert_eq!(
+        detect_request_compression_preference(&headers),
+        Some(ContentEncoding::Br)
+    );
+}
+
+#[test]
+fn test_detect_request_compression_preference_prefers_order_on_tie() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::ACCEPT_ENCODING,
+        "gzip, br, zstd".parse().unwrap(),
+    );
+    assert_eq!(
+        detect_request_compression_preference(&headers),
+        Some(ContentEncoding::Br)
+    );
+}
+
+#[test]
+fn test_detect_request_compression_preference_identity_fallback() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::ACCEPT_ENCODING,
+        "gzip;q=0, identity;q=1.0".parse().unwrap(),
+    );
+    assert_eq!(
+        detect_request_compression_preference(&headers),
+        Some(ContentEncoding::Identity)
+    );
+}
+
+#[test]
+fn test_detect_request_compression_preference_wildcard() {
+    let mut headers = HeaderMap::new();
+    headers.insert(http::header::ACCEPT_ENCODING, "*;q=0.5".parse().unwrap());
+    assert_eq!(
+        detect_request_compression_preference(&headers),
+        Some(ContentEncoding::Br)
+    );
 }
 
 #[tokio::test]

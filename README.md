@@ -64,18 +64,18 @@ async fn main() -> Result<()> {
 - **Filter collections**: `calendar_query_timerange` builds a `REPORT` to fetch events within a date range.
 - **Safe deletion**: `delete_if_match` ensures you do not remove an event that changed on the server.
 - **Batch work**: `propfind_many` and the `map_*` helpers run multiple requests concurrently with bounded concurrency.
-- **Compression**: `set_request_compression(ContentEncoding::Gzip)` compresses request bodies when the server supports
-  it.
+- **Compression**: automatic negotiation eagerly probes gzip once and caches the result; override or disable it
+  through `RequestCompressionMode`.
 
 ```rust
-use fast_dav_rs::{CalDavClient, ContentEncoding};
+use fast_dav_rs::{CalDavClient, ContentEncoding, RequestCompressionMode};
 use bytes::Bytes;
 use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
-    client.set_request_compression(ContentEncoding::Gzip);
+    client.set_request_compression_mode(RequestCompressionMode::Force(ContentEncoding::Gzip));
 
     let ics = Bytes::from_static(b"BEGIN:VCALENDAR\n...END:VCALENDAR\n");
     client.put_if_none_match("work/calendar/event.ics", ics).await?;
@@ -108,9 +108,8 @@ async fn main() -> Result<()> {
 
 ## End-to-End Testing
 
-This project includes a complete E2E testing environment with a SabreDAV server that supports all major CalDAV features including compression.
-
-See [E2E_TESTING.md](E2E_TESTING.md) for detailed documentation on the testing environment and how to run the tests.
+This project includes a complete E2E testing environment with a SabreDAV server that supports all major CalDAV features
+including compression.
 
 ### Prerequisites
 
@@ -125,6 +124,7 @@ cd sabredav-test
 ```
 
 This will start a complete SabreDAV environment with:
+
 - Nginx with gzip, Brotli, and zstd compression modules
 - PHP-FPM for better performance
 - MySQL database with preconfigured SabreDAV tables
@@ -153,4 +153,3 @@ cd sabredav-test
 
 See `CONTRIBUTING.md` for the standard workflow and `AGENTS.md` for repository-specific guidelines. Pull requests
 improving server compatibility, ergonomics, or documentation are very welcome.
-

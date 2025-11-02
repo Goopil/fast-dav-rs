@@ -1,3 +1,4 @@
+use crate::util::{unique_calendar_name, unique_uid};
 use bytes::Bytes;
 use fast_dav_rs::{CalDavClient, Depth};
 
@@ -7,18 +8,12 @@ const TEST_PASS: &str = "test";
 
 /// Helper function to generate unique calendar names
 fn generate_unique_calendar_name() -> String {
-    format!(
-        "compatibility_test_calendar_{}",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_calendar_name("compatibility_test_calendar")
 }
 
 /// Helper function to generate unique event UIDs
 fn generate_unique_event_uid() -> String {
-    format!(
-        "compatibility-event-{}@example.com",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_uid("compatibility-event")
 }
 
 fn create_test_client() -> CalDavClient {
@@ -114,7 +109,7 @@ async fn test_compatibility_special_characters_in_names() {
     let client = create_test_client();
 
     // Test with special characters in calendar name
-    let special_chars_name = format!("test_calendar_éñ_{}", chrono::Utc::now().timestamp_millis());
+    let special_chars_name = unique_calendar_name("test_calendar_éñ");
     let calendar_path = format!("calendars/test/{}/", special_chars_name);
 
     let calendar_xml = format!(

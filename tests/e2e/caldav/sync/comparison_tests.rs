@@ -1,3 +1,4 @@
+use crate::util::{unique_calendar_name, unique_uid};
 use bytes::Bytes;
 use fast_dav_rs::CalDavClient;
 use std::collections::HashMap;
@@ -9,18 +10,12 @@ const TEST_PASS: &str = "test";
 
 /// Helper function to generate unique calendar names
 fn generate_unique_calendar_name() -> String {
-    format!(
-        "comparison_test_calendar_{}",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_calendar_name("comparison_test_calendar")
 }
 
 /// Helper function to generate unique event UIDs
 fn generate_unique_event_uid() -> String {
-    format!(
-        "comparison-event-{}@example.com",
-        chrono::Utc::now().timestamp_millis()
-    )
+    unique_uid("comparison-event")
 }
 
 fn create_test_client() -> CalDavClient {
@@ -705,11 +700,7 @@ async fn test_parallel_sync_consistency() {
 
     // Create multiple calendars for parallel sync testing
     for i in 1..=3 {
-        let calendar_name = format!(
-            "parallel_test_calendar_{}_{}",
-            i,
-            chrono::Utc::now().timestamp_millis()
-        );
+        let calendar_name = unique_calendar_name(&format!("parallel_test_calendar_{}", i));
         let calendar_path = format!("calendars/test/{}/", calendar_name);
 
         // Create a calendar
