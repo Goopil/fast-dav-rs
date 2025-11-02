@@ -6,7 +6,7 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Request, Response, Uri, header};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
 
@@ -16,7 +16,7 @@ use crate::caldav::types::{
 };
 use crate::common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
-    detect_encoding,
+    detect_encoding, detect_request_compression_preference,
 };
 use crate::common::http::{HyperClient, build_hyper_client};
 
@@ -25,19 +25,34 @@ use crate::common::http::{HyperClient, build_hyper_client};
 /// Features:
 /// - HTTP/2 multiplexing and connection pooling
 /// - Automatic response decompression (br/zstd/gzip)
-/// - Request compression support
+/// - Automatic request compression negotiation (br/zstd/gzip)
 /// - Streaming-friendly APIs for large WebDAV responses
 /// - Batch helpers with bounded concurrency
 /// - ETag helpers for safe conditional writes/deletes
 ///
 /// Cloning `CalDavClient` is cheap and reuses the same connection pool.
+/// Strategy for compressing outgoing request bodies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestCompressionMode {
+    Auto,
+    Disabled,
+    Force(ContentEncoding),
+}
+
+impl RequestCompressionMode {
+    fn is_auto(&self) -> bool {
+        matches!(self, Self::Auto)
+    }
+}
+
 #[derive(Clone)]
 pub struct CalDavClient {
     base: Uri,
     client: HyperClient,
     auth_header: Option<header::HeaderValue>,
     default_timeout: Duration,
-    request_compression: ContentEncoding,
+    request_compression_mode: RequestCompressionMode,
+    negotiated_request_compression: Arc<RwLock<Option<ContentEncoding>>>,
 }
 
 impl CalDavClient {
@@ -89,7 +104,8 @@ impl CalDavClient {
             client,
             auth_header,
             default_timeout: Duration::from_secs(20),
-            request_compression: ContentEncoding::Identity,
+            request_compression_mode: RequestCompressionMode::Auto,
+            negotiated_request_compression: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -115,12 +131,32 @@ impl CalDavClient {
     /// # }
     /// ```
     pub fn set_request_compression(&mut self, encoding: ContentEncoding) {
-        self.request_compression = encoding;
+        self.request_compression_mode = RequestCompressionMode::Force(encoding);
     }
 
-    /// Get the current request compression setting.
+    /// Configure the request compression strategy.
+    pub fn set_request_compression_mode(&mut self, mode: RequestCompressionMode) {
+        self.request_compression_mode = mode;
+    }
+
+    /// Enable adaptive request compression (default behaviour).
+    pub fn set_request_compression_auto(&mut self) {
+        self.request_compression_mode = RequestCompressionMode::Auto;
+    }
+
+    /// Disable request compression entirely.
+    pub fn disable_request_compression(&mut self) {
+        self.request_compression_mode = RequestCompressionMode::Disabled;
+    }
+
+    /// Get the current request compression strategy.
+    pub fn request_compression_mode(&self) -> RequestCompressionMode {
+        self.request_compression_mode
+    }
+
+    /// Get the currently resolved request compression encoding.
     pub fn request_compression(&self) -> ContentEncoding {
-        self.request_compression
+        self.resolve_request_encoding()
     }
 
     pub fn build_uri(&self, path: &str) -> Result<Uri> {
@@ -171,6 +207,49 @@ impl CalDavClient {
         Ok(Uri::from_parts(parts)?)
     }
 
+    fn resolve_request_encoding(&self) -> ContentEncoding {
+        match self.request_compression_mode {
+            RequestCompressionMode::Disabled => ContentEncoding::Identity,
+            RequestCompressionMode::Force(enc) => enc,
+            RequestCompressionMode::Auto => {
+                if let Ok(guard) = self.negotiated_request_compression.read() {
+                    (*guard).unwrap_or(ContentEncoding::Identity)
+                } else {
+                    ContentEncoding::Identity
+                }
+            }
+        }
+    }
+
+    fn update_request_compression_from_response(&self, headers: &HeaderMap) {
+        if !self.request_compression_mode.is_auto() {
+            return;
+        }
+
+        if let Some(preferred) = detect_request_compression_preference(headers)
+            && let Ok(mut guard) = self.negotiated_request_compression.write()
+        {
+            *guard = Some(preferred);
+        }
+    }
+
+    async fn prepare_request_body(&self, payload: Bytes, headers: &mut HeaderMap) -> Bytes {
+        headers.remove(header::CONTENT_ENCODING);
+
+        let encoding = self.resolve_request_encoding();
+        if encoding == ContentEncoding::Identity {
+            return payload;
+        }
+
+        match compress_payload(payload.clone(), encoding).await {
+            Ok(compressed) => {
+                add_content_encoding(headers, encoding);
+                compressed
+            }
+            Err(_) => payload,
+        }
+    }
+
     // ----------- Aggregated send (Bytes) with automatic decompression -----------
 
     /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
@@ -206,20 +285,26 @@ impl CalDavClient {
 
         add_accept_encoding(&mut headers);
 
+        let mut final_body: Option<Bytes> = None;
+
+        if let Some(body) = body_bytes {
+            if !headers.contains_key(header::CONTENT_TYPE) {
+                req_builder = req_builder.header(
+                    header::CONTENT_TYPE,
+                    header::HeaderValue::from_static("application/xml; charset=utf-8"),
+                );
+            }
+
+            let payload = self.prepare_request_body(body, &mut headers).await;
+            final_body = Some(payload);
+        }
+
         for (k, v) in headers.iter() {
             req_builder = req_builder.header(k, v);
         }
 
-        let req = match body_bytes {
-            Some(b) => {
-                if !headers.contains_key(header::CONTENT_TYPE) {
-                    req_builder = req_builder.header(
-                        header::CONTENT_TYPE,
-                        header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                    );
-                }
-                req_builder.body(Full::new(b))?
-            }
+        let req = match final_body {
+            Some(b) => req_builder.body(Full::new(b))?,
             None => req_builder.body(Full::new(Bytes::new()))?,
         };
 
@@ -227,6 +312,8 @@ impl CalDavClient {
         let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
             .await
             .map_err(|_| anyhow!("request timed out"))??;
+
+        self.update_request_compression_from_response(resp.headers());
 
         let encoding = detect_encoding(resp.headers());
         let (parts, body) = resp.into_parts();
@@ -270,18 +357,7 @@ impl CalDavClient {
                 );
             }
 
-            let mut payload = body;
-            if self.request_compression != ContentEncoding::Identity {
-                match compress_payload(payload.clone(), self.request_compression).await {
-                    Ok(compressed) => {
-                        payload = compressed;
-                        add_content_encoding(&mut headers, self.request_compression);
-                    }
-                    Err(_) => {
-                        // fall back to uncompressed payload
-                    }
-                }
-            }
+            let payload = self.prepare_request_body(body, &mut headers).await;
             final_body = Some(payload);
         }
 
@@ -298,6 +374,8 @@ impl CalDavClient {
         let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
             .await
             .map_err(|_| anyhow!("request timed out"))??;
+
+        self.update_request_compression_from_response(resp.headers());
 
         Ok(resp)
     }

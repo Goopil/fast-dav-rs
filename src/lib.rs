@@ -502,6 +502,7 @@ pub use caldav::{
 };
 pub use common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, detect_encoding,
+    detect_request_compression_preference,
 };
 
 // Legacy module paths kept for compatibility with existing imports.

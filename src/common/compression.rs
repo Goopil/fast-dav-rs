@@ -81,6 +81,98 @@ pub fn add_accept_encoding(h: &mut HeaderMap) {
     }
 }
 
+/// Detect the most efficient request compression supported by the server.
+///
+/// This inspects the server's `Accept-Encoding` response header and applies
+/// quality factors (`q=` weights) to pick the optimal [`ContentEncoding`]
+/// supported by both parties. Returns `None` when the header is absent or when
+/// no mutually supported encoding is advertised.
+pub fn detect_request_compression_preference(headers: &HeaderMap) -> Option<ContentEncoding> {
+    let raw = headers.get(http::header::ACCEPT_ENCODING)?.to_str().ok()?;
+
+    let mut wildcard_q: Option<f32> = None;
+    let mut identity_q: f32 = 1.0;
+    let mut identity_explicit = false;
+    let mut entries: Vec<(String, f32)> = Vec::new();
+
+    for part in raw.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut segments = trimmed.split(';');
+        let token = segments.next().unwrap().trim().to_ascii_lowercase();
+        if token.is_empty() {
+            continue;
+        }
+
+        let mut weight = 1.0_f32;
+        for param in segments {
+            if let Some((key, value)) = param.split_once('=')
+                && key.trim().eq_ignore_ascii_case("q")
+                && let Ok(parsed) = value.trim().parse::<f32>()
+            {
+                weight = parsed.clamp(0.0, 1.0);
+            }
+        }
+
+        match token.as_str() {
+            "identity" => {
+                identity_q = weight;
+                identity_explicit = true;
+            }
+            "*" => {
+                wildcard_q = Some(weight);
+            }
+            other => entries.push((other.to_string(), weight)),
+        }
+    }
+
+    if !identity_explicit && let Some(q) = wildcard_q {
+        identity_q = q;
+    }
+
+    let mut best: Option<(ContentEncoding, f32)> = None;
+    for candidate in [
+        ContentEncoding::Br,
+        ContentEncoding::Zstd,
+        ContentEncoding::Gzip,
+    ] {
+        let direct_q = entries.iter().find_map(|(name, q)| {
+            if name == candidate.as_str() {
+                Some(*q)
+            } else {
+                None
+            }
+        });
+        let effective_q = direct_q.or(wildcard_q);
+
+        if let Some(q) = effective_q {
+            if q <= 0.0 {
+                continue;
+            }
+
+            let should_replace = best
+                .map(|(_, best_q)| q > best_q + f32::EPSILON)
+                .unwrap_or(true);
+            if should_replace {
+                best = Some((candidate, q));
+            }
+        }
+    }
+
+    if let Some((encoding, _)) = best {
+        return Some(encoding);
+    }
+
+    if identity_q > 0.0 {
+        return Some(ContentEncoding::Identity);
+    }
+
+    None
+}
+
 /// Decompress a response body based on the content encoding.
 ///
 /// This function takes an aggregated response body and decompresses it according
