@@ -818,7 +818,7 @@ impl CalDavClient {
         }
         let body = resp.into_body();
         let mut principal = None;
-        for item in parse_multistatus_bytes(&body)? {
+        for item in parse_multistatus_bytes(&body)?.items {
             if let Some(found) = item
                 .current_user_principal
                 .into_iter()
@@ -849,7 +849,7 @@ impl CalDavClient {
         }
         let body = resp.into_body();
         let mut homes = Vec::new();
-        for mut item in parse_multistatus_bytes(&body)? {
+        for mut item in parse_multistatus_bytes(&body)?.items {
             homes.append(&mut item.calendar_home_set);
         }
         homes.sort();
@@ -878,7 +878,7 @@ impl CalDavClient {
             return Err(anyhow!("PROPFIND calendars failed with {}", resp.status()));
         }
         let body = resp.into_body();
-        Ok(map_calendar_list(parse_multistatus_bytes(&body)?))
+        Ok(map_calendar_list(parse_multistatus_bytes(&body)?.items))
     }
 
     /// Execute a CalDAV `calendar-query` with an optional time-range filter.
@@ -903,7 +903,7 @@ impl CalDavClient {
             ));
         }
         let body = resp.into_body();
-        Ok(map_calendar_objects(parse_multistatus_bytes(&body)?))
+        Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
     }
 
     /// Fetch specific calendar objects via `calendar-multiget`.
@@ -929,7 +929,7 @@ impl CalDavClient {
             ));
         }
         let body = resp.into_body();
-        Ok(map_calendar_objects(parse_multistatus_bytes(&body)?))
+        Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
     }
 
     /// Incrementally synchronise a calendar collection using `sync-collection`.
@@ -952,7 +952,8 @@ impl CalDavClient {
         let headers = resp.headers().clone();
         let body = resp.into_body();
 
-        Ok(map_sync_response(&headers, parse_multistatus_bytes(&body)?))
+        let parsed = parse_multistatus_bytes(&body)?;
+        Ok(map_sync_response(&headers, parsed.items, parsed.sync_token))
     }
 
     // ----------- ETag helpers -----------
@@ -1339,17 +1340,26 @@ pub fn map_calendar_objects(items: Vec<DavItem>) -> Vec<CalendarObject> {
     out
 }
 
-pub fn map_sync_response(headers: &HeaderMap, items: Vec<DavItem>) -> SyncResponse {
-    let mut sync_token = headers
-        .get("Sync-Token")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+pub fn map_sync_response(
+    headers: &HeaderMap,
+    items: Vec<DavItem>,
+    top_level_sync_token: Option<String>,
+) -> SyncResponse {
+    // Prioritize top-level sync-token (RFC 6578), then headers, then per-item tokens
+    let mut sync_token = top_level_sync_token.or_else(|| {
+        headers
+            .get("Sync-Token")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+    });
     let mut out = Vec::new();
 
     for mut item in items {
+        // Capture per-item sync token if we don't have a top-level one (fallback)
         if item.sync_token.is_some() && sync_token.is_none() {
             sync_token = item.sync_token.clone();
         }
+
         let is_collection = item.is_collection
             || (item.sync_token.is_some() && item.etag.is_none() && item.calendar_data.is_none());
         if is_collection {

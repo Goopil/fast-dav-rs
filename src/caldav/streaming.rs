@@ -117,9 +117,17 @@ where
     }
 }
 
+/// Result of parsing a multistatus response, including top-level sync-token if present
+#[derive(Debug)]
+pub struct ParseResult<C> {
+    pub items: C,
+    pub sync_token: Option<String>,
+}
+
 pub(crate) struct MultistatusParser<C> {
     pub stack: Vec<ElementName>,
     pub current: DavItem,
+    pub sync_token: Option<String>,
     sink: C,
 }
 
@@ -128,12 +136,16 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         Self {
             stack: Vec::with_capacity(16),
             current: DavItem::new(),
+            sync_token: None,
             sink,
         }
     }
 
-    fn finish(self) -> C {
-        self.sink
+    fn finish(self) -> ParseResult<C> {
+        ParseResult {
+            items: self.sink,
+            sync_token: self.sync_token,
+        }
     }
 
     pub fn path_ends_with(&self, needle: &[ElementName]) -> bool {
@@ -240,6 +252,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         if text.is_empty() {
             return;
         }
+
         // calendar-data is often multi-line and may arrive in chunks; keep exact payload.
         if self.path_ends_with(&[
             ElementName::Response,
@@ -320,6 +333,9 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::SyncToken,
         ]) {
             self.current.sync_token = Some(trimmed.to_string());
+        } else if self.path_ends_with(&[ElementName::Multistatus, ElementName::SyncToken]) {
+            // Top-level sync-token in sync-collection responses (RFC 6578)
+            self.sync_token = Some(trimmed.to_string());
         } else if self.path_ends_with(&[
             ElementName::Response,
             ElementName::Propstat,
@@ -368,7 +384,7 @@ async fn parse_multistatus_stream_with<C>(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
     sink: C,
-) -> Result<C>
+) -> Result<ParseResult<C>>
 where
     C: ItemConsumer + Send,
 {
@@ -420,7 +436,7 @@ where
     Ok(parser.finish())
 }
 
-fn parse_multistatus_bytes_with<R, C>(reader: R, sink: C) -> Result<C>
+fn parse_multistatus_bytes_with<R, C>(reader: R, sink: C) -> Result<ParseResult<C>>
 where
     R: BufRead,
     C: ItemConsumer,
@@ -465,7 +481,7 @@ where
 pub async fn parse_multistatus_stream(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
-) -> Result<Vec<DavItem>> {
+) -> Result<ParseResult<Vec<DavItem>>> {
     parse_multistatus_stream_with(resp_body, encodings, Vec::<DavItem>::new()).await
 }
 
@@ -474,28 +490,28 @@ pub async fn parse_multistatus_stream_visit<F>(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
     on_item: F,
-) -> Result<()>
+) -> Result<Option<String>>
 where
     F: FnMut(DavItem) -> Result<()> + Send,
 {
-    let _ = parse_multistatus_stream_with(resp_body, encodings, on_item).await?;
-    Ok(())
+    let result = parse_multistatus_stream_with(resp_body, encodings, on_item).await?;
+    Ok(result.sync_token)
 }
 
 /// Parse a WebDAV `207 Multi-Status` XML body from an already aggregated buffer.
-pub fn parse_multistatus_bytes(body: &[u8]) -> Result<Vec<DavItem>> {
+pub fn parse_multistatus_bytes(body: &[u8]) -> Result<ParseResult<Vec<DavItem>>> {
     let cursor = Cursor::new(body);
     parse_multistatus_bytes_with(cursor, Vec::<DavItem>::new())
 }
 
 /// Stream parse an aggregated multistatus body via callback.
-pub fn parse_multistatus_bytes_visit<F>(body: &[u8], on_item: F) -> Result<()>
+pub fn parse_multistatus_bytes_visit<F>(body: &[u8], on_item: F) -> Result<Option<String>>
 where
     F: FnMut(DavItem) -> Result<()>,
 {
     let cursor = Cursor::new(body);
-    let _ = parse_multistatus_bytes_with(cursor, on_item)?;
-    Ok(())
+    let result = parse_multistatus_bytes_with(cursor, on_item)?;
+    Ok(result.sync_token)
 }
 
 pub fn decode_text(raw: &[u8]) -> Result<String> {

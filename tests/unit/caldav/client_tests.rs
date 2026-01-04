@@ -275,7 +275,7 @@ fn test_map_sync_response() {
     collection_item.is_collection = true;
 
     let items = vec![item1, item2, collection_item];
-    let response = fast_dav_rs::client::map_sync_response(&headers, items);
+    let response = fast_dav_rs::client::map_sync_response(&headers, items, None);
 
     assert_eq!(
         response.sync_token,

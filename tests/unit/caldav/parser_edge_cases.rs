@@ -30,7 +30,9 @@ fn test_parse_multistatus_performance() {
     xml.push_str("\n</D:multistatus>");
 
     let start = Instant::now();
-    let items = parse_multistatus_bytes(xml.as_bytes()).expect("Parsing should succeed");
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
     let duration = start.elapsed();
 
     assert_eq!(items.len(), 1000);
@@ -79,7 +81,9 @@ fn test_parse_multistatus_unexpected_elements() {
   </D:response>
 </D:multistatus>"#;
 
-    let items = parse_multistatus_bytes(xml_with_extra.as_bytes()).expect("Parsing should succeed");
+    let items = parse_multistatus_bytes(xml_with_extra.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].href, "/dav/user01/event1.ics");
     assert_eq!(items[0].etag.as_deref(), Some("\"etag-1\""));
