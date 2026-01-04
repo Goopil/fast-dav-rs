@@ -494,3 +494,71 @@ fn test_sync_collection_filters_out_collections() {
     assert_eq!(sync.items.len(), 1);
     assert_eq!(sync.items[0].href, "/calendars/user/calendar/event.ics");
 }
+
+#[test]
+fn test_apple_namespace_calendar_color() {
+    // Test that Apple's calendar-color namespace is parsed correctly
+    let calendars_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/calendars/user/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>Personal</D:displayname>
+        <calendar-color xmlns="http://apple.com/ns/ical/">#FF6B35FF</calendar-color>
+        <D:resourcetype>
+          <D:collection/>
+          <C:calendar/>
+        </D:resourcetype>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let calendars = map_calendar_list(
+        parse_multistatus_bytes(calendars_xml.as_bytes())
+            .unwrap()
+            .items,
+    );
+    assert_eq!(calendars.len(), 1);
+    let calendar = &calendars[0];
+
+    // Verify Apple namespace calendar-color is parsed
+    assert_eq!(calendar.color.as_deref(), Some("#FF6B35FF"));
+    assert_eq!(calendar.displayname.as_deref(), Some("Personal"));
+}
+
+#[test]
+fn test_caldav_namespace_calendar_color() {
+    // Test standard CalDAV namespace calendar-color
+    let calendars_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/calendars/user/work/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>Work</D:displayname>
+        <C:calendar-color>#0066CC</C:calendar-color>
+        <D:resourcetype>
+          <D:collection/>
+          <C:calendar/>
+        </D:resourcetype>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let calendars = map_calendar_list(
+        parse_multistatus_bytes(calendars_xml.as_bytes())
+            .unwrap()
+            .items,
+    );
+    assert_eq!(calendars.len(), 1);
+    let calendar = &calendars[0];
+
+    // Verify standard CalDAV namespace calendar-color is parsed
+    assert_eq!(calendar.color.as_deref(), Some("#0066CC"));
+    assert_eq!(calendar.displayname.as_deref(), Some("Work"));
+}

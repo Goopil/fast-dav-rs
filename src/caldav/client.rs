@@ -860,12 +860,13 @@ impl CalDavClient {
     /// List CalDAV collections under a calendar home-set (`Depth: 1` PROPFIND).
     pub async fn list_calendars(&self, home_set_path: &str) -> Result<Vec<CalendarInfo>> {
         let body = r#"
-<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:A="http://apple.com/ns/ical/">
   <D:prop>
     <D:displayname/>
     <C:calendar-description/>
     <C:calendar-timezone/>
     <C:calendar-color/>
+    <A:calendar-color/>
     <C:supported-calendar-component-set/>
     <D:getetag/>
     <D:resourcetype/>
