@@ -276,7 +276,7 @@ END:VCALENDAR"#,
         .sync_collection(&calendar_path, Some(&token), Some(100), true)
         .await;
 
-    match incremental_sync {
+    let incremental_sync_token = match incremental_sync {
         Ok(response) => {
             println!(
                 "Incremental sync completed with {} items",
@@ -304,11 +304,13 @@ END:VCALENDAR"#,
             } else {
                 panic!("Expected to find new event in sync response");
             }
+
+            response.sync_token
         }
         Err(e) => {
             panic!("Incremental sync failed: {}", e);
         }
-    }
+    };
 
     // Test deletion sync - delete the event
     let delete_response = client.delete(&event_path).await;
@@ -328,27 +330,8 @@ END:VCALENDAR"#,
     // Small delay to ensure deletion is processed
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Get the sync token before deletion sync
-    let pre_delete_sync = client
-        .sync_collection(
-            &calendar_path,
-            initial_sync_token.as_deref(),
-            Some(100),
-            true,
-        )
-        .await;
-    let pre_delete_token = match pre_delete_sync {
-        Ok(response) => response.sync_token.clone(),
-        Err(e) => {
-            panic!("Failed to get pre-delete sync token: {}", e);
-        }
-    };
-
-    // Perform sync after deletion
-    if let Some(ref_token) = pre_delete_token {
-        // Small delay before sync to ensure changes are processed
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
+    // Perform sync after deletion using the incremental sync token
+    if let Some(ref_token) = incremental_sync_token {
         let deletion_sync = client
             .sync_collection(&calendar_path, Some(&ref_token), Some(100), true)
             .await;
