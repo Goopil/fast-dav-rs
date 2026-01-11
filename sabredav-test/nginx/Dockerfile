@@ -41,6 +41,7 @@ RUN cd /tmp && \
     wget https://nginx.org/download/nginx-1.25.3.tar.gz && \
     tar zxf nginx-1.25.3.tar.gz && \
     cd nginx-1.25.3 && \
+    export CFLAGS="-Wno-error=unterminated-string-initialization" && \
     ./configure \
         --prefix=/etc/nginx \
         --sbin-path=/usr/sbin/nginx \
