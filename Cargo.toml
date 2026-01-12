@@ -1,6 +1,6 @@
 [package]
 name = "fast-dav-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Fast CalDAV client with hyper + rustls, HTTP/2, compression, batching, and streaming XML parsing."
 license = "LGPL-3.0"
