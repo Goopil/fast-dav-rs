@@ -54,8 +54,8 @@ async fn test_propfind_stream() {
                     .await;
 
             match items {
-                Ok(parsed_items) => {
-                    println!("Parsed {} items from stream", parsed_items.len());
+                Ok(parsed_result) => {
+                    println!("Parsed {} items from stream", parsed_result.items.len());
                     // This should succeed even if there are no items
                     // Just verify it doesn't panic - remove the assert!(true) as it's optimized out
                     println!("Successfully parsed stream");
@@ -129,8 +129,11 @@ async fn test_report_stream() {
                         .await;
 
                 match items {
-                    Ok(parsed_items) => {
-                        println!("Parsed {} items from report stream", parsed_items.len());
+                    Ok(parsed_result) => {
+                        println!(
+                            "Parsed {} items from report stream",
+                            parsed_result.items.len()
+                        );
                         // Just verify it doesn't panic - remove the assert!(true) as it's optimized out
                         println!("Successfully parsed report stream");
                     }
@@ -181,10 +184,10 @@ async fn test_streaming_parser() {
             let items = fast_dav_rs::parse_multistatus_bytes(&body_bytes);
 
             match items {
-                Ok(parsed_items) => {
+                Ok(parsed_result) => {
                     println!(
                         "Streaming parser parsed {} items from regular response",
-                        parsed_items.len()
+                        parsed_result.items.len()
                     );
                     // Just verify it doesn't panic - remove the assert!(true) as it's optimized out
                     println!("Successfully parsed regular response with streaming parser");

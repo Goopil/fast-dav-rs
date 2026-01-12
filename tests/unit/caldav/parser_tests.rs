@@ -44,7 +44,9 @@ END:VCALENDAR
 </D:multistatus>
 "#;
 
-    let items = parse_multistatus_bytes(xml.as_bytes()).expect("xml parsing succeeds");
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("xml parsing succeeds")
+        .items;
     assert_eq!(items.len(), 2);
 
     let collection = &items[0];

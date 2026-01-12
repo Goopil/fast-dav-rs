@@ -60,7 +60,9 @@ fn test_multistatus_visit_matches_vec() {
 </D:multistatus>
 "#;
 
-    let items = parse_multistatus_bytes(xml.as_bytes()).expect("parse bytes");
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("parse bytes")
+        .items;
 
     let mut visited = Vec::new();
     parse_multistatus_bytes_visit(xml.as_bytes(), |item| {
