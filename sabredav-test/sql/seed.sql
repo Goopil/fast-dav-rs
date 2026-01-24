@@ -38,3 +38,20 @@ SUMMARY:Test Event 3
 DESCRIPTION:This is a test event for E2E testing
 END:VEVENT
 END:VCALENDAR', 'event3.ics', 1, UNIX_TIMESTAMP(), 'ghi789', 200, 'VEVENT', 1672735200, 1672738800, 'event3@example.com');
+
+-- Insert sample addressbook cards for testing
+INSERT INTO `cards` (`carddata`, `uri`, `addressbookid`, `lastmodified`, `etag`, `size`)
+VALUES
+('BEGIN:VCARD
+VERSION:4.0
+UID:contact1@example.com
+FN:Test Contact 1
+EMAIL:contact1@example.com
+END:VCARD', 'contact1.vcf', 1, UNIX_TIMESTAMP(), 'card123', 150),
+
+('BEGIN:VCARD
+VERSION:4.0
+UID:contact2@example.com
+FN:Test Contact 2
+EMAIL:contact2@example.com
+END:VCARD', 'contact2.vcf', 1, UNIX_TIMESTAMP(), 'card456', 150);

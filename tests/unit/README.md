@@ -44,6 +44,42 @@ This directory contains unit tests for the fast-dav-rs library, organized by mod
   - Performance testing
   - Unexpected element handling
 
+### 📦 CardDAV Module Tests
+- **Client Tests** - `client_tests.rs`
+  - Client creation and URI building
+  - Depth enum values
+  - XML escaping functions
+  - XML body builders
+
+- **Helpers Tests** - `carddav_helpers.rs`
+  - Addressbook query builders
+  - Addressbook multiget builders
+  - Sync collection builders
+  - Response mapping functions
+
+- **Parser Tests** - `parser_tests.rs`
+  - Multistatus XML parsing
+  - Addressbook property extraction
+
+- **Streaming Tests** - `streaming_tests.rs`
+  - Streaming XML parsing (if applicable)
+
+- **Integration Tests** - `integration_tests.rs`
+  - Combined functionality tests
+
+- **ETag Tests** - `etag_tests.rs`
+  - ETag header parsing and handling
+  - Conditional request helpers
+
+- **XML Helper Tests** - `xml_helper_tests.rs`
+  - XML escaping utilities
+  - Unicode handling
+
+- **Parser Edge Cases** - `parser_edge_cases.rs`
+  - Malformed XML handling
+  - Performance testing
+  - Unexpected element handling
+
 ### 🗜️ Common Module Tests
 - **Compression Tests** - `compression_tests.rs`
   - Content encoding detection

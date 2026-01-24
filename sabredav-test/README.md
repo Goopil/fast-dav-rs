@@ -45,4 +45,5 @@ Note: This setup uses the modern `docker compose` command (V2) rather than the l
 - PHP-FPM for better performance
 - MySQL database with preconfigured SabreDAV tables
 - Test user and calendar pre-created
+- CardDAV addressbook support with seeded contacts
 - Reset script for clean testing environment

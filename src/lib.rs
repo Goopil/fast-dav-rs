@@ -1,6 +1,6 @@
-//! Fast CalDAV client library for Rust.
+//! Fast CalDAV/CardDAV client library for Rust.
 //!
-//! This library provides a high-performance, asynchronous CalDAV client built on modern
+//! This library provides a high-performance, asynchronous CalDAV and CardDAV client built on modern
 //! Rust ecosystem components including hyper 1.x, rustls, and tokio.
 //!
 //! # Features
@@ -11,6 +11,7 @@
 //! - Batch operations with bounded concurrency
 //! - ETag helpers for safe conditional writes/deletes
 //! - Streaming XML parsing with minimal memory footprint
+//! - CardDAV addressbook discovery and vCard operations
 //!
 //! # Examples
 //!
@@ -487,7 +488,37 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! ## CardDAV Addressbook Discovery
+//!
+//! ```no_run
+//! use fast_dav_rs::CardDavClient;
+//! use anyhow::Result;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     let client = CardDavClient::new(
+//!         "https://carddav.example.com/user/",
+//!         Some("username"),
+//!         Some("password"),
+//!     )?;
+//!
+//!     let principal = client.discover_current_user_principal().await?
+//!         .ok_or_else(|| anyhow::anyhow!("No principal found"))?;
+//!
+//!     let homes = client.discover_addressbook_home_set(&principal).await?;
+//!     let home = homes.first().ok_or_else(|| anyhow::anyhow!("No addressbook home found"))?;
+//!
+//!     let books = client.list_addressbooks(home).await?;
+//!     for book in &books {
+//!         println!("Found addressbook: {:?}", book.displayname);
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
 pub mod caldav;
+pub mod carddav;
 pub mod common;
 
 // Backwards-compatible re-exports
@@ -500,6 +531,7 @@ pub use caldav::{
     build_calendar_multiget_body, build_calendar_query_body, build_sync_collection_body,
     map_calendar_list, map_calendar_objects, map_sync_response,
 };
+pub use carddav::{AddressBookInfo, AddressObject, CardDavClient};
 pub use common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, detect_encoding,
     detect_encodings, detect_request_compression_preference,
