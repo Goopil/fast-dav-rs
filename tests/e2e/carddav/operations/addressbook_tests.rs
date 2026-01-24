@@ -33,7 +33,10 @@ async fn test_create_addressbook() {
     let response = client.mkaddressbook(&book_path, &book_xml).await;
     match response {
         Ok(resp) => {
-            println!("MKADDRESSBOOK request succeeded with status: {}", resp.status());
+            println!(
+                "MKADDRESSBOOK request succeeded with status: {}",
+                resp.status()
+            );
             assert!(
                 resp.status().is_success(),
                 "Expected successful addressbook creation, got status: {}",

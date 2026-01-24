@@ -67,10 +67,7 @@ END:VCARD
     );
     assert_eq!(book.etag.as_deref(), Some("\"etag-123\""));
     assert_eq!(book.sync_token.as_deref(), Some("token-123"));
-    let data = book
-        .address_data
-        .as_ref()
-        .expect("address data present");
+    let data = book.address_data.as_ref().expect("address data present");
     assert!(data.contains("BEGIN:VCARD"));
     assert_eq!(book.href, "/dav/user01/personal/");
 }

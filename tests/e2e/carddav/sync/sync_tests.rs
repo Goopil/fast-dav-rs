@@ -60,7 +60,10 @@ async fn test_sync_collection_roundtrip() {
         .put_if_none_match(&contact_path, vcard)
         .await
         .expect("PUT contact for sync");
-    assert!(create_resp.status().is_success(), "Expected contact creation");
+    assert!(
+        create_resp.status().is_success(),
+        "Expected contact creation"
+    );
 
     let delta = client
         .sync_collection(&book_path, Some(&sync_token), Some(50), true)

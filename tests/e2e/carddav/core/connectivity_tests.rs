@@ -17,7 +17,10 @@ async fn test_basic_connectivity() {
     match response {
         Ok(resp) => {
             println!("GET request succeeded with status: {}", resp.status());
-            assert!(resp.status().is_success(), "Expected successful GET request");
+            assert!(
+                resp.status().is_success(),
+                "Expected successful GET request"
+            );
         }
         Err(e) => {
             panic!("GET request failed: {}", e);

@@ -1,6 +1,6 @@
 use fast_dav_rs::CardDavClient;
-use fast_dav_rs::carddav::Depth;
 use fast_dav_rs::ContentEncoding;
+use fast_dav_rs::carddav::Depth;
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
 const TEST_USER: &str = "test";

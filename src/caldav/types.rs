@@ -1,27 +1,4 @@
-use anyhow::Result;
-
-/// WebDAV Depth
-#[derive(Copy, Clone)]
-pub enum Depth {
-    Zero,
-    One,
-    Infinity,
-}
-impl Depth {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Depth::Zero => "0",
-            Depth::One => "1",
-            Depth::Infinity => "infinity",
-        }
-    }
-}
-
-/// Annotated result of a batch operation
-pub struct BatchItem<T> {
-    pub pub_path: String, // exposé publiquement (nom distinct de path pour éviter conflits)
-    pub result: Result<T>,
-}
+pub use crate::webdav::types::{BatchItem, Depth};
 
 /// Item extracted from a WebDAV response
 #[derive(Debug, Clone)]

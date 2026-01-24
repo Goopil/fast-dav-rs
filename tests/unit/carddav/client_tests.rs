@@ -64,19 +64,24 @@ fn test_build_uri_root_path_only() {
     let client =
         CardDavClient::new("https://example.com/", None, None).expect("Failed to create client");
 
-    let uri = client.build_uri("addressbook/").expect("Failed to build URI");
+    let uri = client
+        .build_uri("addressbook/")
+        .expect("Failed to build URI");
     assert_eq!(uri.to_string(), "https://example.com/addressbook/");
 }
 
 #[test]
 fn test_build_uri_with_special_characters() {
-    let client =
-        CardDavClient::new("https://example.com/dav/", None, None).expect("Failed to create client");
+    let client = CardDavClient::new("https://example.com/dav/", None, None)
+        .expect("Failed to create client");
 
     let uri = client
         .build_uri("my-addressbook_123/")
         .expect("Failed to build URI");
-    assert_eq!(uri.to_string(), "https://example.com/dav/my-addressbook_123/");
+    assert_eq!(
+        uri.to_string(),
+        "https://example.com/dav/my-addressbook_123/"
+    );
 }
 
 #[test]
@@ -151,8 +156,7 @@ fn test_build_addressbook_query_filters() {
     assert!(email_filter.contains("prop-filter name=\"EMAIL\""));
     assert!(email_filter.contains("user@example.com"));
 
-    let fn_filter =
-        fast_dav_rs::carddav::client::build_addressbook_query_filter_fn("Ada Lovelace");
+    let fn_filter = fast_dav_rs::carddav::client::build_addressbook_query_filter_fn("Ada Lovelace");
     assert!(fn_filter.contains("prop-filter name=\"FN\""));
     assert!(fn_filter.contains("Ada Lovelace"));
 }

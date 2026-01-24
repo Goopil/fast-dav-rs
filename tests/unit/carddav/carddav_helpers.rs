@@ -62,11 +62,7 @@ fn maps_carddav_multistatus_structures() {
   </D:response>
 </D:multistatus>"#;
 
-    let books = map_addressbook_list(
-        parse_multistatus_bytes(books_xml.as_bytes())
-            .unwrap()
-            .items,
-    );
+    let books = map_addressbook_list(parse_multistatus_bytes(books_xml.as_bytes()).unwrap().items);
     assert_eq!(books.len(), 1);
     let book = &books[0];
     assert_eq!(book.href, "/dav/user01/AddressBooks/Personal/");
@@ -511,11 +507,7 @@ fn test_apple_namespace_addressbook_color() {
   </D:response>
 </D:multistatus>"#;
 
-    let books = map_addressbook_list(
-        parse_multistatus_bytes(books_xml.as_bytes())
-            .unwrap()
-            .items,
-    );
+    let books = map_addressbook_list(parse_multistatus_bytes(books_xml.as_bytes()).unwrap().items);
     assert_eq!(books.len(), 1);
     let book = &books[0];
 
@@ -545,11 +537,7 @@ fn test_carddav_namespace_addressbook_color() {
   </D:response>
 </D:multistatus>"#;
 
-    let books = map_addressbook_list(
-        parse_multistatus_bytes(books_xml.as_bytes())
-            .unwrap()
-            .items,
-    );
+    let books = map_addressbook_list(parse_multistatus_bytes(books_xml.as_bytes()).unwrap().items);
     assert_eq!(books.len(), 1);
     let book = &books[0];
 

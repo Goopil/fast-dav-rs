@@ -63,8 +63,8 @@ async fn test_contact_crud() {
     assert!(!query_results.is_empty(), "Expected query results");
 
     let head_resp = client.head(&contact_path).await.expect("HEAD contact");
-    let etag = CardDavClient::etag_from_headers(head_resp.headers())
-        .expect("Expected ETag for contact");
+    let etag =
+        CardDavClient::etag_from_headers(head_resp.headers()).expect("Expected ETag for contact");
 
     let updated = build_vcard(&uid, "Alice Updated", "alice@example.com");
     let update_resp = client
@@ -76,9 +76,12 @@ async fn test_contact_crud() {
         "Expected successful contact update"
     );
 
-    let head_resp = client.head(&contact_path).await.expect("HEAD updated contact");
-    let delete_etag = CardDavClient::etag_from_headers(head_resp.headers())
-        .expect("Expected ETag for contact");
+    let head_resp = client
+        .head(&contact_path)
+        .await
+        .expect("HEAD updated contact");
+    let delete_etag =
+        CardDavClient::etag_from_headers(head_resp.headers()).expect("Expected ETag for contact");
 
     let delete_resp = client
         .delete_if_match(&contact_path, &delete_etag)

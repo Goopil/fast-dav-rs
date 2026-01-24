@@ -30,7 +30,10 @@ async fn test_propfind_principals() {
 
     match response {
         Ok(resp) => {
-            println!("PROPFIND on principals succeeded with status: {}", resp.status());
+            println!(
+                "PROPFIND on principals succeeded with status: {}",
+                resp.status()
+            );
             assert!(
                 resp.status().is_success(),
                 "Expected successful PROPFIND on principals"

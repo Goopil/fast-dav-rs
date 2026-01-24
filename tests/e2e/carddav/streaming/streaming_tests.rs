@@ -105,7 +105,10 @@ async fn test_report_stream() {
 
     match response {
         Ok(stream_response) => {
-            println!("REPORT stream request succeeded with status: {}", stream_response.status());
+            println!(
+                "REPORT stream request succeeded with status: {}",
+                stream_response.status()
+            );
             if stream_response.status().is_success() {
                 let encodings = fast_dav_rs::detect_encodings(stream_response.headers());
                 let items = fast_dav_rs::carddav::parse_multistatus_stream(
