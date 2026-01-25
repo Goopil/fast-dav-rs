@@ -90,11 +90,13 @@ async fn main() -> Result<()> {
 
 ## Common Operations
 
-- **Create / update events**: `put_if_none_match` and `put_if_match` accept ICS payloads and attach the proper
+- **CalDAV event CRUD**: `put_if_none_match` and `put_if_match` accept ICS payloads and attach the proper
   conditional headers.
-- **Filter collections**: `calendar_query_timerange` builds a `REPORT` to fetch events within a date range.
-- **Safe deletion**: `delete_if_match` ensures you do not remove an event that changed on the server.
+- **CalDAV filters**: `calendar_query_timerange` builds a `REPORT` to fetch events within a date range.
+- **Safe deletion**: `delete_if_match` ensures you do not remove a resource that changed on the server.
+- **CardDAV contact CRUD**: `put_if_none_match`, `put_if_match`, and `delete_if_match` accept `text/vcard` payloads.
 - **CardDAV queries**: `addressbook_query` and helpers (`*_uid`, `*_email`, `*_fn`) simplify contact filtering.
+- **CardDAV multiget**: `addressbook_multiget` fetches specific vCard resources by href.
 - **Batch work**: `propfind_many` and the `map_*` helpers run multiple requests concurrently with bounded concurrency.
 - **Compression**: automatic negotiation eagerly probes gzip once and caches the result; override or disable it
   through `RequestCompressionMode`.
@@ -123,13 +125,61 @@ async fn main() -> Result<()> {
 }
 ```
 
+## CardDAV Operations
+
+```rust
+use fast_dav_rs::CardDavClient;
+use bytes::Bytes;
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let client = CardDavClient::new(
+        "https://carddav.example.com/users/alice/",
+        Some("alice"),
+        Some("hunter2"),
+    )?;
+
+    let addressbook_path = "addressbooks/alice/team/";
+    let addressbook_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkaddressbook xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:set>
+    <D:prop>
+      <D:displayname>Team Contacts</D:displayname>
+    </D:prop>
+  </D:set>
+</C:mkaddressbook>"#;
+
+    let _ = client.mkaddressbook(addressbook_path, addressbook_xml).await?;
+
+    let contact_path = format!("{addressbook_path}jane.vcf");
+    let vcard = Bytes::from("BEGIN:VCARD\nVERSION:3.0\nFN:Jane Doe\nUID:jane-1\nEMAIL:jane@example.com\nEND:VCARD\n");
+    client.put_if_none_match(&contact_path, vcard).await?;
+
+    let matches = client
+        .addressbook_query_email(addressbook_path, "jane@example.com", true)
+        .await?;
+
+    let hrefs: Vec<String> = matches.iter().map(|c| c.href.clone()).collect();
+    let contacts = client
+        .addressbook_multiget(addressbook_path, hrefs, true)
+        .await?;
+
+    for contact in contacts {
+        println!("{} -> {:?}", contact.href, contact.etag);
+    }
+
+    Ok(())
+}
+```
+
 ## Streaming & Sync
 
-- `propfind_stream` combined with `parse_multistatus_stream` iterates a `207 Multi-Status` response without buffering
-  the entire payload.
+- `propfind_stream` and `report_stream` work for both CalDAV and CardDAV; parse with
+  `caldav::parse_multistatus_stream` or `carddav::parse_multistatus_stream`.
 - `detect_encoding` chooses the right decoder for compressed responses.
 - `supports_webdav_sync` and `sync_collection` let you build incremental sync loops based on sync tokens rather than
-  full scans.
+  full scans, for both calendars and addressbooks.
 
 ## Development Commands
 

@@ -222,7 +222,8 @@
 //! For processing large collections without loading everything into memory:
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Depth, parse_multistatus_stream, detect_encoding};
+//! use fast_dav_rs::{CalDavClient, Depth, detect_encoding};
+//! use fast_dav_rs::caldav::parse_multistatus_stream;
 //! use bytes::Bytes;
 //! use anyhow::Result;
 //!
@@ -512,6 +513,159 @@
 //!     let books = client.list_addressbooks(home).await?;
 //!     for book in &books {
 //!         println!("Found addressbook: {:?}", book.displayname);
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## CardDAV Contact Operations
+//!
+//! ```no_run
+//! use fast_dav_rs::CardDavClient;
+//! use bytes::Bytes;
+//! use anyhow::Result;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     let client = CardDavClient::new(
+//!         "https://carddav.example.com/user/",
+//!         Some("username"),
+//!         Some("password"),
+//!     )?;
+//!
+//!     let addressbook_path = "addressbooks/user/team/";
+//!     let addressbook_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+//!     <C:mkaddressbook xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+//!       <D:set>
+//!         <D:prop>
+//!           <D:displayname>Team Contacts</D:displayname>
+//!         </D:prop>
+//!       </D:set>
+//!     </C:mkaddressbook>"#;
+//!
+//!     let _ = client.mkaddressbook(addressbook_path, addressbook_xml).await?;
+//!
+//!     let contact_path = format!("{addressbook_path}jane.vcf");
+//!     let vcard = Bytes::from("BEGIN:VCARD\nVERSION:3.0\nFN:Jane Doe\nUID:jane-1\nEMAIL:jane@example.com\nEND:VCARD\n");
+//!     let create_resp = client.put_if_none_match(&contact_path, vcard).await?;
+//!     println!("Create contact: {}", create_resp.status());
+//!
+//!     let head = client.head(&contact_path).await?;
+//!     if let Some(etag) = CardDavClient::etag_from_headers(head.headers()) {
+//!         let updated = Bytes::from("BEGIN:VCARD\nVERSION:3.0\nFN:Jane Doe\nUID:jane-1\nEMAIL:jane@example.com\nTEL:+1-555-0100\nEND:VCARD\n");
+//!         let update_resp = client.put_if_match(&contact_path, updated, &etag).await?;
+//!         println!("Update contact: {}", update_resp.status());
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## CardDAV Queries and Multiget
+//!
+//! ```no_run
+//! use fast_dav_rs::CardDavClient;
+//! use anyhow::Result;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     let client = CardDavClient::new(
+//!         "https://carddav.example.com/user/",
+//!         Some("username"),
+//!         Some("password"),
+//!     )?;
+//!
+//!     let addressbook_path = "addressbooks/user/team/";
+//!     let matches = client
+//!         .addressbook_query_email(addressbook_path, "jane@example.com", true)
+//!         .await?;
+//!
+//!     let hrefs: Vec<String> = matches.iter().map(|c| c.href.clone()).collect();
+//!     let contacts = client.addressbook_multiget(addressbook_path, hrefs, true).await?;
+//!
+//!     for contact in contacts {
+//!         if let Some(data) = contact.address_data {
+//!             let first_line = data.lines().next().unwrap_or("");
+//!             println!("{} -> {}", contact.href, first_line);
+//!         }
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## CardDAV Streaming Large Responses
+//!
+//! ```no_run
+//! use fast_dav_rs::{CardDavClient, Depth, detect_encoding};
+//! use fast_dav_rs::carddav::parse_multistatus_stream;
+//! use anyhow::Result;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     let client = CardDavClient::new(
+//!         "https://carddav.example.com/user/",
+//!         Some("username"),
+//!         Some("password"),
+//!     )?;
+//!
+//!     let addressbook_path = "addressbooks/user/team/";
+//!     let report_xml = r#"
+//!     <C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+//!       <D:prop>
+//!         <D:getetag/>
+//!         <C:address-data/>
+//!       </D:prop>
+//!       <C:filter>
+//!         <C:prop-filter name="FN">
+//!           <C:text-match>Jane</C:text-match>
+//!         </C:prop-filter>
+//!       </C:filter>
+//!     </C:addressbook-query>"#;
+//!
+//!     let response = client
+//!         .report_stream(addressbook_path, Depth::One, report_xml)
+//!         .await?;
+//!     let encoding = detect_encoding(response.headers());
+//!     let result = parse_multistatus_stream(response.into_body(), &[encoding]).await?;
+//!
+//!     for item in result.items {
+//!         if let Some(data) = item.address_data {
+//!             println!("{} -> {} bytes", item.href, data.len());
+//!         }
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## CardDAV Sync Collection
+//!
+//! ```no_run
+//! use fast_dav_rs::CardDavClient;
+//! use anyhow::Result;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     let client = CardDavClient::new(
+//!         "https://carddav.example.com/user/",
+//!         Some("username"),
+//!         Some("password"),
+//!     )?;
+//!
+//!     let addressbook_path = "addressbooks/user/team/";
+//!     let sync = client
+//!         .sync_collection(addressbook_path, None, Some(100), true)
+//!         .await?;
+//!     println!("Sync token: {:?}", sync.sync_token);
+//!
+//!     for item in sync.items {
+//!         if item.is_deleted {
+//!             println!("Deleted: {}", item.href);
+//!         } else if let Some(data) = item.address_data {
+//!             println!("Updated: {} ({} bytes)", item.href, data.len());
+//!         }
 //!     }
 //!
 //!     Ok(())
