@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 echo "Testing SabreDAV setup..."
 
@@ -13,7 +13,7 @@ fi
 
 # Check if database is initialized
 echo "Checking database..."
-docker compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) as user_count FROM users;" > /dev/null 2>&1
+docker compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) as user_count FROM users;" >/dev/null 2>&1
 if [[ $? -eq 0 ]]; then
     echo "✅ Database is initialized"
 else
