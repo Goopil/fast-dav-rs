@@ -48,7 +48,7 @@ jobs:
         docker compose version
 
     - name: Build SabreDAV PHP image (cached)
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v6
       with:
         context: sabredav-test
         file: sabredav-test/Dockerfile
@@ -59,7 +59,7 @@ jobs:
         cache-to: type=gha,scope=sabredav-app,mode=max
 
     - name: Build nginx image (cached)
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v6
       with:
         context: sabredav-test/nginx
         file: sabredav-test/nginx/Dockerfile
