@@ -13,17 +13,17 @@ futures = "0.3"
 futures-util = "0.3"
 hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-rustls = { version = "0.27", features = ["http2", "webpki-roots"] }
-quick-xml = { version = "0.38.3", features = ["async-tokio"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+quick-xml = { version = "0.39.0", features = ["async-tokio"] }
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "time"] }
 tokio-util = "0.7"
 async-compression = { version = "0.4", features = ["tokio", "brotli", "gzip", "zstd"] }
 hyper-util = { version = "0.1", features = ["client", "http1", "http2", "tokio"] }
 http-body-util = "0.1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.49.0", features = ["full"] }
 bytes = "1"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4.43", features = ["serde"] }
 futures = "0.3"
 
 [[test]]
