@@ -1,13 +1,13 @@
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
-use fast_dav_rs::streaming::*;
+use fast_dav_rs::carddav::streaming::*;
 use http_body_util::Full;
 use hyper::Request;
 use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 
-async fn parse_streaming_xml(xml: &str) -> Result<ParseResult<Vec<fast_dav_rs::DavItem>>> {
+async fn parse_streaming_xml(xml: &str) -> Result<ParseResult<Vec<fast_dav_rs::carddav::DavItem>>> {
     let (client_io, mut server_io) = io::duplex(16 * 1024);
     let body = xml.as_bytes().to_vec();
     let header = format!(
@@ -71,8 +71,8 @@ fn test_element_from_bytes() {
     // Test namespaced elements
     assert_eq!(element_from_bytes(b"D:href"), ElementName::Href);
     assert_eq!(
-        element_from_bytes(b"C:calendar-data"),
-        ElementName::CalendarData
+        element_from_bytes(b"C:address-data"),
+        ElementName::AddressData
     );
 
     // Test unknown elements
@@ -95,12 +95,12 @@ fn test_decode_text() {
 #[test]
 fn test_multistatus_visit_matches_vec() {
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
   <D:response>
     <D:href>/cal1/</D:href>
     <D:propstat>
       <D:prop>
-        <D:displayname>Calendar One</D:displayname>
+        <D:displayname>Addressbook One</D:displayname>
         <D:getetag>"etag-1"</D:getetag>
       </D:prop>
     </D:propstat>
@@ -109,7 +109,7 @@ fn test_multistatus_visit_matches_vec() {
     <D:href>/cal2/</D:href>
     <D:propstat>
       <D:prop>
-        <D:displayname>Calendar Two</D:displayname>
+        <D:displayname>Addressbook Two</D:displayname>
         <D:getetag>"etag-2"</D:getetag>
       </D:prop>
     </D:propstat>
@@ -152,17 +152,17 @@ fn test_multistatus_visit_error_propagates() {
 }
 
 #[tokio::test]
-async fn test_streaming_preserves_multiline_calendar_data() -> Result<()> {
+async fn test_streaming_preserves_multiline_address_data() -> Result<()> {
     let xml = r#"
 <?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
   <D:response>
-    <D:href>/dav/user01/cal/</D:href>
+    <D:href>/dav/user01/ab/</D:href>
     <D:propstat>
       <D:prop>
-        <C:calendar-data><![CDATA[BEGIN:VCALENDAR
-]]><![CDATA[END:VCALENDAR
-]]></C:calendar-data>
+        <C:address-data><![CDATA[BEGIN:VCARD
+]]><![CDATA[END:VCARD
+]]></C:address-data>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
@@ -174,7 +174,7 @@ async fn test_streaming_preserves_multiline_calendar_data() -> Result<()> {
     assert_eq!(result.items.len(), 1);
 
     let item = &result.items[0];
-    let data = item.calendar_data.as_ref().expect("calendar data present");
-    assert_eq!(data, "BEGIN:VCALENDAR\nEND:VCALENDAR\n");
+    let data = item.address_data.as_ref().expect("address data present");
+    assert_eq!(data, "BEGIN:VCARD\nEND:VCARD\n");
     Ok(())
 }

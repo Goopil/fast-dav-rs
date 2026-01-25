@@ -4,9 +4,9 @@
 [![Documentation](https://docs.rs/fast-dav-rs/badge.svg)](https://docs.rs/fast-dav-rs)
 [![CI](https://github.com/Goopil/fast-dav-rs/workflows/CI/badge.svg)](https://github.com/Goopil/fast-dav-rs/actions)
 
-**fast-dav-rs** is a high-performance asynchronous CalDAV client for Rust. It blends `hyper 1.x`, `tokio`, `rustls`,
-and streaming XML tooling so your services can discover calendars, manage events, and keep remote CalDAV stores in sync
-without re-implementing the protocol by hand.
+**fast-dav-rs** is a high-performance asynchronous CalDAV/CardDAV client for Rust. It blends `hyper 1.x`, `tokio`,
+`rustls`, and streaming XML tooling so your services can discover calendars, manage events, sync addressbooks, and keep
+remote DAV stores in sync without re-implementing the protocol by hand.
 
 ## Highlights
 
@@ -15,6 +15,7 @@ without re-implementing the protocol by hand.
 - Streaming XML parsing for large `PROPFIND`/`REPORT` responses.
 - Convenience helpers for ETags, conditional methods, and safe deletions.
 - First-class support for `REPORT calendar-query`, `calendar-multiget`, WebDAV-Sync (RFC 6578), and bounded parallelism.
+- CardDAV discovery, addressbook queries, and vCard payload helpers.
 
 ## Install
 
@@ -57,12 +58,43 @@ async fn main() -> Result<()> {
 }
 ```
 
+Discover addressbooks and list available collections:
+
+```rust
+use fast_dav_rs::CardDavClient;
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let client = CardDavClient::new(
+        "https://carddav.example.com/users/alice/",
+        Some("alice"),
+        Some("hunter2"),
+    )?;
+
+    let principal = client
+        .discover_current_user_principal()
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("no principal returned"))?;
+
+    let homes = client.discover_addressbook_home_set(&principal).await?;
+    let home = homes.first().expect("missing addressbook-home-set");
+
+    for book in client.list_addressbooks(home).await? {
+        println!("Addressbook: {:?}", book.displayname);
+    }
+
+    Ok(())
+}
+```
+
 ## Common Operations
 
 - **Create / update events**: `put_if_none_match` and `put_if_match` accept ICS payloads and attach the proper
   conditional headers.
 - **Filter collections**: `calendar_query_timerange` builds a `REPORT` to fetch events within a date range.
 - **Safe deletion**: `delete_if_match` ensures you do not remove an event that changed on the server.
+- **CardDAV queries**: `addressbook_query` and helpers (`*_uid`, `*_email`, `*_fn`) simplify contact filtering.
 - **Batch work**: `propfind_many` and the `map_*` helpers run multiple requests concurrently with bounded concurrency.
 - **Compression**: automatic negotiation eagerly probes gzip once and caches the result; override or disable it
   through `RequestCompressionMode`.
@@ -108,8 +140,8 @@ async fn main() -> Result<()> {
 
 ## End-to-End Testing
 
-This project includes a complete E2E testing environment with a SabreDAV server that supports all major CalDAV features
-including compression.
+This project includes a complete E2E testing environment with a SabreDAV server that supports CalDAV and CardDAV
+features including compression.
 
 ### Prerequisites
 

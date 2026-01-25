@@ -1,4 +1,4 @@
-use crate::caldav::types::DavItem;
+use crate::carddav::types::DavItem;
 use crate::common::compression::ContentEncoding;
 use crate::webdav::streaming::{CommonParser, path_ends_with};
 use anyhow::{Result, anyhow};
@@ -25,15 +25,14 @@ pub enum ElementName {
     Getetag,
     Resourcetype,
     Collection,
-    Calendar,
-    SupportedCalendarComponentSet,
-    Comp,
-    CalendarData,
-    CalendarDescription,
-    CalendarTimezone,
-    CalendarColor,
+    Addressbook,
+    SupportedAddressData,
+    AddressDataType,
+    AddressData,
+    AddressbookDescription,
+    AddressbookColor,
     SyncToken,
-    CalendarHomeSet,
+    AddressbookHomeSet,
     CurrentUserPrincipal,
     Owner,
     Getcontenttype,
@@ -67,24 +66,22 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
         ElementName::Resourcetype
     } else if local.eq_ignore_ascii_case(b"collection") {
         ElementName::Collection
-    } else if local.eq_ignore_ascii_case(b"calendar") {
-        ElementName::Calendar
-    } else if local.eq_ignore_ascii_case(b"supported-calendar-component-set") {
-        ElementName::SupportedCalendarComponentSet
-    } else if local.eq_ignore_ascii_case(b"comp") {
-        ElementName::Comp
-    } else if local.eq_ignore_ascii_case(b"calendar-data") {
-        ElementName::CalendarData
-    } else if local.eq_ignore_ascii_case(b"calendar-description") {
-        ElementName::CalendarDescription
-    } else if local.eq_ignore_ascii_case(b"calendar-timezone") {
-        ElementName::CalendarTimezone
-    } else if local.eq_ignore_ascii_case(b"calendar-color") {
-        ElementName::CalendarColor
+    } else if local.eq_ignore_ascii_case(b"addressbook") {
+        ElementName::Addressbook
+    } else if local.eq_ignore_ascii_case(b"supported-address-data") {
+        ElementName::SupportedAddressData
+    } else if local.eq_ignore_ascii_case(b"address-data-type") {
+        ElementName::AddressDataType
+    } else if local.eq_ignore_ascii_case(b"address-data") {
+        ElementName::AddressData
+    } else if local.eq_ignore_ascii_case(b"addressbook-description") {
+        ElementName::AddressbookDescription
+    } else if local.eq_ignore_ascii_case(b"addressbook-color") {
+        ElementName::AddressbookColor
     } else if local.eq_ignore_ascii_case(b"sync-token") {
         ElementName::SyncToken
-    } else if local.eq_ignore_ascii_case(b"calendar-home-set") {
-        ElementName::CalendarHomeSet
+    } else if local.eq_ignore_ascii_case(b"addressbook-home-set") {
+        ElementName::AddressbookHomeSet
     } else if local.eq_ignore_ascii_case(b"current-user-principal") {
         ElementName::CurrentUserPrincipal
     } else if local.eq_ignore_ascii_case(b"owner") {
@@ -164,42 +161,61 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Response => {
                 self.current = DavItem::new();
             }
-            ElementName::Calendar => {
+            ElementName::Addressbook => {
                 if self.path_ends_with(&[
                     ElementName::Response,
                     ElementName::Propstat,
                     ElementName::Prop,
                     ElementName::Resourcetype,
-                    ElementName::Calendar,
+                    ElementName::Addressbook,
                 ]) {
-                    self.current.is_calendar = true;
+                    self.current.is_addressbook = true;
                 }
             }
-            ElementName::Comp => {
+            ElementName::AddressDataType => {
                 if self.path_ends_with(&[
                     ElementName::Response,
                     ElementName::Propstat,
                     ElementName::Prop,
-                    ElementName::SupportedCalendarComponentSet,
-                    ElementName::Comp,
+                    ElementName::SupportedAddressData,
+                    ElementName::AddressDataType,
                 ]) {
+                    let mut content_type = None;
+                    let mut version = None;
                     for attr in event.attributes().with_checks(false) {
                         let attr = attr?;
                         let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
-                        if key == "name" {
+                        if key == "content-type" {
                             let value = attr
                                 .unescape_value()
                                 .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
                                 .into_owned();
-                            if !value.is_empty()
-                                && !self
-                                    .current
-                                    .supported_components
-                                    .iter()
-                                    .any(|c| c.eq_ignore_ascii_case(&value))
-                            {
-                                self.current.supported_components.push(value);
+                            if !value.is_empty() {
+                                content_type = Some(value);
                             }
+                        } else if key == "version" {
+                            let value = attr
+                                .unescape_value()
+                                .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
+                                .into_owned();
+                            if !value.is_empty() {
+                                version = Some(value);
+                            }
+                        }
+                    }
+                    if let Some(content_type) = content_type {
+                        let value = if let Some(version) = version {
+                            format!("{content_type};version={version}")
+                        } else {
+                            content_type
+                        };
+                        if !self
+                            .current
+                            .supported_address_data
+                            .iter()
+                            .any(|existing| existing.eq_ignore_ascii_case(&value))
+                        {
+                            self.current.supported_address_data.push(value);
                         }
                     }
                 }
@@ -250,32 +266,17 @@ impl<C: ItemConsumer> MultistatusParser<C> {
 
         self.common.on_text(&text);
 
-        // calendar-data is often multi-line and may arrive in chunks; keep exact payload.
+        // address-data is often multi-line and may arrive in chunks; keep exact payload.
         if self.path_ends_with(&[
             ElementName::Response,
             ElementName::Propstat,
             ElementName::Prop,
-            ElementName::CalendarData,
+            ElementName::AddressData,
         ]) {
-            if let Some(existing) = self.current.calendar_data.as_mut() {
+            if let Some(existing) = self.current.address_data.as_mut() {
                 existing.push_str(&text);
             } else {
-                self.current.calendar_data = Some(text);
-            }
-            return;
-        }
-
-        // calendar-timezone can also contain multi-line iCalendar content; preserve it.
-        if self.path_ends_with(&[
-            ElementName::Response,
-            ElementName::Propstat,
-            ElementName::Prop,
-            ElementName::CalendarTimezone,
-        ]) {
-            if let Some(existing) = self.current.calendar_timezone.as_mut() {
-                existing.push_str(&text);
-            } else {
-                self.current.calendar_timezone = Some(text.clone());
+                self.current.address_data = Some(text);
             }
             return;
         }
@@ -289,16 +290,16 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Response,
             ElementName::Propstat,
             ElementName::Prop,
-            ElementName::CalendarDescription,
+            ElementName::AddressbookDescription,
         ]) {
-            self.current.calendar_description = Some(trimmed.to_string());
+            self.current.addressbook_description = Some(trimmed.to_string());
         } else if self.path_ends_with(&[
             ElementName::Response,
             ElementName::Propstat,
             ElementName::Prop,
-            ElementName::CalendarColor,
+            ElementName::AddressbookColor,
         ]) {
-            self.current.calendar_color = Some(trimmed.to_string());
+            self.current.addressbook_color = Some(trimmed.to_string());
         } else if self.path_ends_with(&[ElementName::Multistatus, ElementName::SyncToken]) {
             // Top-level sync-token in sync-collection responses (RFC 6578)
             self.sync_token = Some(trimmed.to_string());
@@ -306,10 +307,10 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Response,
             ElementName::Propstat,
             ElementName::Prop,
-            ElementName::CalendarHomeSet,
+            ElementName::AddressbookHomeSet,
             ElementName::Href,
         ]) {
-            self.current.calendar_home_set.push(trimmed.to_string());
+            self.current.addressbook_home_set.push(trimmed.to_string());
         }
     }
 }
@@ -411,7 +412,7 @@ where
 /// decompression (br, gzip, zstd).
 ///
 /// This function avoids loading the entire response into memory, making it suitable
-/// for very large CalDAV/WebDAV collections.
+/// for very large CardDAV/WebDAV collections.
 pub async fn parse_multistatus_stream(
     resp_body: Incoming,
     encodings: &[ContentEncoding],

@@ -78,6 +78,36 @@ CREATE TABLE IF NOT EXISTS `calendarchanges` (
   INDEX calendarid_synctoken (calendarid, synctoken)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `addressbooks` (
+  id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
+  principaluri VARCHAR(255),
+  displayname VARCHAR(255),
+  uri VARCHAR(200),
+  description TEXT,
+  synctoken INTEGER UNSIGNED NOT NULL DEFAULT '1',
+  UNIQUE(principaluri, uri)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cards` (
+  id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
+  addressbookid INTEGER UNSIGNED NOT NULL,
+  carddata MEDIUMBLOB,
+  uri VARCHAR(200),
+  lastmodified INT(11),
+  etag VARCHAR(32),
+  size INT(11) UNSIGNED NOT NULL,
+  UNIQUE(addressbookid, uri)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `addressbookchanges` (
+  id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
+  uri VARCHAR(200),
+  synctoken INTEGER UNSIGNED NOT NULL,
+  addressbookid INTEGER UNSIGNED NOT NULL,
+  operation TINYINT(1) NOT NULL,
+  INDEX addressbookid_synctoken (addressbookid, synctoken)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `calendarsubscriptions` (
   id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
   uri VARCHAR(255),
@@ -117,3 +147,7 @@ INSERT INTO `calendars` (`components`) VALUES
 
 INSERT INTO `calendarinstances` (`calendarid`, `principaluri`, `displayname`, `uri`, `description`) VALUES
 (1, 'principals/test', 'Default Calendar', 'default', 'Default calendar');
+
+-- Create a default addressbook for the test user
+INSERT INTO `addressbooks` (`principaluri`, `displayname`, `uri`, `description`) VALUES
+('principals/test', 'Default Addressbook', 'default', 'Default addressbook');

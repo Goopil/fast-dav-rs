@@ -39,6 +39,15 @@ else
     exit 1
 fi
 
+# Check if addressbook exists
+BOOK_COUNT=$(docker compose exec mysql mysql -u root -proot -e "USE sabredav; SELECT COUNT(*) FROM addressbooks;" -sN)
+if [[ $BOOK_COUNT -ge 1 ]]; then
+    echo "✅ Default addressbook created"
+else
+    echo "❌ Default addressbook not found"
+    exit 1
+fi
+
 echo "✅ SabreDAV setup is ready!"
 echo "Access at http://localhost:8080"
 echo "Test credentials: test/test"

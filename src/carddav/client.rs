@@ -1,20 +1,20 @@
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use hyper::body::Incoming;
-use hyper::{HeaderMap, Method, Response, Uri, header};
+use hyper::{HeaderMap, Method, Response, StatusCode, Uri, header};
 use std::sync::Arc;
 use tokio::time::Duration;
 
-use crate::caldav::streaming::parse_multistatus_bytes;
-use crate::caldav::types::{
-    BatchItem, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse,
+use crate::carddav::streaming::parse_multistatus_bytes;
+use crate::carddav::types::{
+    AddressBookInfo, AddressObject, BatchItem, DavItem, Depth, SyncItem, SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::WebDavClient;
 
 pub use crate::webdav::client::RequestCompressionMode;
 
-/// High-performance CalDAV client built on **hyper 1.x** + **rustls**.
+/// High-performance CardDAV client built on **hyper 1.x** + **rustls**.
 ///
 /// Features:
 /// - HTTP/2 multiplexing and connection pooling
@@ -24,21 +24,21 @@ pub use crate::webdav::client::RequestCompressionMode;
 /// - Batch helpers with bounded concurrency
 /// - ETag helpers for safe conditional writes/deletes
 ///
-/// Cloning `CalDavClient` is cheap and reuses the same connection pool.
+/// Cloning `CardDavClient` is cheap and reuses the same connection pool.
 
 #[derive(Clone)]
-pub struct CalDavClient {
+pub struct CardDavClient {
     webdav: WebDavClient,
 }
 
-impl CalDavClient {
+impl CardDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
     ///
     /// The base may be `https://` **or** `http://` (both are supported by the connector).
     ///
     /// # Arguments
     ///
-    /// * `base_url` - The base URL for the CalDAV server (must be a valid URI)
+    /// * `base_url` - The base URL for the CardDAV server (must be a valid URI)
     /// * `basic_user` - Optional username for Basic authentication
     /// * `basic_pass` - Optional password for Basic authentication
     ///
@@ -51,12 +51,12 @@ impl CalDavClient {
     ///
     /// # Example
     /// ```no_run
-    /// use fast_dav_rs::CalDavClient;
+    /// use fast_dav_rs::CardDavClient;
     /// use anyhow::Result;
     ///
     /// # async fn example() -> Result<()> {
-    /// let client = CalDavClient::new(
-    ///     "https://cal.example.com/dav/user01/",
+    /// let client = CardDavClient::new(
+    ///     "https://card.example.com/dav/user01/",
     ///     Some("user01"),
     ///     Some("secret"),
     /// )?;
@@ -78,11 +78,11 @@ impl CalDavClient {
     /// # Example
     ///
     /// ```no_run
-    /// use fast_dav_rs::{CalDavClient, ContentEncoding};
+    /// use fast_dav_rs::{CardDavClient, ContentEncoding};
     ///
     /// # fn example() -> anyhow::Result<()> {
-    /// let mut client = CalDavClient::new(
-    ///     "https://cal.example.com/dav/user01/",
+    /// let mut client = CardDavClient::new(
+    ///     "https://card.example.com/dav/user01/",
     ///     Some("user01"),
     ///     Some("secret"),
     /// )?;
@@ -131,11 +131,11 @@ impl CalDavClient {
     ///
     /// # Example
     /// ```no_run
-    /// # use fast_dav_rs::CalDavClient;
+    /// # use fast_dav_rs::CardDavClient;
     /// # use hyper::{Method, HeaderMap};
     /// # use bytes::Bytes;
     /// #
-    /// # async fn demo(cli: &CalDavClient) -> anyhow::Result<()> {
+    /// # async fn demo(cli: &CardDavClient) -> anyhow::Result<()> {
     /// let res = cli.send(Method::GET, "Calendars/Personal/", HeaderMap::new(), None, None).await?;
     /// assert!(res.status().is_success());
     /// # Ok(())
@@ -191,16 +191,16 @@ impl CalDavClient {
     pub async fn get(&self, path: &str) -> Result<Response<Bytes>> {
         self.webdav.get(path).await
     }
-    /// Send a `PUT` with an iCalendar body (`text/calendar`).
+    /// Send a `PUT` with a vCard body (`text/vcard`).
     ///
     /// Use [`put_if_match`] or [`put_if_none_match`] for safer conditional writes.
-    pub async fn put(&self, path: &str, ical_bytes: Bytes) -> Result<Response<Bytes>> {
+    pub async fn put(&self, path: &str, vcard_bytes: Bytes) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/calendar; charset=utf-8"),
+            header::HeaderValue::from_static("text/vcard; charset=utf-8"),
         );
-        self.send(Method::PUT, path, h, Some(ical_bytes), None)
+        self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
     }
     /// Conditional `PUT` guarded by `If-Match`.
@@ -210,7 +210,7 @@ impl CalDavClient {
     /// # Arguments
     ///
     /// * `path` - Resource path relative to the base URL
-    /// * `ical_bytes` - The iCalendar data to upload
+    /// * `vcard_bytes` - The vCard data to upload
     /// * `etag` - The ETag to match (should include quotes if required by server)
     ///
     /// # Errors
@@ -222,7 +222,7 @@ impl CalDavClient {
     pub async fn put_if_match(
         &self,
         path: &str,
-        ical_bytes: Bytes,
+        vcard_bytes: Bytes,
         etag: &str,
     ) -> Result<Response<Bytes>> {
         // Validate ETag doesn't contain forbidden characters
@@ -233,10 +233,10 @@ impl CalDavClient {
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/calendar; charset=utf-8"),
+            header::HeaderValue::from_static("text/vcard; charset=utf-8"),
         );
         h.insert(header::IF_MATCH, header::HeaderValue::from_str(etag)?);
-        self.send(Method::PUT, path, h, Some(ical_bytes), None)
+        self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
     }
     /// Create-only `PUT` guarded by `If-None-Match: *`.
@@ -245,15 +245,15 @@ impl CalDavClient {
     pub async fn put_if_none_match(
         &self,
         path: &str,
-        ical_bytes: Bytes,
+        vcard_bytes: Bytes,
     ) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/calendar; charset=utf-8"),
+            header::HeaderValue::from_static("text/vcard; charset=utf-8"),
         );
         h.insert(header::IF_NONE_MATCH, header::HeaderValue::from_static("*"));
-        self.send(Method::PUT, path, h, Some(ical_bytes), None)
+        self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
     }
     /// Send a `DELETE` request.
@@ -311,9 +311,7 @@ impl CalDavClient {
     pub async fn proppatch(&self, path: &str, xml_body: &str) -> Result<Response<Bytes>> {
         self.webdav.proppatch(path, xml_body).await
     }
-    /// Send a CalDAV `REPORT` (e.g. `calendar-query`) with a custom XML body and `Depth`.
-    ///
-    /// This is the primary way to query events with time ranges.
+    /// Send a CardDAV `REPORT` (e.g. `addressbook-query`) with a custom XML body and `Depth`.
     pub async fn report(
         &self,
         path: &str,
@@ -322,21 +320,44 @@ impl CalDavClient {
     ) -> Result<Response<Bytes>> {
         self.webdav.report(path, depth, xml_body).await
     }
-    /// Send a CalDAV `MKCALENDAR` to create a calendar collection.
-    pub async fn mkcalendar(&self, path: &str, xml_body: &str) -> Result<Response<Bytes>> {
+    /// Send a CardDAV `MKADDRESSBOOK` to create an addressbook collection.
+    pub async fn mkaddressbook(&self, path: &str, xml_body: &str) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/xml; charset=utf-8"),
         );
-        self.send(
-            Method::from_bytes(b"MKCALENDAR")?,
-            path,
-            h,
-            Some(Bytes::from(xml_body.to_owned())),
-            None,
-        )
-        .await
+        let resp = self
+            .send(
+                Method::from_bytes(b"MKADDRESSBOOK")?,
+                path,
+                h,
+                Some(Bytes::from(xml_body.to_owned())),
+                None,
+            )
+            .await?;
+
+        if resp.status() == StatusCode::NOT_IMPLEMENTED
+            || resp.status() == StatusCode::METHOD_NOT_ALLOWED
+        {
+            let fallback_body = build_mkcol_addressbook_body(xml_body);
+            let mut h = HeaderMap::new();
+            h.insert(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/xml; charset=utf-8"),
+            );
+            return self
+                .send(
+                    Method::from_bytes(b"MKCOL")?,
+                    path,
+                    h,
+                    Some(Bytes::from(fallback_body)),
+                    None,
+                )
+                .await;
+        }
+
+        Ok(resp)
     }
     /// Send a WebDAV `MKCOL` to create a generic collection. Some servers accept an optional XML body.
     pub async fn mkcol(&self, path: &str, xml_body: Option<&str>) -> Result<Response<Bytes>> {
@@ -376,43 +397,42 @@ impl CalDavClient {
         Ok(principal)
     }
 
-    /// Discover the calendar-home-set collection(s) for the provided principal path.
-    pub async fn discover_calendar_home_set(&self, principal_path: &str) -> Result<Vec<String>> {
+    /// Discover the addressbook-home-set collection(s) for the provided principal path.
+    pub async fn discover_addressbook_home_set(&self, principal_path: &str) -> Result<Vec<String>> {
         let body = r#"
-<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
   <D:prop>
-    <C:calendar-home-set/>
+    <C:addressbook-home-set/>
   </D:prop>
 </D:propfind>
 "#;
         let resp = self.propfind(principal_path, Depth::Zero, body).await?;
         if !resp.status().is_success() {
             return Err(anyhow!(
-                "PROPFIND calendar-home-set failed with {}",
+                "PROPFIND addressbook-home-set failed with {}",
                 resp.status()
             ));
         }
         let body = resp.into_body();
         let mut homes = Vec::new();
         for mut item in parse_multistatus_bytes(&body)?.items {
-            homes.append(&mut item.calendar_home_set);
+            homes.append(&mut item.addressbook_home_set);
         }
         homes.sort();
         homes.dedup();
         Ok(homes)
     }
 
-    /// List CalDAV collections under a calendar home-set (`Depth: 1` PROPFIND).
-    pub async fn list_calendars(&self, home_set_path: &str) -> Result<Vec<CalendarInfo>> {
+    /// List CardDAV collections under an addressbook home-set (`Depth: 1` PROPFIND).
+    pub async fn list_addressbooks(&self, home_set_path: &str) -> Result<Vec<AddressBookInfo>> {
         let body = r#"
-<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:A="http://apple.com/ns/ical/">
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:A="http://apple.com/ns/ical/">
   <D:prop>
     <D:displayname/>
-    <C:calendar-description/>
-    <C:calendar-timezone/>
-    <C:calendar-color/>
-    <A:calendar-color/>
-    <C:supported-calendar-component-set/>
+    <C:addressbook-description/>
+    <C:addressbook-color/>
+    <A:addressbook-color/>
+    <C:supported-address-data/>
     <D:getetag/>
     <D:resourcetype/>
     <D:sync-token/>
@@ -421,74 +441,108 @@ impl CalDavClient {
 "#;
         let resp = self.propfind(home_set_path, Depth::One, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!("PROPFIND calendars failed with {}", resp.status()));
-        }
-        let body = resp.into_body();
-        Ok(map_calendar_list(parse_multistatus_bytes(&body)?.items))
-    }
-
-    /// Execute a CalDAV `calendar-query` with an optional time-range filter.
-    ///
-    /// `component` should be `VEVENT`, `VTODO`, … while `start`/`end` are ISO-8601
-    /// timestamps in the format required by CalDAV (e.g. `20240101T000000Z`).
-    pub async fn calendar_query_timerange(
-        &self,
-        calendar_path: &str,
-        component: &str,
-        start: Option<&str>,
-        end: Option<&str>,
-        include_data: bool,
-    ) -> Result<Vec<CalendarObject>> {
-        let xml = build_calendar_query_body(component, start, end, include_data);
-
-        let resp = self.report(calendar_path, Depth::One, &xml).await?;
-        if !resp.status().is_success() {
             return Err(anyhow!(
-                "REPORT calendar-query failed with {}",
+                "PROPFIND addressbooks failed with {}",
                 resp.status()
             ));
         }
         let body = resp.into_body();
-        Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
+        Ok(map_addressbook_list(parse_multistatus_bytes(&body)?.items))
     }
 
-    /// Fetch specific calendar objects via `calendar-multiget`.
-    pub async fn calendar_multiget<I, S>(
+    /// Execute a CardDAV `addressbook-query` with a custom filter.
+    pub async fn addressbook_query(
         &self,
-        calendar_path: &str,
+        addressbook_path: &str,
+        filter_xml: &str,
+        include_data: bool,
+    ) -> Result<Vec<AddressObject>> {
+        let xml = build_addressbook_query_body(filter_xml, include_data);
+
+        let resp = self.report(addressbook_path, Depth::One, &xml).await?;
+        if !resp.status().is_success() {
+            return Err(anyhow!(
+                "REPORT addressbook-query failed with {}",
+                resp.status()
+            ));
+        }
+        let body = resp.into_body();
+        Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
+    }
+
+    /// Addressbook query helper: match a specific `UID`.
+    pub async fn addressbook_query_uid(
+        &self,
+        addressbook_path: &str,
+        uid: &str,
+        include_data: bool,
+    ) -> Result<Vec<AddressObject>> {
+        let filter = build_addressbook_query_filter_uid(uid);
+        self.addressbook_query(addressbook_path, &filter, include_data)
+            .await
+    }
+
+    /// Addressbook query helper: match a specific `EMAIL`.
+    pub async fn addressbook_query_email(
+        &self,
+        addressbook_path: &str,
+        email: &str,
+        include_data: bool,
+    ) -> Result<Vec<AddressObject>> {
+        let filter = build_addressbook_query_filter_email(email);
+        self.addressbook_query(addressbook_path, &filter, include_data)
+            .await
+    }
+
+    /// Addressbook query helper: match a specific `FN` (formatted name).
+    pub async fn addressbook_query_fn(
+        &self,
+        addressbook_path: &str,
+        formatted_name: &str,
+        include_data: bool,
+    ) -> Result<Vec<AddressObject>> {
+        let filter = build_addressbook_query_filter_fn(formatted_name);
+        self.addressbook_query(addressbook_path, &filter, include_data)
+            .await
+    }
+
+    /// Fetch specific address objects via `addressbook-multiget`.
+    pub async fn addressbook_multiget<I, S>(
+        &self,
+        addressbook_path: &str,
         hrefs: I,
         include_data: bool,
-    ) -> Result<Vec<CalendarObject>>
+    ) -> Result<Vec<AddressObject>>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let Some(body) = build_calendar_multiget_body(hrefs, include_data) else {
+        let Some(body) = build_addressbook_multiget_body(hrefs, include_data) else {
             return Ok(Vec::new());
         };
 
-        let resp = self.report(calendar_path, Depth::One, &body).await?;
+        let resp = self.report(addressbook_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
             return Err(anyhow!(
-                "REPORT calendar-multiget failed with {}",
+                "REPORT addressbook-multiget failed with {}",
                 resp.status()
             ));
         }
         let body = resp.into_body();
-        Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
+        Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
     }
 
-    /// Incrementally synchronise a calendar collection using `sync-collection`.
+    /// Incrementally synchronise an addressbook collection using `sync-collection`.
     pub async fn sync_collection(
         &self,
-        calendar_path: &str,
+        addressbook_path: &str,
         sync_token: Option<&str>,
         limit: Option<u32>,
         include_data: bool,
     ) -> Result<SyncResponse> {
         let body = build_sync_collection_body(sync_token, limit, include_data);
 
-        let resp = self.report(calendar_path, Depth::One, &body).await?;
+        let resp = self.report(addressbook_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
             return Err(anyhow!(
                 "REPORT sync-collection failed with {}",
@@ -556,11 +610,11 @@ impl CalDavClient {
     /// # Example
     ///
     /// ```no_run
-    /// # use fast_dav_rs::CalDavClient;
+    /// # use fast_dav_rs::CardDavClient;
     /// # use anyhow::Result;
     /// #
     /// # async fn example() -> Result<()> {
-    /// # let client = CalDavClient::new("https://example.com/", None, None)?;
+    /// # let client = CardDavClient::new("https://example.com/", None, None)?;
     /// if client.supports_webdav_sync().await? {
     ///     println!("Server supports efficient incremental sync");
     /// } else {
@@ -601,42 +655,90 @@ pub fn escape_xml(input: &str) -> String {
     crate::webdav::xml::escape_xml(input)
 }
 
-pub fn build_calendar_query_body(
-    component: &str,
-    start: Option<&str>,
-    end: Option<&str>,
-    include_data: bool,
-) -> String {
-    let mut prop = String::from("<D:prop><D:getetag/>");
-    if include_data {
-        prop.push_str("<C:calendar-data/>");
-    }
-    prop.push_str("</D:prop>");
+fn build_mkcol_addressbook_body(xml_body: &str) -> String {
+    let prop_inner = extract_prop_inner(xml_body);
+    let has_resourcetype = prop_inner
+        .as_deref()
+        .map(|inner| inner.to_ascii_lowercase().contains("resourcetype"))
+        .unwrap_or(false);
 
-    let mut filter = format!(
-        "<C:filter>\
-           <C:comp-filter name=\"VCALENDAR\">\
-             <C:comp-filter name=\"{}\">",
-        component
-    );
-    if start.is_some() || end.is_some() {
-        filter.push_str("<C:time-range");
-        if let Some(s) = start {
-            filter.push_str(&format!(" start=\"{}\"", s));
-        }
-        if let Some(e) = end {
-            filter.push_str(&format!(" end=\"{}\"", e));
-        }
-        filter.push_str("/>");
+    let mut prop = String::new();
+    if !has_resourcetype {
+        prop.push_str("<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>");
     }
-    filter.push_str("</C:comp-filter></C:comp-filter></C:filter>");
+    if let Some(inner) = prop_inner {
+        let trimmed = inner.trim();
+        if !trimmed.is_empty() {
+            prop.push_str(trimmed);
+        }
+    }
+    if prop.is_empty() {
+        prop.push_str("<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>");
+    }
 
     format!(
-        r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">{prop}{filter}</C:calendar-query>"#
+        r#"<D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:set><D:prop>{prop}</D:prop></D:set></D:mkcol>"#
     )
 }
 
-pub fn build_calendar_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
+fn extract_prop_inner(xml_body: &str) -> Option<String> {
+    let mut start = None;
+    for open in ["<D:prop>", "<d:prop>"] {
+        if let Some(idx) = xml_body.find(open) {
+            start = Some(idx + open.len());
+            break;
+        }
+    }
+    let start = start?;
+    let remaining = &xml_body[start..];
+
+    let mut end = None;
+    for close in ["</D:prop>", "</d:prop>"] {
+        if let Some(idx) = remaining.find(close) {
+            end = Some(idx);
+            break;
+        }
+    }
+    let end = end?;
+    Some(remaining[..end].to_string())
+}
+
+pub fn build_addressbook_query_body(filter_xml: &str, include_data: bool) -> String {
+    let mut prop = String::from("<D:prop><D:getetag/>");
+    if include_data {
+        prop.push_str("<C:address-data/>");
+    }
+    prop.push_str("</D:prop>");
+
+    format!(
+        r#"<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">{prop}{filter_xml}</C:addressbook-query>"#
+    )
+}
+
+pub fn build_addressbook_query_filter_uid(uid: &str) -> String {
+    build_addressbook_query_filter("UID", uid)
+}
+
+pub fn build_addressbook_query_filter_email(email: &str) -> String {
+    build_addressbook_query_filter("EMAIL", email)
+}
+
+pub fn build_addressbook_query_filter_fn(formatted_name: &str) -> String {
+    build_addressbook_query_filter("FN", formatted_name)
+}
+
+fn build_addressbook_query_filter(prop: &str, value: &str) -> String {
+    let escaped = escape_xml(value);
+    format!(
+        "<C:filter>\
+           <C:prop-filter name=\"{prop}\">\
+             <C:text-match collation=\"i;unicode-casemap\" match-type=\"equals\">{escaped}</C:text-match>\
+           </C:prop-filter>\
+         </C:filter>"
+    )
+}
+
+pub fn build_addressbook_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -658,14 +760,14 @@ where
     }
 
     let mut body = String::from(
-        r#"<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/>"#,
+        r#"<C:addressbook-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:prop><D:getetag/>"#,
     );
     if include_data {
-        body.push_str("<C:calendar-data/>");
+        body.push_str("<C:address-data/>");
     }
     body.push_str("</D:prop>");
     body.push_str(&href_xml);
-    body.push_str("</C:calendar-multiget>");
+    body.push_str("</C:addressbook-multiget>");
     Some(body)
 }
 
@@ -678,48 +780,42 @@ pub fn build_sync_collection_body(
         sync_token,
         limit,
         include_data,
-        "urn:ietf:params:xml:ns:caldav",
-        "calendar-data",
+        "urn:ietf:params:xml:ns:carddav",
+        "address-data",
     )
 }
 
-pub fn map_calendar_list(mut items: Vec<DavItem>) -> Vec<CalendarInfo> {
-    let mut calendars = Vec::new();
+pub fn map_addressbook_list(mut items: Vec<DavItem>) -> Vec<AddressBookInfo> {
+    let mut addressbooks = Vec::new();
     for mut item in items.drain(..) {
-        if item.is_calendar {
-            let timezone = item
-                .calendar_timezone
-                .take()
-                .map(|tz| tz.trim().to_string())
-                .filter(|tz| !tz.is_empty());
+        if item.is_addressbook {
             let description = item
-                .calendar_description
+                .addressbook_description
                 .take()
                 .map(|d| d.trim().to_string())
                 .filter(|d| !d.is_empty());
-            calendars.push(CalendarInfo {
+            addressbooks.push(AddressBookInfo {
                 href: item.href,
                 displayname: item.displayname,
                 description,
-                timezone,
-                color: item.calendar_color,
+                color: item.addressbook_color,
                 etag: item.etag,
                 sync_token: item.sync_token,
-                supported_components: item.supported_components,
+                supported_address_data: item.supported_address_data,
             });
         }
     }
-    calendars.sort_by(|a, b| a.href.cmp(&b.href));
-    calendars
+    addressbooks.sort_by(|a, b| a.href.cmp(&b.href));
+    addressbooks
 }
 
-pub fn map_calendar_objects(items: Vec<DavItem>) -> Vec<CalendarObject> {
+pub fn map_address_objects(items: Vec<DavItem>) -> Vec<AddressObject> {
     let mut out = Vec::with_capacity(items.len());
     for mut item in items {
-        out.push(CalendarObject {
+        out.push(AddressObject {
             href: item.href,
             etag: item.etag,
-            calendar_data: item.calendar_data.take(),
+            address_data: item.address_data.take(),
             status: item.status,
         });
     }
@@ -747,7 +843,7 @@ pub fn map_sync_response(
         }
 
         let is_collection = item.is_collection
-            || (item.sync_token.is_some() && item.etag.is_none() && item.calendar_data.is_none());
+            || (item.sync_token.is_some() && item.etag.is_none() && item.address_data.is_none());
         if is_collection {
             continue;
         }
@@ -760,7 +856,7 @@ pub fn map_sync_response(
         out.push(SyncItem {
             href: item.href,
             etag: item.etag,
-            calendar_data: item.calendar_data.take(),
+            address_data: item.address_data.take(),
             status,
             is_deleted,
         });

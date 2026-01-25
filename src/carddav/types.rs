@@ -9,15 +9,14 @@ pub struct DavItem {
     pub displayname: Option<String>,
     pub etag: Option<String>,
     pub is_collection: bool,
-    pub is_calendar: bool,
-    pub supported_components: Vec<String>,
-    pub calendar_data: Option<String>,
-    pub calendar_home_set: Vec<String>,
+    pub is_addressbook: bool,
+    pub supported_address_data: Vec<String>,
+    pub address_data: Option<String>,
+    pub addressbook_home_set: Vec<String>,
     pub current_user_principal: Vec<String>,
     pub owner: Option<String>,
-    pub calendar_description: Option<String>,
-    pub calendar_timezone: Option<String>,
-    pub calendar_color: Option<String>,
+    pub addressbook_description: Option<String>,
+    pub addressbook_color: Option<String>,
     pub sync_token: Option<String>,
     pub content_type: Option<String>,
     pub last_modified: Option<String>,
@@ -37,15 +36,14 @@ impl DavItem {
             displayname: None,
             etag: None,
             is_collection: false,
-            is_calendar: false,
-            supported_components: Vec::new(),
-            calendar_data: None,
-            calendar_home_set: Vec::new(),
+            is_addressbook: false,
+            supported_address_data: Vec::new(),
+            address_data: None,
+            addressbook_home_set: Vec::new(),
             current_user_principal: Vec::new(),
             owner: None,
-            calendar_description: None,
-            calendar_timezone: None,
-            calendar_color: None,
+            addressbook_description: None,
+            addressbook_color: None,
             sync_token: None,
             content_type: None,
             last_modified: None,
@@ -66,25 +64,24 @@ impl DavItem {
     }
 }
 
-/// Summary of a calendar (collection) returned by a `PROPFIND` depth=1.
+/// Summary of an addressbook (collection) returned by a `PROPFIND` depth=1.
 #[derive(Debug, Clone)]
-pub struct CalendarInfo {
+pub struct AddressBookInfo {
     pub href: String,
     pub displayname: Option<String>,
     pub description: Option<String>,
-    pub timezone: Option<String>,
     pub color: Option<String>,
     pub etag: Option<String>,
     pub sync_token: Option<String>,
-    pub supported_components: Vec<String>,
+    pub supported_address_data: Vec<String>,
 }
 
-/// Calendar object (event or task) returned by a `REPORT`.
+/// Address object (vCard) returned by a `REPORT`.
 #[derive(Debug, Clone)]
-pub struct CalendarObject {
+pub struct AddressObject {
     pub href: String,
     pub etag: Option<String>,
-    pub calendar_data: Option<String>,
+    pub address_data: Option<String>,
     pub status: Option<String>,
 }
 
@@ -93,7 +90,7 @@ pub struct CalendarObject {
 pub struct SyncItem {
     pub href: String,
     pub etag: Option<String>,
-    pub calendar_data: Option<String>,
+    pub address_data: Option<String>,
     pub status: Option<String>,
     pub is_deleted: bool,
 }
