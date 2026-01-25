@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/fast-dav-rs.svg)](https://crates.io/crates/fast-dav-rs)
 [![Documentation](https://docs.rs/fast-dav-rs/badge.svg)](https://docs.rs/fast-dav-rs)
-[![CI](https://github.com/Goopil/fast-caldav-rs/workflows/CI/badge.svg)](https://github.com/Goopil/fast-caldav-rs/actions)
+[![CI](https://github.com/Goopil/fast-dav-rs/workflows/CI/badge.svg)](https://github.com/Goopil/fast-caldav-rs/actions)
 [![dependency status](https://deps.rs/repo/github/goopil/fast-dav-rs/status.svg)](https://deps.rs/repo/github/goopil/fast-dav-rs)
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 
