@@ -3,6 +3,8 @@
 [![Crates.io](https://img.shields.io/crates/v/fast-dav-rs.svg)](https://crates.io/crates/fast-dav-rs)
 [![Documentation](https://docs.rs/fast-dav-rs/badge.svg)](https://docs.rs/fast-dav-rs)
 [![CI](https://github.com/Goopil/fast-caldav-rs/workflows/CI/badge.svg)](https://github.com/Goopil/fast-caldav-rs/actions)
+[![dependency status](https://deps.rs/repo/github/goopil/fast-dav-rs/status.svg)](https://deps.rs/repo/github/goopil/fast-dav-rs)
+[![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 
 fast-dav-rs is a high-performance asynchronous CalDAV/CardDAV client for Rust. It blends hyper 1.x, tokio,
 rustls, and streaming XML tooling so your services can discover calendars, manage events, sync addressbooks,
