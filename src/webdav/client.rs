@@ -2,12 +2,12 @@ use anyhow::{Result, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use bytes::Bytes;
-use futures::{StreamExt, stream::FuturesUnordered};
+use futures::{StreamExt, stream::FuturesOrdered};
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
 use std::sync::{Arc, RwLock};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
 
 use crate::common::compression::{
@@ -48,6 +48,7 @@ pub struct WebDavClient {
     default_timeout: Duration,
     request_compression_mode: RequestCompressionMode,
     negotiated_request_compression: Arc<RwLock<Option<ContentEncoding>>>,
+    request_compression_probe: Arc<Mutex<()>>,
 }
 
 impl WebDavClient {
@@ -73,6 +74,7 @@ impl WebDavClient {
             default_timeout: Duration::from_secs(20),
             request_compression_mode: RequestCompressionMode::Auto,
             negotiated_request_compression: Arc::new(RwLock::new(None)),
+            request_compression_probe: Arc::new(Mutex::new(())),
         })
     }
 
@@ -298,7 +300,15 @@ impl WebDavClient {
                 .ok()
                 .and_then(|g| *g);
             if negotiated.is_none() {
-                self.probe_request_compression_support().await;
+                let _probe_guard = self.request_compression_probe.lock().await;
+                let negotiated = self
+                    .negotiated_request_compression
+                    .read()
+                    .ok()
+                    .and_then(|g| *g);
+                if negotiated.is_none() {
+                    self.probe_request_compression_support().await;
+                }
             }
         }
 
@@ -645,14 +655,14 @@ impl WebDavClient {
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         let sem = Arc::new(Semaphore::new(max_concurrency.max(1)));
-        let mut tasks = FuturesUnordered::new();
+        let mut tasks = FuturesOrdered::new();
 
         for path in paths {
             let sem_clone = sem.clone();
             let this = self.clone();
             let body = xml_body.clone();
             let p = path.clone();
-            tasks.push(async move {
+            tasks.push_back(async move {
                 let _permit: OwnedSemaphorePermit =
                     sem_clone.acquire_owned().await.expect("semaphore closed");
                 let mut h = HeaderMap::new();
@@ -696,14 +706,14 @@ impl WebDavClient {
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         let sem = Arc::new(Semaphore::new(max_concurrency.max(1)));
-        let mut tasks = FuturesUnordered::new();
+        let mut tasks = FuturesOrdered::new();
 
         for path in paths {
             let sem_clone = sem.clone();
             let this = self.clone();
             let body = xml_body.clone();
             let p = path.clone();
-            tasks.push(async move {
+            tasks.push_back(async move {
                 let _permit: OwnedSemaphorePermit =
                     sem_clone.acquire_owned().await.expect("semaphore closed");
                 let mut h = HeaderMap::new();

@@ -20,9 +20,7 @@ pub fn build_sync_collection_body(
     namespace: &str,
     data_element: &str,
 ) -> String {
-    let mut body = String::from(&format!(
-        r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{namespace}">"#
-    ));
+    let mut body = format!(r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{namespace}">"#);
     if let Some(token) = sync_token {
         body.push_str("<D:sync-token>");
         body.push_str(&escape_xml(token));
