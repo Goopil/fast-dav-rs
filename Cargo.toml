@@ -4,6 +4,9 @@ version = "0.4.1"
 edition = "2024"
 description = "Fast CalDAV/CardDAV client with hyper + rustls, HTTP/2, compression, batching, and streaming XML parsing."
 license = "LGPL-3.0"
+documentation = "https://docs.rs/fast-dav-rs"
+homepage = "https://github.com/Goopil/fast-dav-rs"
+repository = "https://github.com/Goopil/fast-dav-rs"
 
 [dependencies]
 anyhow = "1"
