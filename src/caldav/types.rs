@@ -1,3 +1,4 @@
+use crate::webdav::types::DavItemCommon;
 pub use crate::webdav::types::{BatchItem, Depth};
 
 /// Item extracted from a WebDAV response
@@ -49,6 +50,19 @@ impl DavItem {
             content_type: None,
             last_modified: None,
         }
+    }
+
+    pub(crate) fn apply_common(&mut self, common: DavItemCommon) {
+        self.href = common.href;
+        self.status = common.status;
+        self.displayname = common.displayname;
+        self.etag = common.etag;
+        self.is_collection = common.is_collection;
+        self.sync_token = common.sync_token;
+        self.current_user_principal = common.current_user_principal;
+        self.owner = common.owner;
+        self.content_type = common.content_type;
+        self.last_modified = common.last_modified;
     }
 }
 

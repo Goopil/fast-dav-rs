@@ -1,5 +1,6 @@
 use crate::caldav::types::DavItem;
 use crate::common::compression::ContentEncoding;
+use crate::webdav::streaming::{CommonParser, path_ends_with};
 use anyhow::{Result, anyhow};
 use futures_util::TryStreamExt;
 use http_body_util::BodyStream;
@@ -128,6 +129,7 @@ pub(crate) struct MultistatusParser<C> {
     pub stack: Vec<ElementName>,
     pub current: DavItem,
     pub sync_token: Option<String>,
+    common: CommonParser,
     sink: C,
 }
 
@@ -137,6 +139,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             stack: Vec::with_capacity(16),
             current: DavItem::new(),
             sync_token: None,
+            common: CommonParser::new(),
             sink,
         }
     }
@@ -149,28 +152,17 @@ impl<C: ItemConsumer> MultistatusParser<C> {
     }
 
     pub fn path_ends_with(&self, needle: &[ElementName]) -> bool {
-        self.stack.len() >= needle.len()
-            && self.stack[self.stack.len() - needle.len()..] == needle[..]
+        path_ends_with(&self.stack, needle)
     }
 
     fn on_start(&mut self, event: &BytesStart<'_>) -> Result<()> {
+        self.common.on_start(event.name().as_ref());
         let element = element_from_bytes(event.name().as_ref());
         self.stack.push(element);
 
         match element {
             ElementName::Response => {
                 self.current = DavItem::new();
-            }
-            ElementName::Collection => {
-                if self.path_ends_with(&[
-                    ElementName::Response,
-                    ElementName::Propstat,
-                    ElementName::Prop,
-                    ElementName::Resourcetype,
-                    ElementName::Collection,
-                ]) {
-                    self.current.is_collection = true;
-                }
             }
             ElementName::Calendar => {
                 if self.path_ends_with(&[
@@ -219,10 +211,13 @@ impl<C: ItemConsumer> MultistatusParser<C> {
     }
 
     fn on_end(&mut self, name: &[u8]) -> Result<()> {
+        self.common.on_end(name);
         let element = element_from_bytes(name);
         if let Some(popped) = self.stack.pop()
             && popped == ElementName::Response
         {
+            let common = self.common.finish_response();
+            self.current.apply_common(common);
             let finished = std::mem::take(&mut self.current);
             self.sink.consume(finished)?;
             // Ignore mismatches silently; the XML is assumed well-formed.
@@ -252,6 +247,8 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         if text.is_empty() {
             return;
         }
+
+        self.common.on_text(&text);
 
         // calendar-data is often multi-line and may arrive in chunks; keep exact payload.
         if self.path_ends_with(&[
@@ -288,31 +285,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             return;
         }
 
-        if self.path_ends_with(&[ElementName::Response, ElementName::Href]) {
-            self.current.href = trimmed.to_string();
-        } else if self.path_ends_with(&[ElementName::Response, ElementName::Status])
-            || self.path_ends_with(&[
-                ElementName::Response,
-                ElementName::Propstat,
-                ElementName::Status,
-            ])
-        {
-            self.current.status = Some(trimmed.to_string());
-        } else if self.path_ends_with(&[
-            ElementName::Response,
-            ElementName::Propstat,
-            ElementName::Prop,
-            ElementName::Displayname,
-        ]) {
-            self.current.displayname = Some(trimmed.to_string());
-        } else if self.path_ends_with(&[
-            ElementName::Response,
-            ElementName::Propstat,
-            ElementName::Prop,
-            ElementName::Getetag,
-        ]) {
-            self.current.etag = Some(trimmed.to_string());
-        } else if self.path_ends_with(&[
+        if self.path_ends_with(&[
             ElementName::Response,
             ElementName::Propstat,
             ElementName::Prop,
@@ -326,13 +299,6 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::CalendarColor,
         ]) {
             self.current.calendar_color = Some(trimmed.to_string());
-        } else if self.path_ends_with(&[
-            ElementName::Response,
-            ElementName::Propstat,
-            ElementName::Prop,
-            ElementName::SyncToken,
-        ]) {
-            self.current.sync_token = Some(trimmed.to_string());
         } else if self.path_ends_with(&[ElementName::Multistatus, ElementName::SyncToken]) {
             // Top-level sync-token in sync-collection responses (RFC 6578)
             self.sync_token = Some(trimmed.to_string());
@@ -344,38 +310,6 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Href,
         ]) {
             self.current.calendar_home_set.push(trimmed.to_string());
-        } else if self.path_ends_with(&[
-            ElementName::Response,
-            ElementName::Propstat,
-            ElementName::Prop,
-            ElementName::CurrentUserPrincipal,
-            ElementName::Href,
-        ]) {
-            self.current
-                .current_user_principal
-                .push(trimmed.to_string());
-        } else if self.path_ends_with(&[
-            ElementName::Response,
-            ElementName::Propstat,
-            ElementName::Prop,
-            ElementName::Owner,
-            ElementName::Href,
-        ]) {
-            self.current.owner = Some(trimmed.to_string());
-        } else if self.path_ends_with(&[
-            ElementName::Response,
-            ElementName::Propstat,
-            ElementName::Prop,
-            ElementName::Getcontenttype,
-        ]) {
-            self.current.content_type = Some(trimmed.to_string());
-        } else if self.path_ends_with(&[
-            ElementName::Response,
-            ElementName::Propstat,
-            ElementName::Prop,
-            ElementName::Getlastmodified,
-        ]) {
-            self.current.last_modified = Some(trimmed.to_string());
         }
     }
 }

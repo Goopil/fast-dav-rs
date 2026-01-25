@@ -1,4 +1,5 @@
 pub mod client;
+pub(crate) mod streaming;
 pub mod types;
 pub mod xml;
 
