@@ -3,6 +3,22 @@
 //! This library provides a high-performance, asynchronous CalDAV and CardDAV client built on modern
 //! Rust ecosystem components including hyper 1.x, rustls, and tokio.
 //!
+//! # Why this library?
+//!
+//! - CalDAV and CardDAV discovery, queries, and sync with a consistent API.
+//! - HTTP/2, connection pooling, and compression for efficient client workloads.
+//! - Streaming XML parsing and batch operations for large collections.
+//!
+//! # Stability and maturity
+//!
+//! Core discovery, CRUD, and query flows are covered by unit and e2e tests. Streaming parsing and
+//! sync are stable, but server quirks vary and feedback is welcome.
+//!
+//! # Versioning and backward compatibility
+//!
+//! This project follows Semantic Versioning. Patch releases fix bugs, minor releases add compatible
+//! features, and major releases introduce breaking changes when needed.
+//!
 //! # Features
 //!
 //! - HTTP/2 multiplexing and connection pooling
