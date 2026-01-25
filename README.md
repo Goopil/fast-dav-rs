@@ -420,5 +420,5 @@ See `LICENSE` for details.
 
 ## Support
 
-- Issue tracker: https://github.com/Goopil/fast-caldav-rs/issues
-- Discussions: https://github.com/Goopil/fast-dav-rs/discussions
+- [Issue tracker](https://github.com/Goopil/fast-caldav-rs/issues)
+- [Discussions](https://github.com/Goopil/fast-dav-rs/discussions)
