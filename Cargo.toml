@@ -16,7 +16,7 @@ futures = "0.3"
 futures-util = "0.3"
 hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-rustls = { version = "0.27", features = ["http2", "webpki-roots"] }
-quick-xml = { version = "0.39.0", features = ["async-tokio"] }
+quick-xml = { version = "0.39.1", features = ["async-tokio"] }
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "time"] }
 tokio-util = "0.7"
 async-compression = { version = "0.4", features = ["tokio", "brotli", "gzip", "zstd"] }
