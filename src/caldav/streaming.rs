@@ -164,42 +164,42 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Response => {
                 self.current = DavItem::new();
             }
-            ElementName::Calendar => {
+            ElementName::Calendar
                 if self.path_ends_with(&[
                     ElementName::Response,
                     ElementName::Propstat,
                     ElementName::Prop,
                     ElementName::Resourcetype,
                     ElementName::Calendar,
-                ]) {
-                    self.current.is_calendar = true;
-                }
+                ]) =>
+            {
+                self.current.is_calendar = true;
             }
-            ElementName::Comp => {
+            ElementName::Comp
                 if self.path_ends_with(&[
                     ElementName::Response,
                     ElementName::Propstat,
                     ElementName::Prop,
                     ElementName::SupportedCalendarComponentSet,
                     ElementName::Comp,
-                ]) {
-                    for attr in event.attributes().with_checks(false) {
-                        let attr = attr?;
-                        let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
-                        if key == "name" {
-                            let value = attr
-                                .unescape_value()
-                                .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
-                                .into_owned();
-                            if !value.is_empty()
-                                && !self
-                                    .current
-                                    .supported_components
-                                    .iter()
-                                    .any(|c| c.eq_ignore_ascii_case(&value))
-                            {
-                                self.current.supported_components.push(value);
-                            }
+                ]) =>
+            {
+                for attr in event.attributes().with_checks(false) {
+                    let attr = attr?;
+                    let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
+                    if key == "name" {
+                        let value = attr
+                            .unescape_value()
+                            .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
+                            .into_owned();
+                        if !value.is_empty()
+                            && !self
+                                .current
+                                .supported_components
+                                .iter()
+                                .any(|c| c.eq_ignore_ascii_case(&value))
+                        {
+                            self.current.supported_components.push(value);
                         }
                     }
                 }

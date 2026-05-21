@@ -161,62 +161,62 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Response => {
                 self.current = DavItem::new();
             }
-            ElementName::Addressbook => {
+            ElementName::Addressbook
                 if self.path_ends_with(&[
                     ElementName::Response,
                     ElementName::Propstat,
                     ElementName::Prop,
                     ElementName::Resourcetype,
                     ElementName::Addressbook,
-                ]) {
-                    self.current.is_addressbook = true;
-                }
+                ]) =>
+            {
+                self.current.is_addressbook = true;
             }
-            ElementName::AddressDataType => {
+            ElementName::AddressDataType
                 if self.path_ends_with(&[
                     ElementName::Response,
                     ElementName::Propstat,
                     ElementName::Prop,
                     ElementName::SupportedAddressData,
                     ElementName::AddressDataType,
-                ]) {
-                    let mut content_type = None;
-                    let mut version = None;
-                    for attr in event.attributes().with_checks(false) {
-                        let attr = attr?;
-                        let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
-                        if key == "content-type" {
-                            let value = attr
-                                .unescape_value()
-                                .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
-                                .into_owned();
-                            if !value.is_empty() {
-                                content_type = Some(value);
-                            }
-                        } else if key == "version" {
-                            let value = attr
-                                .unescape_value()
-                                .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
-                                .into_owned();
-                            if !value.is_empty() {
-                                version = Some(value);
-                            }
+                ]) =>
+            {
+                let mut content_type = None;
+                let mut version = None;
+                for attr in event.attributes().with_checks(false) {
+                    let attr = attr?;
+                    let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
+                    if key == "content-type" {
+                        let value = attr
+                            .unescape_value()
+                            .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
+                            .into_owned();
+                        if !value.is_empty() {
+                            content_type = Some(value);
+                        }
+                    } else if key == "version" {
+                        let value = attr
+                            .unescape_value()
+                            .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
+                            .into_owned();
+                        if !value.is_empty() {
+                            version = Some(value);
                         }
                     }
-                    if let Some(content_type) = content_type {
-                        let value = if let Some(version) = version {
-                            format!("{content_type};version={version}")
-                        } else {
-                            content_type
-                        };
-                        if !self
-                            .current
-                            .supported_address_data
-                            .iter()
-                            .any(|existing| existing.eq_ignore_ascii_case(&value))
-                        {
-                            self.current.supported_address_data.push(value);
-                        }
+                }
+                if let Some(content_type) = content_type {
+                    let value = if let Some(version) = version {
+                        format!("{content_type};version={version}")
+                    } else {
+                        content_type
+                    };
+                    if !self
+                        .current
+                        .supported_address_data
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(&value))
+                    {
+                        self.current.supported_address_data.push(value);
                     }
                 }
             }
