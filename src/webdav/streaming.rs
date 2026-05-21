@@ -86,16 +86,16 @@ impl CommonParser {
             CommonElement::Response => {
                 self.current = DavItemCommon::default();
             }
-            CommonElement::Collection => {
+            CommonElement::Collection
                 if self.path_ends_with(&[
                     CommonElement::Response,
                     CommonElement::Propstat,
                     CommonElement::Prop,
                     CommonElement::Resourcetype,
                     CommonElement::Collection,
-                ]) {
-                    self.current.is_collection = true;
-                }
+                ]) =>
+            {
+                self.current.is_collection = true;
             }
             _ => {}
         }
