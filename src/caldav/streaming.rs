@@ -5,9 +5,9 @@ use anyhow::{Result, anyhow};
 use futures_util::TryStreamExt;
 use http_body_util::BodyStream;
 use hyper::body::Incoming;
-use quick_xml::Reader;
 use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
+use quick_xml::{Decoder, Reader, XmlVersion};
 use std::io::{BufRead, Cursor};
 use tokio::io::AsyncBufRead;
 use tokio::io::BufReader;
@@ -155,7 +155,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         path_ends_with(&self.stack, needle)
     }
 
-    fn on_start(&mut self, event: &BytesStart<'_>) -> Result<()> {
+    fn on_start(&mut self, event: &BytesStart<'_>, decoder: Decoder) -> Result<()> {
         self.common.on_start(event.name().as_ref());
         let element = element_from_bytes(event.name().as_ref());
         self.stack.push(element);
@@ -189,7 +189,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
                     if key == "name" {
                         let value = attr
-                            .unescape_value()
+                            .decoded_and_normalized_value(XmlVersion::default(), decoder)
                             .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
                             .into_owned();
                         if !value.is_empty()
@@ -346,9 +346,9 @@ where
 
     loop {
         match xml.read_event_into_async(&mut buf).await {
-            Ok(Event::Start(e)) => parser.on_start(&e)?,
+            Ok(Event::Start(e)) => parser.on_start(&e, xml.decoder())?,
             Ok(Event::Empty(e)) => {
-                parser.on_start(&e)?;
+                parser.on_start(&e, xml.decoder())?;
                 parser.on_end(e.name().as_ref())?;
             }
             Ok(Event::Text(e)) => {
@@ -383,9 +383,9 @@ where
 
     loop {
         match xml.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => parser.on_start(&e)?,
+            Ok(Event::Start(e)) => parser.on_start(&e, xml.decoder())?,
             Ok(Event::Empty(e)) => {
-                parser.on_start(&e)?;
+                parser.on_start(&e, xml.decoder())?;
                 parser.on_end(e.name().as_ref())?;
             }
             Ok(Event::Text(e)) => {
