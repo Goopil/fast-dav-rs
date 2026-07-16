@@ -823,12 +823,7 @@ mod tests {
 
     #[test]
     fn test_calendar_query_component_is_escaped() {
-        let body = build_calendar_query_body(
-            "VEVENT\"><inject:evil/><!--",
-            None,
-            None,
-            false,
-        );
+        let body = build_calendar_query_body("VEVENT\"><inject:evil/><!--", None, None, false);
         assert!(!body.contains("<inject:evil/>"));
         assert!(!body.contains("<!--"));
         assert!(body.contains("&quot;"));
@@ -886,11 +881,8 @@ mod tests {
 
     #[test]
     fn test_build_sync_collection_body() {
-        let body = build_sync_collection_body(
-            Some("http://example.com/sync-token-123"),
-            Some(50),
-            true,
-        );
+        let body =
+            build_sync_collection_body(Some("http://example.com/sync-token-123"), Some(50), true);
         assert!(body.contains("<D:sync-token>http://example.com/sync-token-123</D:sync-token>"));
         assert!(body.contains("<C:calendar-data/>"));
         assert!(body.contains("<D:nresults>50</D:nresults>"));

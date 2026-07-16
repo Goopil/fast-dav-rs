@@ -28,13 +28,19 @@ fn test_client_rejects_http_with_user_credentials() {
 #[test]
 fn test_client_rejects_http_with_only_user() {
     let result = CalDavClient::new("http://example.com/dav/", Some("user"), None);
-    assert!(result.is_err(), "Should reject HTTP when any credential is provided");
+    assert!(
+        result.is_err(),
+        "Should reject HTTP when any credential is provided"
+    );
 }
 
 #[test]
 fn test_client_rejects_http_with_only_pass() {
     let result = CalDavClient::new("http://example.com/dav/", None, Some("pass"));
-    assert!(result.is_err(), "Should reject HTTP when any credential is provided");
+    assert!(
+        result.is_err(),
+        "Should reject HTTP when any credential is provided"
+    );
 }
 
 #[test]

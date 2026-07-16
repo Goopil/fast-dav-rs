@@ -928,11 +928,8 @@ mod tests {
 
     #[test]
     fn test_build_sync_collection_body() {
-        let body = build_sync_collection_body(
-            Some("http://example.com/sync-token-123"),
-            Some(50),
-            true,
-        );
+        let body =
+            build_sync_collection_body(Some("http://example.com/sync-token-123"), Some(50), true);
         assert!(body.contains("<D:sync-token>http://example.com/sync-token-123</D:sync-token>"));
         assert!(body.contains("<C:address-data/>"));
         assert!(body.contains("<D:nresults>50</D:nresults>"));
