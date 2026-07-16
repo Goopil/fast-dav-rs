@@ -56,15 +56,6 @@ impl WebDavClient {
     ///
     /// The base may be `https://` **or** `http://` (both are supported by the connector).
     pub fn new(base_url: &str, basic_user: Option<&str>, basic_pass: Option<&str>) -> Result<Self> {
-        let has_credentials = basic_user.is_some() || basic_pass.is_some();
-        if has_credentials && base_url.starts_with("http://") {
-            return Err(anyhow!(
-                "Refusing to transmit credentials over plain HTTP ('{}').\
-                 Use HTTPS or omit credentials.",
-                base_url
-            ));
-        }
-
         let client = build_hyper_client()?;
 
         let base: Uri = base_url.parse()?;
