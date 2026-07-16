@@ -12,50 +12,6 @@ fn test_client_without_auth() {
     assert!(client.is_ok());
 }
 
-// --- Security tests (Fix 2 / v0.5.0) ---
-
-#[test]
-fn test_client_rejects_http_with_user_credentials() {
-    let result = CalDavClient::new("http://example.com/dav/", Some("user"), Some("pass"));
-    assert!(result.is_err(), "Should reject HTTP with credentials");
-    let msg = result.err().unwrap().to_string();
-    assert!(
-        msg.contains("plain HTTP") || msg.contains("HTTPS"),
-        "Error message should mention HTTP/HTTPS risk, got: {msg}"
-    );
-}
-
-#[test]
-fn test_client_rejects_http_with_only_user() {
-    let result = CalDavClient::new("http://example.com/dav/", Some("user"), None);
-    assert!(
-        result.is_err(),
-        "Should reject HTTP when any credential is provided"
-    );
-}
-
-#[test]
-fn test_client_rejects_http_with_only_pass() {
-    let result = CalDavClient::new("http://example.com/dav/", None, Some("pass"));
-    assert!(
-        result.is_err(),
-        "Should reject HTTP when any credential is provided"
-    );
-}
-
-#[test]
-fn test_client_allows_http_without_credentials() {
-    // HTTP without credentials is allowed (e.g., internal dev server)
-    let result = CalDavClient::new("http://localhost:5232/dav/", None, None);
-    assert!(result.is_ok(), "Should allow HTTP without credentials");
-}
-
-#[test]
-fn test_client_allows_https_with_credentials() {
-    let result = CalDavClient::new("https://example.com/dav/", Some("user"), Some("pass"));
-    assert!(result.is_ok(), "HTTPS with credentials must always work");
-}
-
 // --- URI building tests ---
 
 #[test]

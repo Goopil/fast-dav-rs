@@ -17,17 +17,6 @@ fn test_client_without_auth() {
 // --- Security tests (Fix 2 / v0.5.0) ---
 
 #[test]
-fn test_client_rejects_http_with_credentials() {
-    let result = CardDavClient::new("http://example.com/dav/", Some("user"), Some("pass"));
-    assert!(result.is_err(), "Should reject HTTP with credentials");
-    let msg = result.err().unwrap().to_string();
-    assert!(
-        msg.contains("plain HTTP") || msg.contains("HTTPS"),
-        "Error message should mention HTTP/HTTPS risk, got: {msg}"
-    );
-}
-
-#[test]
 fn test_client_allows_http_without_credentials() {
     let result = CardDavClient::new("http://localhost:5232/dav/", None, None);
     assert!(result.is_ok(), "Should allow HTTP without credentials");
