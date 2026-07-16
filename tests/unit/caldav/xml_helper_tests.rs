@@ -1,3 +1,7 @@
+// Tests for the public escape_xml function.
+// XML injection protection tests for build_calendar_query_body are in
+// src/caldav/client.rs (internal #[cfg(test)] module) since that function
+// is now pub(crate).
 use fast_dav_rs::client::escape_xml;
 
 #[test]

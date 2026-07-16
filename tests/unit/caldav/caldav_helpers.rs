@@ -1,44 +1,8 @@
+// build_* functions are now pub(crate); their tests live in src/caldav/client.rs #[cfg(test)]
 use fast_dav_rs::{
-    build_calendar_multiget_body, build_calendar_query_body, build_sync_collection_body,
     map_calendar_list, map_calendar_objects, map_sync_response, parse_multistatus_bytes,
 };
 use hyper::http::HeaderMap;
-
-#[test]
-fn builds_calendar_query_with_timerange() {
-    let body = build_calendar_query_body(
-        "VEVENT",
-        Some("20240101T000000Z"),
-        Some("20240201T000000Z"),
-        true,
-    );
-    assert!(body.contains("<C:calendar-data/>"));
-    assert!(body.contains("name=\"VEVENT\""));
-    assert!(body.contains("start=\"20240101T000000Z\""));
-    assert!(body.contains("end=\"20240201T000000Z\""));
-}
-
-#[test]
-fn builds_calendar_multiget_and_escapes() {
-    let body = build_calendar_multiget_body(
-        vec![
-            "/dav/user01/Calendars/Personal/meeting.ics",
-            "/dav/user01/Calendars/Personal/tasks&todo.ics",
-        ],
-        true,
-    )
-    .expect("hrefs present");
-    assert!(body.contains("<C:calendar-data/>"));
-    assert!(body.contains("tasks&amp;todo.ics"));
-}
-
-#[test]
-fn builds_sync_collection_body_with_token_and_limit() {
-    let body = build_sync_collection_body(Some("http://token"), Some(50), false);
-    assert!(body.contains("<D:sync-token>http://token</D:sync-token>"));
-    assert!(body.contains("<D:nresults>50</D:nresults>"));
-    assert!(!body.contains("<C:calendar-data/>"));
-}
 
 #[test]
 fn maps_caldav_multistatus_structures() {

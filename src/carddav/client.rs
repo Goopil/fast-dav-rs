@@ -703,7 +703,7 @@ fn extract_prop_inner(xml_body: &str) -> Option<String> {
     Some(remaining[..end].to_string())
 }
 
-pub fn build_addressbook_query_body(filter_xml: &str, include_data: bool) -> String {
+pub(crate) fn build_addressbook_query_body(filter_xml: &str, include_data: bool) -> String {
     let mut prop = String::from("<D:prop><D:getetag/>");
     if include_data {
         prop.push_str("<C:address-data/>");
@@ -715,15 +715,15 @@ pub fn build_addressbook_query_body(filter_xml: &str, include_data: bool) -> Str
     )
 }
 
-pub fn build_addressbook_query_filter_uid(uid: &str) -> String {
+pub(crate) fn build_addressbook_query_filter_uid(uid: &str) -> String {
     build_addressbook_query_filter("UID", uid)
 }
 
-pub fn build_addressbook_query_filter_email(email: &str) -> String {
+pub(crate) fn build_addressbook_query_filter_email(email: &str) -> String {
     build_addressbook_query_filter("EMAIL", email)
 }
 
-pub fn build_addressbook_query_filter_fn(formatted_name: &str) -> String {
+pub(crate) fn build_addressbook_query_filter_fn(formatted_name: &str) -> String {
     build_addressbook_query_filter("FN", formatted_name)
 }
 
@@ -738,7 +738,7 @@ fn build_addressbook_query_filter(prop: &str, value: &str) -> String {
     )
 }
 
-pub fn build_addressbook_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
+pub(crate) fn build_addressbook_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -771,7 +771,7 @@ where
     Some(body)
 }
 
-pub fn build_sync_collection_body(
+pub(crate) fn build_sync_collection_body(
     sync_token: Option<&str>,
     limit: Option<u32>,
     include_data: bool,
@@ -785,6 +785,7 @@ pub fn build_sync_collection_body(
     )
 }
 
+#[doc(hidden)]
 pub fn map_addressbook_list(mut items: Vec<DavItem>) -> Vec<AddressBookInfo> {
     let mut addressbooks = Vec::new();
     for mut item in items.drain(..) {
@@ -809,6 +810,7 @@ pub fn map_addressbook_list(mut items: Vec<DavItem>) -> Vec<AddressBookInfo> {
     addressbooks
 }
 
+#[doc(hidden)]
 pub fn map_address_objects(items: Vec<DavItem>) -> Vec<AddressObject> {
     let mut out = Vec::with_capacity(items.len());
     for mut item in items {
@@ -822,6 +824,7 @@ pub fn map_address_objects(items: Vec<DavItem>) -> Vec<AddressObject> {
     out
 }
 
+#[doc(hidden)]
 pub fn map_sync_response(
     headers: &HeaderMap,
     items: Vec<DavItem>,
@@ -850,7 +853,13 @@ pub fn map_sync_response(
         let status = item.status.clone();
         let is_deleted = status
             .as_deref()
-            .map(|s| s.contains("404") || s.contains("410"))
+            .map(|s| {
+                s.split_whitespace()
+                    .nth(1)
+                    .and_then(|code| code.parse::<u16>().ok())
+                    .map(|code| code == 404 || code == 410)
+                    .unwrap_or(false)
+            })
             .unwrap_or(false);
 
         out.push(SyncItem {
@@ -865,5 +874,100 @@ pub fn map_sync_response(
     SyncResponse {
         sync_token,
         items: out,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper::HeaderMap;
+
+    // --- XML builder tests ---
+
+    #[test]
+    fn test_build_addressbook_query_body() {
+        let filter = build_addressbook_query_filter_uid("user-123");
+        let body = build_addressbook_query_body(&filter, true);
+        assert!(body.contains("<C:addressbook-query"));
+        assert!(body.contains("<C:address-data/>"));
+        assert!(body.contains("prop-filter name=\"UID\""));
+        assert!(body.contains("user-123"));
+    }
+
+    #[test]
+    fn test_build_addressbook_query_filters_escaping() {
+        let email_filter = build_addressbook_query_filter_email("user@example.com");
+        assert!(email_filter.contains("prop-filter name=\"EMAIL\""));
+        assert!(email_filter.contains("user@example.com"));
+
+        let fn_filter = build_addressbook_query_filter_fn("Ada Lovelace");
+        assert!(fn_filter.contains("prop-filter name=\"FN\""));
+        assert!(fn_filter.contains("Ada Lovelace"));
+    }
+
+    #[test]
+    fn test_build_addressbook_multiget_and_escapes() {
+        let body = build_addressbook_multiget_body(
+            vec![
+                "/addressbooks/user/contact1.vcf",
+                "/addressbooks/user/contact&special.vcf",
+            ],
+            true,
+        )
+        .expect("Should create body");
+        assert!(body.contains("<C:address-data/>"));
+        assert!(body.contains("/addressbooks/user/contact1.vcf"));
+        assert!(body.contains("contact&amp;special.vcf"));
+    }
+
+    #[test]
+    fn test_build_addressbook_multiget_empty() {
+        let body = build_addressbook_multiget_body(Vec::<String>::new(), true);
+        assert!(body.is_none());
+    }
+
+    #[test]
+    fn test_build_sync_collection_body() {
+        let body = build_sync_collection_body(
+            Some("http://example.com/sync-token-123"),
+            Some(50),
+            true,
+        );
+        assert!(body.contains("<D:sync-token>http://example.com/sync-token-123</D:sync-token>"));
+        assert!(body.contains("<C:address-data/>"));
+        assert!(body.contains("<D:nresults>50</D:nresults>"));
+    }
+
+    // --- is_deleted tests (Fix 5 / v0.5.0) ---
+
+    #[test]
+    fn test_is_deleted_standard_404() {
+        let mut item = DavItem::new();
+        item.href = "/ab/contact.vcf".to_string();
+        item.status = Some("HTTP/1.1 404 Not Found".to_string());
+
+        let response = map_sync_response(&HeaderMap::new(), vec![item], None);
+        assert!(response.items[0].is_deleted);
+    }
+
+    #[test]
+    fn test_is_deleted_410_gone() {
+        let mut item = DavItem::new();
+        item.href = "/ab/contact.vcf".to_string();
+        item.status = Some("HTTP/1.1 410 Gone".to_string());
+
+        let response = map_sync_response(&HeaderMap::new(), vec![item], None);
+        assert!(response.items[0].is_deleted);
+    }
+
+    #[test]
+    fn test_is_not_deleted_200() {
+        let mut item = DavItem::new();
+        item.href = "/ab/contact.vcf".to_string();
+        item.etag = Some("\"abc\"".to_string());
+        item.status = Some("HTTP/1.1 200 OK".to_string());
+
+        let response = map_sync_response(&HeaderMap::new(), vec![item], None);
+        assert!(!response.items[0].is_deleted);
     }
 }

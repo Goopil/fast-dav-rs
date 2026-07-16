@@ -1,40 +1,8 @@
+// build_* functions are now pub(crate); their tests live in src/carddav/client.rs #[cfg(test)]
 use fast_dav_rs::carddav::{
-    build_addressbook_multiget_body, build_addressbook_query_body,
-    build_addressbook_query_filter_uid, build_sync_collection_body, map_address_objects,
-    map_addressbook_list, map_sync_response, parse_multistatus_bytes,
+    map_address_objects, map_addressbook_list, map_sync_response, parse_multistatus_bytes,
 };
 use hyper::http::HeaderMap;
-
-#[test]
-fn builds_addressbook_query_with_filter() {
-    let filter = build_addressbook_query_filter_uid("contact-123");
-    let body = build_addressbook_query_body(&filter, true);
-    assert!(body.contains("<C:address-data/>"));
-    assert!(body.contains("prop-filter name=\"UID\""));
-    assert!(body.contains("contact-123"));
-}
-
-#[test]
-fn builds_addressbook_multiget_and_escapes() {
-    let body = build_addressbook_multiget_body(
-        vec![
-            "/dav/user01/AddressBooks/Personal/contact.vcf",
-            "/dav/user01/AddressBooks/Personal/contact&special.vcf",
-        ],
-        true,
-    )
-    .expect("hrefs present");
-    assert!(body.contains("<C:address-data/>"));
-    assert!(body.contains("contact&amp;special.vcf"));
-}
-
-#[test]
-fn builds_sync_collection_body_with_token_and_limit() {
-    let body = build_sync_collection_body(Some("http://token"), Some(50), false);
-    assert!(body.contains("<D:sync-token>http://token</D:sync-token>"));
-    assert!(body.contains("<D:nresults>50</D:nresults>"));
-    assert!(!body.contains("<C:address-data/>"));
-}
 
 #[test]
 fn maps_carddav_multistatus_structures() {

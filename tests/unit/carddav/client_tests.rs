@@ -14,6 +14,25 @@ fn test_client_without_auth() {
     assert!(client.is_ok());
 }
 
+// --- Security tests (Fix 2 / v0.5.0) ---
+
+#[test]
+fn test_client_rejects_http_with_credentials() {
+    let result = CardDavClient::new("http://example.com/dav/", Some("user"), Some("pass"));
+    assert!(result.is_err(), "Should reject HTTP with credentials");
+    let msg = result.err().unwrap().to_string();
+    assert!(
+        msg.contains("plain HTTP") || msg.contains("HTTPS"),
+        "Error message should mention HTTP/HTTPS risk, got: {msg}"
+    );
+}
+
+#[test]
+fn test_client_allows_http_without_credentials() {
+    let result = CardDavClient::new("http://localhost:5232/dav/", None, None);
+    assert!(result.is_ok(), "Should allow HTTP without credentials");
+}
+
 #[test]
 fn test_build_uri_relative() {
     let client = CardDavClient::new("https://example.com/dav/user/", None, None)
@@ -139,63 +158,7 @@ fn test_escape_xml_multiple_same_char() {
     );
 }
 
-#[test]
-fn test_build_addressbook_query_body() {
-    let filter = fast_dav_rs::carddav::client::build_addressbook_query_filter_uid("user-123");
-    let body = fast_dav_rs::carddav::client::build_addressbook_query_body(&filter, true);
-    assert!(body.contains("<C:addressbook-query"));
-    assert!(body.contains("<C:address-data/>"));
-    assert!(body.contains("prop-filter name=\"UID\""));
-    assert!(body.contains("user-123"));
-}
-
-#[test]
-fn test_build_addressbook_query_filters() {
-    let email_filter =
-        fast_dav_rs::carddav::client::build_addressbook_query_filter_email("user@example.com");
-    assert!(email_filter.contains("prop-filter name=\"EMAIL\""));
-    assert!(email_filter.contains("user@example.com"));
-
-    let fn_filter = fast_dav_rs::carddav::client::build_addressbook_query_filter_fn("Ada Lovelace");
-    assert!(fn_filter.contains("prop-filter name=\"FN\""));
-    assert!(fn_filter.contains("Ada Lovelace"));
-}
-
-#[test]
-fn test_build_addressbook_multiget_and_escapes() {
-    let body = fast_dav_rs::carddav::client::build_addressbook_multiget_body(
-        vec![
-            "/addressbooks/user/contact1.vcf",
-            "/addressbooks/user/contact&special.vcf",
-        ],
-        true,
-    )
-    .expect("Should create body");
-
-    assert!(body.contains("<C:address-data/>"));
-    assert!(body.contains("/addressbooks/user/contact1.vcf"));
-    assert!(body.contains("contact&amp;special.vcf")); // Escaped ampersand
-}
-
-#[test]
-fn test_build_addressbook_multiget_empty() {
-    let body =
-        fast_dav_rs::carddav::client::build_addressbook_multiget_body(Vec::<String>::new(), true);
-    assert!(body.is_none());
-}
-
-#[test]
-fn test_build_sync_collection_body() {
-    let body = fast_dav_rs::carddav::client::build_sync_collection_body(
-        Some("http://example.com/sync-token-123"),
-        Some(50),
-        true,
-    );
-
-    assert!(body.contains("<D:sync-token>http://example.com/sync-token-123</D:sync-token>"));
-    assert!(body.contains("<C:address-data/>"));
-    assert!(body.contains("<D:nresults>50</D:nresults>"));
-}
+// build_* functions are now pub(crate); their tests live in src/carddav/client.rs #[cfg(test)]
 
 #[test]
 fn test_map_addressbook_list_filters_addressbooks() {

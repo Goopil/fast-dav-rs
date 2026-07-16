@@ -56,6 +56,15 @@ impl WebDavClient {
     ///
     /// The base may be `https://` **or** `http://` (both are supported by the connector).
     pub fn new(base_url: &str, basic_user: Option<&str>, basic_pass: Option<&str>) -> Result<Self> {
+        let has_credentials = basic_user.is_some() || basic_pass.is_some();
+        if has_credentials && base_url.starts_with("http://") {
+            return Err(anyhow!(
+                "Refusing to transmit credentials over plain HTTP ('{}').\
+                 Use HTTPS or omit credentials.",
+                base_url
+            ));
+        }
+
         let client = build_hyper_client()?;
 
         let base: Uri = base_url.parse()?;
@@ -749,15 +758,11 @@ impl WebDavClient {
     }
 
     /// Check if the server supports WebDAV-Sync (RFC 6578).
+    ///
+    /// Sends a real `sync-collection` REPORT with an empty sync-token. A server that
+    /// understands RFC 6578 will return 207 (or another non-501 code). A server that does
+    /// not support `sync-collection` returns 501 Not Implemented.
     pub async fn supports_webdav_sync(&self) -> Result<bool> {
-        let options_resp = self.options("").await?;
-        if let Some(allow_header) = options_resp.headers().get("Allow")
-            && let Ok(allow_value) = allow_header.to_str()
-            && allow_value.contains("REPORT")
-        {
-            return Ok(true);
-        }
-
         let test_sync = r#"<D:sync-collection xmlns:D="DAV:">
             <D:sync-token/>
             <D:sync-level>1</D:sync-level>
@@ -767,10 +772,7 @@ impl WebDavClient {
         </D:sync-collection>"#;
 
         match self.report("", Depth::One, test_sync).await {
-            Ok(response) => {
-                let status = response.status();
-                Ok(status.is_success() || status == 415)
-            }
+            Ok(response) => Ok(response.status().as_u16() != 501),
             Err(_) => Ok(false),
         }
     }

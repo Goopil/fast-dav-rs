@@ -601,7 +601,7 @@ pub fn escape_xml(input: &str) -> String {
     crate::webdav::xml::escape_xml(input)
 }
 
-pub fn build_calendar_query_body(
+pub(crate) fn build_calendar_query_body(
     component: &str,
     start: Option<&str>,
     end: Option<&str>,
@@ -617,15 +617,15 @@ pub fn build_calendar_query_body(
         "<C:filter>\
            <C:comp-filter name=\"VCALENDAR\">\
              <C:comp-filter name=\"{}\">",
-        component
+        escape_xml(component)
     );
     if start.is_some() || end.is_some() {
         filter.push_str("<C:time-range");
         if let Some(s) = start {
-            filter.push_str(&format!(" start=\"{}\"", s));
+            filter.push_str(&format!(" start=\"{}\"", escape_xml(s)));
         }
         if let Some(e) = end {
-            filter.push_str(&format!(" end=\"{}\"", e));
+            filter.push_str(&format!(" end=\"{}\"", escape_xml(e)));
         }
         filter.push_str("/>");
     }
@@ -636,7 +636,7 @@ pub fn build_calendar_query_body(
     )
 }
 
-pub fn build_calendar_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
+pub(crate) fn build_calendar_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -669,7 +669,7 @@ where
     Some(body)
 }
 
-pub fn build_sync_collection_body(
+pub(crate) fn build_sync_collection_body(
     sync_token: Option<&str>,
     limit: Option<u32>,
     include_data: bool,
@@ -683,6 +683,7 @@ pub fn build_sync_collection_body(
     )
 }
 
+#[doc(hidden)]
 pub fn map_calendar_list(mut items: Vec<DavItem>) -> Vec<CalendarInfo> {
     let mut calendars = Vec::new();
     for mut item in items.drain(..) {
@@ -713,6 +714,7 @@ pub fn map_calendar_list(mut items: Vec<DavItem>) -> Vec<CalendarInfo> {
     calendars
 }
 
+#[doc(hidden)]
 pub fn map_calendar_objects(items: Vec<DavItem>) -> Vec<CalendarObject> {
     let mut out = Vec::with_capacity(items.len());
     for mut item in items {
@@ -726,6 +728,7 @@ pub fn map_calendar_objects(items: Vec<DavItem>) -> Vec<CalendarObject> {
     out
 }
 
+#[doc(hidden)]
 pub fn map_sync_response(
     headers: &HeaderMap,
     items: Vec<DavItem>,
@@ -754,7 +757,13 @@ pub fn map_sync_response(
         let status = item.status.clone();
         let is_deleted = status
             .as_deref()
-            .map(|s| s.contains("404") || s.contains("410"))
+            .map(|s| {
+                s.split_whitespace()
+                    .nth(1)
+                    .and_then(|code| code.parse::<u16>().ok())
+                    .map(|code| code == 404 || code == 410)
+                    .unwrap_or(false)
+            })
             .unwrap_or(false);
 
         out.push(SyncItem {
@@ -769,5 +778,224 @@ pub fn map_sync_response(
     SyncResponse {
         sync_token,
         items: out,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper::HeaderMap;
+
+    // --- XML builder tests ---
+
+    #[test]
+    fn test_build_calendar_query_body() {
+        let body = build_calendar_query_body(
+            "VEVENT",
+            Some("20240101T000000Z"),
+            Some("20240201T000000Z"),
+            true,
+        );
+        assert!(body.contains("<C:calendar-data/>"));
+        assert!(body.contains("name=\"VEVENT\""));
+        assert!(body.contains("start=\"20240101T000000Z\""));
+        assert!(body.contains("end=\"20240201T000000Z\""));
+    }
+
+    #[test]
+    fn test_build_calendar_query_body_no_time_range() {
+        let body = build_calendar_query_body("VTODO", None, None, false);
+        assert!(!body.contains("<C:calendar-data/>"));
+        assert!(body.contains("name=\"VTODO\""));
+        assert!(!body.contains("start="));
+        assert!(!body.contains("end="));
+    }
+
+    #[test]
+    fn test_build_calendar_query_body_partial_time_range() {
+        let body = build_calendar_query_body("VEVENT", Some("20240101T000000Z"), None, true);
+        assert!(body.contains("<C:calendar-data/>"));
+        assert!(body.contains("start=\"20240101T000000Z\""));
+        assert!(!body.contains("end="));
+    }
+
+    // --- XML injection security tests (Fix 1 / v0.5.0) ---
+
+    #[test]
+    fn test_calendar_query_component_is_escaped() {
+        let body = build_calendar_query_body(
+            "VEVENT\"><inject:evil/><!--",
+            None,
+            None,
+            false,
+        );
+        assert!(!body.contains("<inject:evil/>"));
+        assert!(!body.contains("<!--"));
+        assert!(body.contains("&quot;"));
+        assert!(body.contains("&lt;"));
+    }
+
+    #[test]
+    fn test_calendar_query_start_is_escaped() {
+        let body = build_calendar_query_body(
+            "VEVENT",
+            Some("20240101T000000Z\" evil=\"injected"),
+            None,
+            false,
+        );
+        assert!(!body.contains("evil=\"injected"));
+        assert!(body.contains("&quot;"));
+    }
+
+    #[test]
+    fn test_calendar_query_end_is_escaped() {
+        let body = build_calendar_query_body(
+            "VEVENT",
+            None,
+            Some("20240201T000000Z\" evil=\"injected"),
+            false,
+        );
+        assert!(!body.contains("evil=\"injected"));
+        assert!(body.contains("&quot;"));
+    }
+
+    // --- Multiget tests ---
+
+    #[test]
+    fn test_build_calendar_multiget_and_escapes() {
+        let body = build_calendar_multiget_body(
+            vec![
+                "/calendars/user/event1.ics",
+                "/calendars/user/event&special.ics",
+            ],
+            true,
+        )
+        .expect("Should create body");
+        assert!(body.contains("<C:calendar-data/>"));
+        assert!(body.contains("/calendars/user/event1.ics"));
+        assert!(body.contains("event&amp;special.ics"));
+    }
+
+    #[test]
+    fn test_build_calendar_multiget_empty() {
+        let body = build_calendar_multiget_body(Vec::<String>::new(), true);
+        assert!(body.is_none());
+    }
+
+    // --- Sync body tests ---
+
+    #[test]
+    fn test_build_sync_collection_body() {
+        let body = build_sync_collection_body(
+            Some("http://example.com/sync-token-123"),
+            Some(50),
+            true,
+        );
+        assert!(body.contains("<D:sync-token>http://example.com/sync-token-123</D:sync-token>"));
+        assert!(body.contains("<C:calendar-data/>"));
+        assert!(body.contains("<D:nresults>50</D:nresults>"));
+    }
+
+    // --- Mapping tests ---
+
+    #[test]
+    fn test_map_calendar_list_filters_calendars() {
+        let mut item = DavItem::new();
+        item.href = "/calendars/user/personal/".to_string();
+        item.displayname = Some("Personal".to_string());
+        item.is_calendar = true;
+
+        let mut collection_item = DavItem::new();
+        collection_item.href = "/calendars/user/collection/".to_string();
+        collection_item.is_collection = true;
+
+        let calendars = map_calendar_list(vec![item, collection_item]);
+        assert_eq!(calendars.len(), 1);
+        assert_eq!(calendars[0].href, "/calendars/user/personal/");
+        assert_eq!(calendars[0].displayname, Some("Personal".to_string()));
+    }
+
+    #[test]
+    fn test_map_calendar_objects() {
+        let mut item1 = DavItem::new();
+        item1.href = "/calendars/user/event1.ics".to_string();
+        item1.etag = Some("\"abc123\"".to_string());
+        item1.calendar_data = Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string());
+
+        let mut item2 = DavItem::new();
+        item2.href = "/calendars/user/event2.ics".to_string();
+        item2.etag = Some("\"def456\"".to_string());
+        item2.status = Some("HTTP/1.1 404 Not Found".to_string());
+
+        let objects = map_calendar_objects(vec![item1, item2]);
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].href, "/calendars/user/event1.ics");
+        assert_eq!(objects[0].etag, Some("\"abc123\"".to_string()));
+        assert_eq!(
+            objects[0].calendar_data,
+            Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string())
+        );
+    }
+
+    // --- is_deleted tests (Fix 5 / v0.5.0) ---
+
+    #[test]
+    fn test_is_deleted_standard_404() {
+        let mut item = DavItem::new();
+        item.href = "/cal/event.ics".to_string();
+        item.status = Some("HTTP/1.1 404 Not Found".to_string());
+
+        let response = map_sync_response(&HeaderMap::new(), vec![item], None);
+        assert!(response.items[0].is_deleted);
+    }
+
+    #[test]
+    fn test_is_deleted_410_gone() {
+        let mut item = DavItem::new();
+        item.href = "/cal/event.ics".to_string();
+        item.status = Some("HTTP/1.1 410 Gone".to_string());
+
+        let response = map_sync_response(&HeaderMap::new(), vec![item], None);
+        assert!(response.items[0].is_deleted);
+    }
+
+    #[test]
+    fn test_is_not_deleted_200() {
+        let mut item = DavItem::new();
+        item.href = "/cal/event.ics".to_string();
+        item.etag = Some("\"abc\"".to_string());
+        item.status = Some("HTTP/1.1 200 OK".to_string());
+
+        let response = map_sync_response(&HeaderMap::new(), vec![item], None);
+        assert!(!response.items[0].is_deleted);
+    }
+
+    #[test]
+    fn test_is_not_deleted_no_status() {
+        let mut item = DavItem::new();
+        item.href = "/cal/event.ics".to_string();
+        item.etag = Some("\"abc\"".to_string());
+
+        let response = map_sync_response(&HeaderMap::new(), vec![item], None);
+        assert!(!response.items[0].is_deleted);
+    }
+
+    #[test]
+    fn test_map_sync_response_token_priority() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Sync-Token",
+            "http://example.com/sync-token-456".parse().unwrap(),
+        );
+
+        let mut item = DavItem::new();
+        item.href = "/calendars/user/event1.ics".to_string();
+        item.etag = Some("\"abc123\"".to_string());
+
+        let response = map_sync_response(&headers, vec![item], None);
+        assert_eq!(
+            response.sync_token,
+            Some("http://example.com/sync-token-456".to_string())
+        );
     }
 }
