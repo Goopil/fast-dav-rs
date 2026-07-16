@@ -346,17 +346,17 @@ impl WebDavClient {
         }
     }
 
-    // ----------- Aggregated send (Bytes) with automatic decompression -----------
+    // ----------- Core request dispatch -----------
 
-    /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
-    pub async fn send(
+    /// Internal: build, send, retry (compression negotiation), return raw `Response<Incoming>`.
+    async fn send_inner(
         &self,
         method: Method,
         path: &str,
         headers: HeaderMap,
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
-    ) -> Result<Response<Bytes>> {
+    ) -> Result<Response<Incoming>> {
         let uri = self.build_uri(path)?;
         let auth = self.auth_header.clone();
         let base_headers = headers;
@@ -410,14 +410,34 @@ impl WebDavClient {
                 continue;
             }
 
-            let encodings = detect_encodings(resp.headers());
-            let (mut parts, body) = resp.into_parts();
-
-            let decompressed = decompress_body(body, &encodings).await?;
-            self.normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
-
-            break Ok(Response::from_parts(parts, decompressed));
+            break Ok(resp);
         }
+    }
+
+    // ----------- Aggregated send (Bytes) with automatic decompression -----------
+
+    /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
+    ///
+    /// The same timeout is applied to both the request and the body collection phase.
+    pub async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        headers: HeaderMap,
+        body_bytes: Option<Bytes>,
+        per_req_timeout: Option<Duration>,
+    ) -> Result<Response<Bytes>> {
+        let resp = self
+            .send_inner(method, path, headers, body_bytes, per_req_timeout)
+            .await?;
+        let body_timeout = per_req_timeout.unwrap_or(self.default_timeout);
+        let encodings = detect_encodings(resp.headers());
+        let (mut parts, body) = resp.into_parts();
+        let decompressed = timeout(body_timeout, decompress_body(body, &encodings))
+            .await
+            .map_err(|_| anyhow!("body collection timed out"))??;
+        self.normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
+        Ok(Response::from_parts(parts, decompressed))
     }
 
     // ----------- Streaming send (for parsing on the fly) -----------
@@ -431,61 +451,8 @@ impl WebDavClient {
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
     ) -> Result<Response<Incoming>> {
-        let uri = self.build_uri(path)?;
-        let auth = self.auth_header.clone();
-        let base_headers = headers;
-        let base_body = body_bytes.clone();
-        let mut attempt = 0;
-
-        loop {
-            let mut headers = base_headers.clone();
-            add_accept_encoding(&mut headers);
-
-            let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
-
-            if let Some(ref auth_header) = auth {
-                req_builder = req_builder.header(header::AUTHORIZATION, auth_header);
-            }
-
-            let mut final_body: Option<Bytes> = None;
-            let mut attempted_encoding: Option<ContentEncoding> = None;
-
-            if let Some(body) = base_body.clone() {
-                if !headers.contains_key(header::CONTENT_TYPE) {
-                    req_builder = req_builder.header(
-                        header::CONTENT_TYPE,
-                        header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                    );
-                }
-
-                let (payload, encoding) = self.prepare_request_body(body, &mut headers).await;
-                attempted_encoding = encoding;
-                final_body = Some(payload);
-            }
-
-            for (k, v) in headers.iter() {
-                req_builder = req_builder.header(k, v);
-            }
-
-            let req = match final_body {
-                Some(body) => req_builder.body(Full::new(body))?,
-                None => req_builder.body(Full::new(Bytes::new()))?,
-            };
-
-            let fut = self.client.request(req);
-            let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
-                .await
-                .map_err(|_| anyhow!("request timed out"))??;
-
-            let should_retry =
-                self.handle_request_compression_outcome(attempted_encoding, resp.status());
-            if should_retry && attempt == 0 && base_body.is_some() {
-                attempt += 1;
-                continue;
-            }
-
-            break Ok(resp);
-        }
+        self.send_inner(method, path, headers, body_bytes, per_req_timeout)
+            .await
     }
 
     // ----------- HTTP/WebDAV Verbs -----------
@@ -646,9 +613,10 @@ impl WebDavClient {
             .map(|s| s.to_string())
     }
 
-    /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
-    pub async fn propfind_many(
+    /// Shared implementation for `propfind_many` and `report_many`.
+    async fn send_many_with_method(
         &self,
+        method: Method,
         paths: impl IntoIterator<Item = String>,
         depth: Depth,
         xml_body: Arc<Bytes>,
@@ -662,6 +630,7 @@ impl WebDavClient {
             let this = self.clone();
             let body = xml_body.clone();
             let p = path.clone();
+            let method = method.clone();
             tasks.push_back(async move {
                 let _permit: OwnedSemaphorePermit =
                     sem_clone.acquire_owned().await.expect("semaphore closed");
@@ -674,15 +643,7 @@ impl WebDavClient {
                     header::CONTENT_TYPE,
                     header::HeaderValue::from_static("application/xml; charset=utf-8"),
                 );
-                let res = this
-                    .send(
-                        Method::from_bytes(b"PROPFIND").unwrap(),
-                        &p,
-                        h,
-                        Some((*body).clone()),
-                        None,
-                    )
-                    .await;
+                let res = this.send(method, &p, h, Some((*body).clone()), None).await;
                 BatchItem {
                     pub_path: p,
                     result: res,
@@ -697,6 +658,24 @@ impl WebDavClient {
         out
     }
 
+    /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
+    pub async fn propfind_many(
+        &self,
+        paths: impl IntoIterator<Item = String>,
+        depth: Depth,
+        xml_body: Arc<Bytes>,
+        max_concurrency: usize,
+    ) -> Vec<BatchItem<Response<Bytes>>> {
+        self.send_many_with_method(
+            Method::from_bytes(b"PROPFIND").unwrap(),
+            paths,
+            depth,
+            xml_body,
+            max_concurrency,
+        )
+        .await
+    }
+
     /// Run many `REPORT`s concurrently with a semaphore-bound concurrency limit.
     pub async fn report_many(
         &self,
@@ -705,47 +684,14 @@ impl WebDavClient {
         xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
-        let sem = Arc::new(Semaphore::new(max_concurrency.max(1)));
-        let mut tasks = FuturesOrdered::new();
-
-        for path in paths {
-            let sem_clone = sem.clone();
-            let this = self.clone();
-            let body = xml_body.clone();
-            let p = path.clone();
-            tasks.push_back(async move {
-                let _permit: OwnedSemaphorePermit =
-                    sem_clone.acquire_owned().await.expect("semaphore closed");
-                let mut h = HeaderMap::new();
-                h.insert(
-                    "Depth",
-                    header::HeaderValue::from_str(depth.as_str()).unwrap(),
-                );
-                h.insert(
-                    header::CONTENT_TYPE,
-                    header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                );
-                let res = this
-                    .send(
-                        Method::from_bytes(b"REPORT").unwrap(),
-                        &p,
-                        h,
-                        Some((*body).clone()),
-                        None,
-                    )
-                    .await;
-                BatchItem {
-                    pub_path: p,
-                    result: res,
-                }
-            });
-        }
-
-        let mut out = Vec::new();
-        while let Some(item) = tasks.next().await {
-            out.push(item);
-        }
-        out
+        self.send_many_with_method(
+            Method::from_bytes(b"REPORT").unwrap(),
+            paths,
+            depth,
+            xml_body,
+            max_concurrency,
+        )
+        .await
     }
 
     /// Check if the server supports WebDAV-Sync (RFC 6578).

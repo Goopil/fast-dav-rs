@@ -3,7 +3,7 @@ pub use crate::webdav::types::{BatchItem, Depth};
 
 /// Item extracted from a WebDAV response
 #[derive(Debug, Clone)]
-pub struct DavItem {
+pub(crate) struct DavItem {
     pub href: String,
     pub status: Option<String>,
     pub displayname: Option<String>,
@@ -30,7 +30,7 @@ impl Default for DavItem {
 }
 
 impl DavItem {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             href: String::new(),
             status: None,

@@ -6,7 +6,7 @@
 use anyhow::Result;
 use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
 use bytes::Bytes;
-use futures_util::TryStreamExt;
+use futures::TryStreamExt;
 use http_body_util::BodyStream;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, header, http};

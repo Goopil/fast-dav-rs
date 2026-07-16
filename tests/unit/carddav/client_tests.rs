@@ -1,6 +1,5 @@
 use fast_dav_rs::CardDavClient;
 use fast_dav_rs::carddav::Depth;
-use hyper::http::HeaderMap;
 
 #[test]
 fn test_client_creation() {
@@ -148,98 +147,5 @@ fn test_escape_xml_multiple_same_char() {
 }
 
 // build_* functions are now pub(crate); their tests live in src/carddav/client.rs #[cfg(test)]
-
-#[test]
-fn test_map_addressbook_list_filters_addressbooks() {
-    let mut item = fast_dav_rs::carddav::types::DavItem::new();
-    item.href = "/addressbooks/user/personal/".to_string();
-    item.displayname = Some("Personal".to_string());
-    item.is_addressbook = true;
-
-    let mut collection_item = fast_dav_rs::carddav::types::DavItem::new();
-    collection_item.href = "/addressbooks/user/collection/".to_string();
-    collection_item.displayname = Some("Collection".to_string());
-    collection_item.is_collection = true;
-
-    let items = vec![item.clone(), collection_item.clone()];
-    let books = fast_dav_rs::carddav::client::map_addressbook_list(items);
-
-    assert_eq!(books.len(), 1);
-    assert_eq!(books[0].href, "/addressbooks/user/personal/");
-    assert_eq!(books[0].displayname, Some("Personal".to_string()));
-}
-
-#[test]
-fn test_map_address_objects() {
-    let mut item1 = fast_dav_rs::carddav::types::DavItem::new();
-    item1.href = "/addressbooks/user/contact1.vcf".to_string();
-    item1.etag = Some("\"abc123\"".to_string());
-    item1.address_data = Some("BEGIN:VCARD...END:VCARD".to_string());
-
-    let mut item2 = fast_dav_rs::carddav::types::DavItem::new();
-    item2.href = "/addressbooks/user/contact2.vcf".to_string();
-    item2.etag = Some("\"def456\"".to_string());
-    item2.status = Some("HTTP/1.1 404 Not Found".to_string());
-
-    let items = vec![item1.clone(), item2.clone()];
-    let objects = fast_dav_rs::carddav::client::map_address_objects(items);
-
-    assert_eq!(objects.len(), 2);
-    assert_eq!(objects[0].href, "/addressbooks/user/contact1.vcf");
-    assert_eq!(objects[0].etag, Some("\"abc123\"".to_string()));
-    assert_eq!(
-        objects[0].address_data,
-        Some("BEGIN:VCARD...END:VCARD".to_string())
-    );
-    assert_eq!(objects[1].href, "/addressbooks/user/contact2.vcf");
-    assert_eq!(objects[1].etag, Some("\"def456\"".to_string()));
-    assert_eq!(
-        objects[1].status,
-        Some("HTTP/1.1 404 Not Found".to_string())
-    );
-}
-
-#[test]
-fn test_map_sync_response() {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "Sync-Token",
-        "http://example.com/sync-token-456".parse().unwrap(),
-    );
-
-    let mut item1 = fast_dav_rs::carddav::types::DavItem::new();
-    item1.href = "/addressbooks/user/contact1.vcf".to_string();
-    item1.etag = Some("\"abc123\"".to_string());
-    item1.address_data = Some("BEGIN:VCARD...END:VCARD".to_string());
-
-    let mut item2 = fast_dav_rs::carddav::types::DavItem::new();
-    item2.href = "/addressbooks/user/contact2.vcf".to_string();
-    item2.status = Some("HTTP/1.1 404 Not Found".to_string());
-
-    let mut collection_item = fast_dav_rs::carddav::types::DavItem::new();
-    collection_item.href = "/addressbooks/user/subbook/".to_string();
-    collection_item.sync_token = Some("http://example.com/sync-token-789".to_string());
-    collection_item.is_collection = true;
-
-    let items = vec![item1, item2, collection_item];
-    let response = fast_dav_rs::carddav::client::map_sync_response(&headers, items, None);
-
-    assert_eq!(
-        response.sync_token,
-        Some("http://example.com/sync-token-456".to_string())
-    );
-    assert_eq!(response.items.len(), 2); // Collection item should be filtered out
-
-    // Check the first item (regular item with data)
-    assert_eq!(response.items[0].href, "/addressbooks/user/contact1.vcf");
-    assert_eq!(response.items[0].etag, Some("\"abc123\"".to_string()));
-    assert!(!response.items[0].is_deleted); // Should not be deleted
-
-    // Check second item (deleted item)
-    assert_eq!(response.items[1].href, "/addressbooks/user/contact2.vcf");
-    assert_eq!(
-        response.items[1].status,
-        Some("HTTP/1.1 404 Not Found".to_string())
-    );
-    assert!(response.items[1].is_deleted); // Should be marked as deleted
-}
+// test_map_addressbook_list_filters_addressbooks, test_map_address_objects, test_map_sync_response
+// moved to src/carddav/client.rs #[cfg(test)] mod tests

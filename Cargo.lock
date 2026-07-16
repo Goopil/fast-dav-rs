@@ -237,7 +237,6 @@ dependencies = [
  "bytes",
  "chrono",
  "futures",
- "futures-util",
  "http-body-util",
  "hyper",
  "hyper-rustls",

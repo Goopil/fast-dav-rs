@@ -693,13 +693,8 @@ pub mod common;
 pub mod webdav;
 
 // Backwards-compatible re-exports
-pub use caldav::streaming::{
-    parse_multistatus_bytes, parse_multistatus_bytes_visit, parse_multistatus_stream,
-    parse_multistatus_stream_visit,
-};
 pub use caldav::{
-    BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse,
-    map_calendar_list, map_calendar_objects, map_sync_response,
+    BatchItem, CalDavClient, CalendarInfo, CalendarObject, Depth, SyncItem, SyncResponse,
 };
 pub use carddav::{AddressBookInfo, AddressObject, CardDavClient};
 pub use common::compression::{
@@ -710,14 +705,6 @@ pub use common::compression::{
 // Legacy module paths kept for compatibility with existing imports.
 pub mod client {
     pub use crate::caldav::client::*;
-}
-
-pub mod streaming {
-    pub use crate::caldav::streaming::*;
-}
-
-pub mod types {
-    pub use crate::caldav::types::*;
 }
 
 pub mod compression {
