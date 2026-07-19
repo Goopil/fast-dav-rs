@@ -245,6 +245,7 @@ dependencies = [
  "quick-xml",
  "tokio",
  "tokio-util",
+ "zeroize",
 ]
 
 [[package]]

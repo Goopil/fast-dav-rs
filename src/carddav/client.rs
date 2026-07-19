@@ -36,6 +36,14 @@ impl CardDavClient {
     ///
     /// The base may be `https://` **or** `http://` (both are supported by the connector).
     ///
+    /// # Security
+    ///
+    /// Basic credentials are sent as an `Authorization: Basic` header on **every**
+    /// request. Base64 is an encoding, not encryption: over plain `http://` the
+    /// credentials travel effectively in cleartext and can be read by anyone on the
+    /// network path. Always use `https://` outside isolated test environments
+    /// (e.g. a local Docker test server).
+    ///
     /// # Arguments
     ///
     /// * `base_url` - The base URL for the CardDAV server (must be a valid URI)
