@@ -9,6 +9,7 @@ use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
 use std::sync::{Arc, PoisonError, RwLock};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
+use zeroize::Zeroize;
 
 use crate::common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
@@ -46,6 +47,14 @@ const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 pub struct WebDavClient {
     base: Uri,
     client: HyperClient,
+    /// Pre-built `Authorization: Basic …` value attached to every request, if
+    /// credentials were provided.
+    ///
+    /// Residual limitation: the intermediate credential strings are zeroized in
+    /// [`WebDavClient::new`], but this `HeaderValue` necessarily keeps a Base64
+    /// copy of the credentials in memory for the whole lifetime of the client
+    /// (and its clones) and is **not** zeroized on drop. This is an accepted
+    /// trade-off so the header can be attached cheaply to each request.
     auth_header: Option<header::HeaderValue>,
     default_timeout: Duration,
     request_compression_mode: RequestCompressionMode,
@@ -57,14 +66,27 @@ impl WebDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
     ///
     /// The base may be `https://` **or** `http://` (both are supported by the connector).
+    ///
+    /// # Security
+    ///
+    /// Basic credentials are sent as an `Authorization: Basic` header on **every**
+    /// request. Base64 is an encoding, not encryption: over plain `http://` the
+    /// credentials travel effectively in cleartext and can be read by anyone on the
+    /// network path. Always use `https://` outside isolated test environments
+    /// (e.g. a local Docker test server).
     pub fn new(base_url: &str, basic_user: Option<&str>, basic_pass: Option<&str>) -> Result<Self> {
         let client = build_hyper_client()?;
 
         let base: Uri = base_url.parse()?;
         let auth_header = if let (Some(u), Some(p)) = (basic_user, basic_pass) {
-            let token = format!("{}:{}", u, p);
-            let val = format!("Basic {}", B64.encode(token));
-            Some(header::HeaderValue::from_str(&val)?)
+            // Build the header value, then zeroize the intermediate strings so
+            // plaintext credentials do not linger in freed heap memory.
+            let mut token = format!("{}:{}", u, p);
+            let mut val = format!("Basic {}", B64.encode(&token));
+            let header_value = header::HeaderValue::from_str(&val);
+            token.zeroize();
+            val.zeroize();
+            Some(header_value?)
         } else {
             None
         };

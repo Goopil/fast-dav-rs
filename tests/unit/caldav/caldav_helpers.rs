@@ -19,6 +19,54 @@ fn builds_calendar_query_with_timerange() {
 }
 
 #[test]
+fn calendar_query_body_escapes_injection_attempts() {
+    let body = build_calendar_query_body(
+        "VEVENT\"><inject:evil/><!--",
+        Some("2024\"><x/>&"),
+        Some("20240201T000000Z'"),
+        false,
+    );
+
+    // Raw injection artifacts must not survive escaping.
+    assert!(!body.contains("<inject:evil/>"));
+    assert!(!body.contains("<x/>"));
+    assert!(!body.contains("<!--"));
+
+    // Special characters are entity-encoded instead.
+    assert!(body.contains("name=\"VEVENT&quot;&gt;&lt;inject:evil/&gt;&lt;!--\""));
+    assert!(body.contains("start=\"2024&quot;&gt;&lt;x/&gt;&amp;\""));
+    assert!(body.contains("end=\"20240201T000000Z&apos;\""));
+}
+
+#[test]
+fn calendar_query_body_valid_inputs_pass_through_unchanged() {
+    // Valid component names and UTC date-times contain no XML metacharacters,
+    // so escaping must leave them byte-for-byte untouched.
+    let body = build_calendar_query_body(
+        "X-CUSTOM",
+        Some("20240101T000000Z"),
+        Some("20241231T235959Z"),
+        false,
+    );
+    assert!(body.contains("name=\"X-CUSTOM\""));
+    assert!(body.contains("start=\"20240101T000000Z\""));
+    assert!(body.contains("end=\"20241231T235959Z\""));
+    assert!(!body.contains("&quot;") && !body.contains("&lt;") && !body.contains("&amp;"));
+}
+
+#[test]
+fn calendar_multiget_body_escapes_xml_metacharacters_in_hrefs() {
+    let body =
+        build_calendar_multiget_body(vec![r#"/cal/a.ics"/><D:href>injected</D:href><!--"#], false)
+            .expect("hrefs present");
+
+    assert!(!body.contains("<D:href>injected</D:href>"));
+    assert!(body.contains(
+        "<D:href>/cal/a.ics&quot;/&gt;&lt;D:href&gt;injected&lt;/D:href&gt;&lt;!--</D:href>"
+    ));
+}
+
+#[test]
 fn builds_calendar_multiget_and_escapes() {
     let body = build_calendar_multiget_body(
         vec![

@@ -296,3 +296,72 @@ fn test_map_sync_response() {
     );
     assert!(response.items[1].is_deleted); // Should be marked as deleted
 }
+
+#[tokio::test]
+async fn test_calendar_query_timerange_rejects_malicious_component() {
+    let client = CalDavClient::new("https://example.com/dav/", Some("user"), Some("pass"))
+        .expect("Failed to create client");
+
+    let err = client
+        .calendar_query_timerange("calendar/", "VEVENT\"><evil/>", None, None, false)
+        .await
+        .expect_err("component with XML metacharacters must be rejected before any request");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("invalid calendar-query component"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_calendar_query_timerange_rejects_empty_component() {
+    let client =
+        CalDavClient::new("https://example.com/dav/", None, None).expect("Failed to create client");
+
+    let err = client
+        .calendar_query_timerange("calendar/", "", None, None, false)
+        .await
+        .expect_err("empty component must be rejected before any request");
+    assert!(err.to_string().contains("invalid calendar-query component"));
+}
+
+#[tokio::test]
+async fn test_calendar_query_timerange_rejects_malformed_start() {
+    let client =
+        CalDavClient::new("https://example.com/dav/", None, None).expect("Failed to create client");
+
+    let err = client
+        .calendar_query_timerange(
+            "calendar/",
+            "VEVENT",
+            Some("2024-01-01T00:00:00Z"),
+            None,
+            false,
+        )
+        .await
+        .expect_err("malformed start must be rejected before any request");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("invalid calendar-query start"),
+        "unexpected error: {msg}"
+    );
+    assert!(msg.contains("YYYYMMDDTHHMMSSZ"), "unexpected error: {msg}");
+}
+
+#[tokio::test]
+async fn test_calendar_query_timerange_rejects_malformed_end() {
+    let client =
+        CalDavClient::new("https://example.com/dav/", None, None).expect("Failed to create client");
+
+    let err = client
+        .calendar_query_timerange(
+            "calendar/",
+            "VEVENT",
+            Some("20240101T000000Z"),
+            Some("20240101T000000Z\"><inject/>"),
+            false,
+        )
+        .await
+        .expect_err("malformed end must be rejected before any request");
+    assert!(err.to_string().contains("invalid calendar-query end"));
+}
