@@ -44,7 +44,6 @@ fn test_parse_multistatus_performance() {
 
 #[test]
 fn test_parse_multistatus_malformed_xml() {
-    // Test with malformed XML
     let malformed_xml = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:response>
@@ -56,10 +55,62 @@ fn test_parse_multistatus_malformed_xml() {
       <!-- Missing closing tags -->
 "#;
 
-    let result = parse_multistatus_bytes(malformed_xml.as_bytes());
-    // Depending on the parser implementation, this might either error or partially parse
-    // The important thing is that it doesn't panic or cause undefined behavior
-    println!("Malformed XML parsing result: {:?}", result.is_ok());
+    let err = parse_multistatus_bytes(malformed_xml.as_bytes())
+        .expect_err("truncated XML must be rejected");
+    assert!(
+        err.to_string().contains("unclosed element"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_parse_multistatus_duplicate_attribute_errors() {
+    // quick-xml attribute checks are enabled: a duplicated attribute coming from a
+    // buggy or malicious server must be a parse error, not silently tolerated.
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-calendar-component-set>
+          <C:comp name="VEVENT" name="VTODO"/>
+        </C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let result = parse_multistatus_bytes(xml.as_bytes());
+    assert!(
+        result.is_err(),
+        "duplicated attribute should be rejected as a parse error"
+    );
+}
+
+#[test]
+fn test_parse_multistatus_mismatched_closing_tag_errors() {
+    // A closing tag that does not match the currently open element must be a hard
+    // parse error instead of silently corrupting the parser state.
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/event1.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-1"</D:getetag>
+      </D:prop>
+    </D:response>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let result = parse_multistatus_bytes(xml.as_bytes());
+    assert!(
+        result.is_err(),
+        "mismatched closing tag should be rejected as a parse error"
+    );
 }
 
 #[test]

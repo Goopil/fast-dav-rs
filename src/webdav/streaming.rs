@@ -1,4 +1,5 @@
 use crate::webdav::types::DavItemCommon;
+use anyhow::{Result, anyhow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommonElement {
@@ -101,21 +102,18 @@ impl CommonParser {
         }
     }
 
-    pub(crate) fn on_end(&mut self, raw: &[u8]) {
+    pub(crate) fn on_end(&mut self, raw: &[u8]) -> Result<()> {
         let element = common_element_from_bytes(raw);
-        if let Some(popped) = self.stack.pop()
-            && popped != element
-        {
-            // Ignore mismatches silently; the XML is assumed well-formed.
-        }
-        if element == CommonElement::Response && !self.stack.is_empty() {
-            while let Some(last) = self.stack.last() {
-                if *last == CommonElement::Response {
-                    self.stack.pop();
-                } else {
-                    break;
-                }
-            }
+        match self.stack.pop() {
+            Some(popped) if popped == element => Ok(()),
+            Some(popped) => Err(anyhow!(
+                "XML structure error: closing tag </{}> does not match the last opened element (expected {popped:?}, found {element:?})",
+                String::from_utf8_lossy(raw)
+            )),
+            None => Err(anyhow!(
+                "XML structure error: closing tag </{}> without a matching opening tag",
+                String::from_utf8_lossy(raw)
+            )),
         }
     }
 

@@ -8,6 +8,7 @@ pub use client::{
 };
 pub use streaming::{
     parse_multistatus_bytes, parse_multistatus_bytes_visit, parse_multistatus_stream,
-    parse_multistatus_stream_visit,
+    parse_multistatus_stream_visit, parse_multistatus_stream_visit_with_timeout,
+    parse_multistatus_stream_with_timeout,
 };
 pub use types::{BatchItem, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse};
