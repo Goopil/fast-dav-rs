@@ -545,3 +545,51 @@ fn test_carddav_namespace_addressbook_color() {
     assert_eq!(book.color.as_deref(), Some("#0066CC"));
     assert_eq!(book.displayname.as_deref(), Some("Work"));
 }
+
+#[test]
+fn sync_deletion_requires_numeric_404_or_410_status() {
+    use fast_dav_rs::carddav::DavItem;
+
+    fn item_with_status(href: &str, status: &str) -> DavItem {
+        let mut item = DavItem::new();
+        item.href = href.to_string();
+        item.status = Some(status.to_string());
+        item
+    }
+
+    let items = vec![
+        item_with_status("/card/deleted-404.vcf", "HTTP/1.1 404 Not Found"),
+        item_with_status("/card/deleted-410.vcf", "HTTP/1.1 410 Gone"),
+        item_with_status("/card/custom-4040.vcf", "HTTP/1.1 4040 Custom"),
+        item_with_status("/card/ok.vcf", "HTTP/1.1 200 OK"),
+        item_with_status("/card/bare-404.vcf", "404"),
+    ];
+
+    let sync = map_sync_response(&HeaderMap::new(), items, Some("token".to_string()));
+    assert_eq!(sync.items.len(), 5);
+
+    let deleted: Vec<&str> = sync
+        .items
+        .iter()
+        .filter(|item| item.is_deleted)
+        .map(|item| item.href.as_str())
+        .collect();
+    assert_eq!(
+        deleted,
+        vec![
+            "/card/deleted-404.vcf",
+            "/card/deleted-410.vcf",
+            "/card/bare-404.vcf"
+        ]
+    );
+
+    let custom = sync
+        .items
+        .iter()
+        .find(|item| item.href == "/card/custom-4040.vcf")
+        .expect("4040 item present");
+    assert!(
+        !custom.is_deleted,
+        "\"HTTP/1.1 4040 Custom\" must not be treated as a 404 deletion"
+    );
+}
