@@ -11,8 +11,8 @@ use crate::caldav::types::{
 };
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::WebDavClient;
-use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
 use crate::webdav::types::http_status_code;
+use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
 
 pub use crate::webdav::client::RequestCompressionMode;
 
