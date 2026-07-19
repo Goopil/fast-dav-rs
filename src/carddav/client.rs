@@ -11,6 +11,7 @@ use crate::carddav::types::{
 };
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::WebDavClient;
+use crate::webdav::types::http_status_code;
 
 pub use crate::webdav::client::RequestCompressionMode;
 
@@ -856,10 +857,8 @@ pub fn map_sync_response(
             continue;
         }
         let status = item.status.clone();
-        let is_deleted = status
-            .as_deref()
-            .map(|s| s.contains("404") || s.contains("410"))
-            .unwrap_or(false);
+        let code = status.as_deref().and_then(http_status_code);
+        let is_deleted = matches!(code, Some(404) | Some(410));
 
         out.push(SyncItem {
             href: item.href,

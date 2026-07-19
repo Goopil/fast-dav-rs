@@ -6,14 +6,14 @@ use futures::{StreamExt, stream::FuturesOrdered};
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
 use zeroize::Zeroize;
 
 use crate::common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
-    detect_encodings,
+    detect_encodings, detect_request_compression_preference,
 };
 use crate::common::http::{HyperClient, build_hyper_client};
 use crate::webdav::types::{BatchItem, Depth};
@@ -21,7 +21,9 @@ use crate::webdav::types::{BatchItem, Depth};
 /// Strategy for compressing outgoing request bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestCompressionMode {
-    /// Negotiate automatically: attempt gzip on first use and cache the result; fall back to identity on 415/501.
+    /// Negotiate automatically: attempt gzip on first use, honor the server's advertised
+    /// `Accept-Encoding` preference on success, and cache the result; fall back to identity
+    /// on 415/501.
     Auto,
     Disabled,
     Force(ContentEncoding),
@@ -190,28 +192,47 @@ impl WebDavClient {
             RequestCompressionMode::Disabled => ContentEncoding::Identity,
             RequestCompressionMode::Force(enc) => enc,
             RequestCompressionMode::Auto => {
-                if let Ok(guard) = self.negotiated_request_compression.read() {
-                    guard.unwrap_or(AUTO_DEFAULT_ENCODING)
-                } else {
-                    AUTO_DEFAULT_ENCODING
-                }
+                // Recover from poisoning: the guarded value is a plain
+                // `Option<ContentEncoding>` that cannot be left logically
+                // inconsistent, so taking over the poisoned guard is safe.
+                self.negotiated_request_compression
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .unwrap_or(AUTO_DEFAULT_ENCODING)
             }
         }
     }
 
     fn set_negotiated_encoding(&self, encoding: Option<ContentEncoding>) {
-        if let Ok(mut guard) = self.negotiated_request_compression.write() {
-            *guard = encoding;
-        }
+        // Recover from poisoning: the guarded value is a plain
+        // `Option<ContentEncoding>` that cannot be left logically inconsistent,
+        // so taking over the poisoned guard is safe.
+        *self
+            .negotiated_request_compression
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = encoding;
     }
 
+    /// Probe whether the server accepts compressed request bodies.
+    ///
+    /// Sends a small gzip-compressed `PROPFIND` to the base URL. On success,
+    /// the cached encoding honors the server's advertised `Accept-Encoding`
+    /// preference (q-factors applied, `br` > `zstd` > `gzip`) when present,
+    /// and keeps gzip — proven to work by the probe — otherwise. On failure,
+    /// request compression is disabled (identity).
     async fn probe_request_compression_support(&self) {
         if !self.request_compression_mode.is_auto() {
             return;
         }
 
-        if let Ok(guard) = self.negotiated_request_compression.read()
-            && guard.is_some()
+        // Recover from poisoning: the guarded value is a plain
+        // `Option<ContentEncoding>` that cannot be left logically inconsistent,
+        // so taking over the poisoned guard is safe.
+        if self
+            .negotiated_request_compression
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
         {
             return;
         }
@@ -271,7 +292,12 @@ impl WebDavClient {
 
         match result {
             Ok(Ok(resp)) if resp.status().is_success() => {
-                self.set_negotiated_encoding(Some(AUTO_DEFAULT_ENCODING));
+                // The gzip probe succeeded. Prefer the encoding the server
+                // advertises via `Accept-Encoding`; keep gzip (proven to work
+                // by the probe) when it does not advertise a preference.
+                let negotiated = detect_request_compression_preference(resp.headers())
+                    .unwrap_or(AUTO_DEFAULT_ENCODING);
+                self.set_negotiated_encoding(Some(negotiated));
             }
             _ => {
                 self.set_negotiated_encoding(Some(ContentEncoding::Identity));
@@ -298,15 +324,11 @@ impl WebDavClient {
                 | StatusCode::NOT_IMPLEMENTED
                 | StatusCode::BAD_REQUEST
         ) {
-            if let Ok(mut guard) = self.negotiated_request_compression.write() {
-                *guard = Some(ContentEncoding::Identity);
-            }
+            self.set_negotiated_encoding(Some(ContentEncoding::Identity));
             return true;
         }
 
-        if let Ok(mut guard) = self.negotiated_request_compression.write() {
-            *guard = Some(encoding);
-        }
+        self.set_negotiated_encoding(Some(encoding));
         false
     }
 
@@ -316,18 +338,19 @@ impl WebDavClient {
         headers: &mut HeaderMap,
     ) -> (Bytes, Option<ContentEncoding>) {
         if self.request_compression_mode.is_auto() {
-            let negotiated = self
+            // Recover from poisoning (here and below): the guarded value is a
+            // plain `Option<ContentEncoding>` that cannot be left logically
+            // inconsistent, so taking over the poisoned guard is safe.
+            let negotiated = *self
                 .negotiated_request_compression
                 .read()
-                .ok()
-                .and_then(|g| *g);
+                .unwrap_or_else(PoisonError::into_inner);
             if negotiated.is_none() {
                 let _probe_guard = self.request_compression_probe.lock().await;
-                let negotiated = self
+                let negotiated = *self
                     .negotiated_request_compression
                     .read()
-                    .ok()
-                    .and_then(|g| *g);
+                    .unwrap_or_else(PoisonError::into_inner);
                 if negotiated.is_none() {
                     self.probe_request_compression_support().await;
                 }
@@ -770,16 +793,40 @@ impl WebDavClient {
         out
     }
 
-    /// Check if the server supports WebDAV-Sync (RFC 6578).
+    /// Check if the server supports WebDAV-Sync (RFC 6578) on the base collection.
+    ///
+    /// Detection strategy:
+    /// 1. **`DAV:supported-report-set`** — a `PROPFIND` with `Depth: 0` asks the
+    ///    collection which reports it supports; when the multistatus body
+    ///    advertises the `sync-collection` report, support is confirmed.
+    /// 2. **Probe REPORT fallback** — when the `PROPFIND` does not confirm
+    ///    support, a minimal `sync-collection` REPORT is attempted. Only a 2xx
+    ///    status (which includes `207 Multi-Status`) counts as supported; any
+    ///    other status — including `415 Unsupported Media Type` — reports
+    ///    `false`.
     pub async fn supports_webdav_sync(&self) -> Result<bool> {
-        let options_resp = self.options("").await?;
-        if let Some(allow_header) = options_resp.headers().get("Allow")
-            && let Ok(allow_value) = allow_header.to_str()
-            && allow_value.contains("REPORT")
+        // Primary: ask the collection which reports it supports (RFC 3253 §3.1.5).
+        let supported_report_set = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:supported-report-set/>
+  </D:prop>
+</D:propfind>"#;
+
+        if let Ok(response) = self.propfind("", Depth::Zero, supported_report_set).await
+            && response.status().is_success()
         {
-            return Ok(true);
+            // Pragmatic ASCII case-insensitive substring search: within a
+            // supported-report-set response, "sync-collection" can only refer
+            // to the RFC 6578 report.
+            let body = String::from_utf8_lossy(response.body());
+            if body.to_ascii_lowercase().contains("sync-collection") {
+                return Ok(true);
+            }
         }
 
+        // Fallback: attempt a minimal sync-collection REPORT; only a 2xx
+        // answer proves support.
         let test_sync = r#"<D:sync-collection xmlns:D="DAV:">
             <D:sync-token/>
             <D:sync-level>1</D:sync-level>
@@ -789,10 +836,7 @@ impl WebDavClient {
         </D:sync-collection>"#;
 
         match self.report("", Depth::One, test_sync).await {
-            Ok(response) => {
-                let status = response.status();
-                Ok(status.is_success() || status == 415)
-            }
+            Ok(response) => Ok(response.status().is_success()),
             Err(_) => Ok(false),
         }
     }
