@@ -181,8 +181,9 @@ pub fn detect_encoding(headers: &HeaderMap) -> ContentEncoding {
 /// This function takes an aggregated response body and decompresses it according
 /// to the specified encoding.
 pub async fn decompress_body(body: Incoming, encodings: &[ContentEncoding]) -> Result<Bytes> {
+    // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
     let stream = BodyStream::new(body)
-        .map_ok(|frame| frame.into_data().unwrap_or_default())
+        .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
         .map_err(std::io::Error::other);
     let reader = StreamReader::new(stream);
     let reader = BufReader::new(reader);
@@ -212,8 +213,9 @@ pub fn decompress_stream(
     body: Incoming,
     encodings: &[ContentEncoding],
 ) -> Result<Box<dyn AsyncBufRead + Unpin + Send>> {
+    // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
     let stream = BodyStream::new(body)
-        .map_ok(|frame| frame.into_data().unwrap_or_default())
+        .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
         .map_err(std::io::Error::other);
     let reader: Box<dyn AsyncBufRead + Unpin + Send> =
         Box::new(BufReader::new(StreamReader::new(stream)));

@@ -9,9 +9,18 @@ use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Decoder, Reader, XmlVersion};
 use std::io::{BufRead, Cursor};
+use std::time::Duration;
 use tokio::io::AsyncBufRead;
 use tokio::io::BufReader;
 use tokio_util::io::StreamReader;
+
+/// Default **idle** timeout for streaming multistatus reads.
+///
+/// This bounds the time the parser waits for the next XML event to become available,
+/// i.e. the maximum period of inactivity between two reads making progress. It is not
+/// a cap on the total parse duration: arbitrarily large responses are fine as long as
+/// data keeps flowing.
+pub const STREAM_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementName {
@@ -141,11 +150,17 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         }
     }
 
-    fn finish(self) -> ParseResult<C> {
-        ParseResult {
+    fn finish(self) -> Result<ParseResult<C>> {
+        if let Some(unclosed) = self.stack.last() {
+            return Err(anyhow!(
+                "XML structure error: unexpected end of input with unclosed element {unclosed:?}"
+            ));
+        }
+
+        Ok(ParseResult {
             items: self.sink,
             sync_token: self.sync_token,
-        }
+        })
     }
 
     pub fn path_ends_with(&self, needle: &[ElementName]) -> bool {
@@ -183,7 +198,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             {
                 let mut content_type = None;
                 let mut version = None;
-                for attr in event.attributes().with_checks(false) {
+                for attr in event.attributes().with_checks(true) {
                     let attr = attr?;
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
                     if key == "content-type" {
@@ -227,8 +242,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
     }
 
     fn on_end(&mut self, name: &[u8]) -> Result<()> {
-        self.common.on_end(name);
-        let element = element_from_bytes(name);
+        self.common.on_end(name)?;
         if let Some(popped) = self.stack.pop()
             && popped == ElementName::Response
         {
@@ -236,17 +250,6 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             self.current.apply_common(common);
             let finished = std::mem::take(&mut self.current);
             self.sink.consume(finished)?;
-            // Ignore mismatches silently; the XML is assumed well-formed.
-        }
-        if element == ElementName::Response && !self.stack.is_empty() {
-            // Make sure we consume any residual state if nested (should not happen).
-            while let Some(last) = self.stack.last() {
-                if *last == ElementName::Response {
-                    self.stack.pop();
-                } else {
-                    break;
-                }
-            }
         }
         Ok(())
     }
@@ -319,14 +322,16 @@ async fn parse_multistatus_stream_with<C>(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
     sink: C,
+    idle_timeout: Duration,
 ) -> Result<ParseResult<C>>
 where
     C: ItemConsumer + Send,
 {
     use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
 
+    // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
     let stream = BodyStream::new(resp_body)
-        .map_ok(|frame| frame.into_data().unwrap_or_default())
+        .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
         .map_err(std::io::Error::other);
     let mut reader: Box<dyn AsyncBufRead + Unpin + Send> =
         Box::new(BufReader::new(StreamReader::new(stream)));
@@ -346,7 +351,12 @@ where
     let mut parser = MultistatusParser::new(sink);
 
     loop {
-        match xml.read_event_into_async(&mut buf).await {
+        let event = tokio::time::timeout(idle_timeout, xml.read_event_into_async(&mut buf))
+            .await
+            .map_err(|_| {
+                anyhow!("streaming read timed out after {idle_timeout:?} of inactivity")
+            })?;
+        match event {
             Ok(Event::Start(e)) => parser.on_start(&e, xml.decoder())?,
             Ok(Event::Empty(e)) => {
                 parser.on_start(&e, xml.decoder())?;
@@ -368,7 +378,7 @@ where
         buf.clear();
     }
 
-    Ok(parser.finish())
+    parser.finish()
 }
 
 fn parse_multistatus_bytes_with<R, C>(reader: R, sink: C) -> Result<ParseResult<C>>
@@ -405,7 +415,7 @@ where
         buf.clear();
     }
 
-    Ok(parser.finish())
+    parser.finish()
 }
 
 /// Parse a WebDAV `207 Multi-Status` XML body in **streaming mode**, with optional
@@ -413,14 +423,34 @@ where
 ///
 /// This function avoids loading the entire response into memory, making it suitable
 /// for very large CardDAV/WebDAV collections.
+///
+/// Reads are bounded by the default idle timeout ([`STREAM_READ_IDLE_TIMEOUT`]); use
+/// [`parse_multistatus_stream_with_timeout`] to customize it.
 pub async fn parse_multistatus_stream(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
 ) -> Result<ParseResult<Vec<DavItem>>> {
-    parse_multistatus_stream_with(resp_body, encodings, Vec::<DavItem>::new()).await
+    parse_multistatus_stream_with_timeout(resp_body, encodings, STREAM_READ_IDLE_TIMEOUT).await
+}
+
+/// Variant of [`parse_multistatus_stream`] with a caller-provided **idle** timeout.
+///
+/// `idle_timeout` is the maximum time allowed between two reads making progress
+/// (i.e. waiting for the next XML event to arrive from the network). It is **not**
+/// a cap on the total parse duration, so huge-but-flowing responses are unaffected.
+/// When the timeout elapses, an error is returned and parsing stops.
+pub async fn parse_multistatus_stream_with_timeout(
+    resp_body: Incoming,
+    encodings: &[ContentEncoding],
+    idle_timeout: Duration,
+) -> Result<ParseResult<Vec<DavItem>>> {
+    parse_multistatus_stream_with(resp_body, encodings, Vec::<DavItem>::new(), idle_timeout).await
 }
 
 /// Stream parse a WebDAV `207 Multi-Status` response and invoke a callback for each item.
+///
+/// Reads are bounded by the default idle timeout ([`STREAM_READ_IDLE_TIMEOUT`]); use
+/// [`parse_multistatus_stream_visit_with_timeout`] to customize it.
 pub async fn parse_multistatus_stream_visit<F>(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
@@ -429,7 +459,31 @@ pub async fn parse_multistatus_stream_visit<F>(
 where
     F: FnMut(DavItem) -> Result<()> + Send,
 {
-    let result = parse_multistatus_stream_with(resp_body, encodings, on_item).await?;
+    parse_multistatus_stream_visit_with_timeout(
+        resp_body,
+        encodings,
+        STREAM_READ_IDLE_TIMEOUT,
+        on_item,
+    )
+    .await
+}
+
+/// Variant of [`parse_multistatus_stream_visit`] with a caller-provided **idle** timeout.
+///
+/// `idle_timeout` is the maximum time allowed between two reads making progress
+/// (i.e. waiting for the next XML event to arrive from the network). It is **not**
+/// a cap on the total parse duration, so huge-but-flowing responses are unaffected.
+/// When the timeout elapses, an error is returned and parsing stops.
+pub async fn parse_multistatus_stream_visit_with_timeout<F>(
+    resp_body: Incoming,
+    encodings: &[ContentEncoding],
+    idle_timeout: Duration,
+    on_item: F,
+) -> Result<Option<String>>
+where
+    F: FnMut(DavItem) -> Result<()> + Send,
+{
+    let result = parse_multistatus_stream_with(resp_body, encodings, on_item, idle_timeout).await?;
     Ok(result.sync_token)
 }
 

@@ -5,6 +5,7 @@ use http_body_util::Full;
 use hyper::Request;
 use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
+use std::time::{Duration, Instant};
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 
 async fn parse_streaming_xml(xml: &str) -> Result<ParseResult<Vec<fast_dav_rs::DavItem>>> {
@@ -149,6 +150,86 @@ fn test_multistatus_visit_error_propagates() {
     let err = parse_multistatus_bytes_visit(xml.as_bytes(), |_item| Err(anyhow!("boom")));
 
     assert!(err.is_err(), "expected visitor error to propagate");
+}
+
+#[tokio::test]
+async fn test_streaming_stalled_body_times_out() -> Result<()> {
+    let (client_io, mut server_io) = io::duplex(16 * 1024);
+
+    // Server: read the request headers, send response headers plus a partial body,
+    // then stall forever without closing the stream.
+    let server_task = tokio::spawn(async move {
+        let mut buf = [0u8; 1024];
+        let mut seen = Vec::new();
+        loop {
+            let n = server_io.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            seen.extend_from_slice(&buf[..n]);
+            if seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+            if seen.len() > 8192 {
+                break;
+            }
+        }
+
+        let header = "HTTP/1.1 207 Multi-Status\r\nContent-Length: 4096\r\nContent-Type: application/xml; charset=utf-8\r\n\r\n";
+        let partial_body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<D:multistatus xmlns:D=\"DAV:\">\n  <D:response>";
+        server_io.write_all(header.as_bytes()).await?;
+        server_io.write_all(partial_body.as_bytes()).await?;
+        server_io.flush().await?;
+        // Keep the connection open so the client observes inactivity, not EOF.
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+        Ok::<(), std::io::Error>(())
+    });
+
+    let (mut sender, conn) = http1::handshake(TokioIo::new(client_io)).await?;
+    let conn_task = tokio::spawn(conn);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("http://localhost/")
+        .body(Full::<Bytes>::default())?;
+
+    let resp = sender.send_request(req).await?;
+
+    let start = Instant::now();
+    let result =
+        parse_multistatus_stream_with_timeout(resp.into_body(), &[], Duration::from_millis(100))
+            .await;
+    let elapsed = start.elapsed();
+
+    let err = result.expect_err("stalled stream must produce a timeout error");
+    assert!(
+        err.to_string().contains("timed out"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "idle timeout should fire promptly, waited {elapsed:?}"
+    );
+
+    server_task.abort();
+    conn_task.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_streaming_truncated_xml_errors() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal1/</D:href>"#;
+
+    let err = parse_streaming_xml(xml)
+        .await
+        .expect_err("truncated streaming XML must be rejected");
+    assert!(
+        err.to_string().contains("unclosed element"),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
