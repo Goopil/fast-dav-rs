@@ -11,6 +11,8 @@ use crate::caldav::types::{
 };
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::WebDavClient;
+use crate::webdav::types::http_status_code;
+use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
 
 pub use crate::webdav::client::RequestCompressionMode;
 
@@ -35,6 +37,14 @@ impl CalDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
     ///
     /// The base may be `https://` **or** `http://` (both are supported by the connector).
+    ///
+    /// # Security
+    ///
+    /// Basic credentials are sent as an `Authorization: Basic` header on **every**
+    /// request. Base64 is an encoding, not encryption: over plain `http://` the
+    /// credentials travel effectively in cleartext and can be read by anyone on the
+    /// network path. Always use `https://` outside isolated test environments
+    /// (e.g. a local Docker test server).
     ///
     /// # Arguments
     ///
@@ -431,6 +441,20 @@ impl CalDavClient {
     ///
     /// `component` should be `VEVENT`, `VTODO`, … while `start`/`end` are ISO-8601
     /// timestamps in the format required by CalDAV (e.g. `20240101T000000Z`).
+    ///
+    /// Inputs are validated before any request is sent, and additionally
+    /// XML-escaped when the request body is built (defense in depth).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error **before any network I/O** if:
+    /// - `component` is empty or contains characters outside ASCII
+    ///   alphanumerics and `-` (e.g. `VEVENT` and `X-CUSTOM` are valid)
+    /// - `start` or `end` is provided but is not a structurally valid
+    ///   iCalendar UTC date-time (`YYYYMMDDTHHMMSSZ`)
+    ///
+    /// Also returns an error if the REPORT request fails or the server
+    /// responds with a non-success status.
     pub async fn calendar_query_timerange(
         &self,
         calendar_path: &str,
@@ -439,6 +463,15 @@ impl CalDavClient {
         end: Option<&str>,
         include_data: bool,
     ) -> Result<Vec<CalendarObject>> {
+        validate_component_name(component)
+            .map_err(|e| anyhow!("invalid calendar-query component: {e}"))?;
+        if let Some(s) = start {
+            validate_utc_datetime(s).map_err(|e| anyhow!("invalid calendar-query start: {e}"))?;
+        }
+        if let Some(e) = end {
+            validate_utc_datetime(e).map_err(|e| anyhow!("invalid calendar-query end: {e}"))?;
+        }
+
         let xml = build_calendar_query_body(component, start, end, include_data);
 
         let resp = self.report(calendar_path, Depth::One, &xml).await?;
@@ -617,15 +650,15 @@ pub fn build_calendar_query_body(
         "<C:filter>\
            <C:comp-filter name=\"VCALENDAR\">\
              <C:comp-filter name=\"{}\">",
-        component
+        escape_xml(component)
     );
     if start.is_some() || end.is_some() {
         filter.push_str("<C:time-range");
         if let Some(s) = start {
-            filter.push_str(&format!(" start=\"{}\"", s));
+            filter.push_str(&format!(" start=\"{}\"", escape_xml(s)));
         }
         if let Some(e) = end {
-            filter.push_str(&format!(" end=\"{}\"", e));
+            filter.push_str(&format!(" end=\"{}\"", escape_xml(e)));
         }
         filter.push_str("/>");
     }
@@ -752,10 +785,8 @@ pub fn map_sync_response(
             continue;
         }
         let status = item.status.clone();
-        let is_deleted = status
-            .as_deref()
-            .map(|s| s.contains("404") || s.contains("410"))
-            .unwrap_or(false);
+        let code = status.as_deref().and_then(http_status_code);
+        let is_deleted = matches!(code, Some(404) | Some(410));
 
         out.push(SyncItem {
             href: item.href,

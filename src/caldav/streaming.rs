@@ -2,7 +2,7 @@ use crate::caldav::types::DavItem;
 use crate::common::compression::ContentEncoding;
 use crate::webdav::streaming::{CommonParser, path_ends_with};
 use anyhow::{Result, anyhow};
-use futures_util::TryStreamExt;
+use futures::TryStreamExt;
 use http_body_util::BodyStream;
 use hyper::body::Incoming;
 use quick_xml::escape::unescape;

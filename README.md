@@ -55,6 +55,7 @@ features, and major releases introduce breaking changes when needed.
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
+- [Security](#security)
 - [Usage Examples](#usage-examples)
 - [Streaming & Sync](#streaming--sync)
 - [Batch Operations](#batch-operations)
@@ -182,6 +183,15 @@ so you can override the default timeout for specific requests.
 
 `propfind_many` and `report_many` accept a `max_concurrency` parameter to bound the number of in-flight
 requests while preserving input order in the result list.
+
+## Security
+
+Basic credentials are sent as an `Authorization: Basic` header on every request. Base64 is an
+encoding, not encryption: over plain `http://` your username and password travel effectively in
+cleartext and can be read by anyone on the network path. The connector intentionally accepts both
+`http://` and `https://` (plain HTTP is convenient for isolated test environments such as the
+bundled Docker setup), so the library does not reject `http://` at runtime — **always use
+`https://` outside isolated test environments**.
 
 ## Usage Examples
 

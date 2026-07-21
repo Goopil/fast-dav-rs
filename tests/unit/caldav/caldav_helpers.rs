@@ -19,6 +19,54 @@ fn builds_calendar_query_with_timerange() {
 }
 
 #[test]
+fn calendar_query_body_escapes_injection_attempts() {
+    let body = build_calendar_query_body(
+        "VEVENT\"><inject:evil/><!--",
+        Some("2024\"><x/>&"),
+        Some("20240201T000000Z'"),
+        false,
+    );
+
+    // Raw injection artifacts must not survive escaping.
+    assert!(!body.contains("<inject:evil/>"));
+    assert!(!body.contains("<x/>"));
+    assert!(!body.contains("<!--"));
+
+    // Special characters are entity-encoded instead.
+    assert!(body.contains("name=\"VEVENT&quot;&gt;&lt;inject:evil/&gt;&lt;!--\""));
+    assert!(body.contains("start=\"2024&quot;&gt;&lt;x/&gt;&amp;\""));
+    assert!(body.contains("end=\"20240201T000000Z&apos;\""));
+}
+
+#[test]
+fn calendar_query_body_valid_inputs_pass_through_unchanged() {
+    // Valid component names and UTC date-times contain no XML metacharacters,
+    // so escaping must leave them byte-for-byte untouched.
+    let body = build_calendar_query_body(
+        "X-CUSTOM",
+        Some("20240101T000000Z"),
+        Some("20241231T235959Z"),
+        false,
+    );
+    assert!(body.contains("name=\"X-CUSTOM\""));
+    assert!(body.contains("start=\"20240101T000000Z\""));
+    assert!(body.contains("end=\"20241231T235959Z\""));
+    assert!(!body.contains("&quot;") && !body.contains("&lt;") && !body.contains("&amp;"));
+}
+
+#[test]
+fn calendar_multiget_body_escapes_xml_metacharacters_in_hrefs() {
+    let body =
+        build_calendar_multiget_body(vec![r#"/cal/a.ics"/><D:href>injected</D:href><!--"#], false)
+            .expect("hrefs present");
+
+    assert!(!body.contains("<D:href>injected</D:href>"));
+    assert!(body.contains(
+        "<D:href>/cal/a.ics&quot;/&gt;&lt;D:href&gt;injected&lt;/D:href&gt;&lt;!--</D:href>"
+    ));
+}
+
+#[test]
 fn builds_calendar_multiget_and_escapes() {
     let body = build_calendar_multiget_body(
         vec![
@@ -561,4 +609,52 @@ fn test_caldav_namespace_calendar_color() {
     // Verify standard CalDAV namespace calendar-color is parsed
     assert_eq!(calendar.color.as_deref(), Some("#0066CC"));
     assert_eq!(calendar.displayname.as_deref(), Some("Work"));
+}
+
+#[test]
+fn sync_deletion_requires_numeric_404_or_410_status() {
+    use fast_dav_rs::caldav::DavItem;
+
+    fn item_with_status(href: &str, status: &str) -> DavItem {
+        let mut item = DavItem::new();
+        item.href = href.to_string();
+        item.status = Some(status.to_string());
+        item
+    }
+
+    let items = vec![
+        item_with_status("/cal/deleted-404.ics", "HTTP/1.1 404 Not Found"),
+        item_with_status("/cal/deleted-410.ics", "HTTP/1.1 410 Gone"),
+        item_with_status("/cal/custom-4040.ics", "HTTP/1.1 4040 Custom"),
+        item_with_status("/cal/ok.ics", "HTTP/1.1 200 OK"),
+        item_with_status("/cal/bare-404.ics", "404"),
+    ];
+
+    let sync = map_sync_response(&HeaderMap::new(), items, Some("token".to_string()));
+    assert_eq!(sync.items.len(), 5);
+
+    let deleted: Vec<&str> = sync
+        .items
+        .iter()
+        .filter(|item| item.is_deleted)
+        .map(|item| item.href.as_str())
+        .collect();
+    assert_eq!(
+        deleted,
+        vec![
+            "/cal/deleted-404.ics",
+            "/cal/deleted-410.ics",
+            "/cal/bare-404.ics"
+        ]
+    );
+
+    let custom = sync
+        .items
+        .iter()
+        .find(|item| item.href == "/cal/custom-4040.ics")
+        .expect("4040 item present");
+    assert!(
+        !custom.is_deleted,
+        "\"HTTP/1.1 4040 Custom\" must not be treated as a 404 deletion"
+    );
 }

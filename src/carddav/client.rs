@@ -11,6 +11,7 @@ use crate::carddav::types::{
 };
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::WebDavClient;
+use crate::webdav::types::http_status_code;
 
 pub use crate::webdav::client::RequestCompressionMode;
 
@@ -35,6 +36,14 @@ impl CardDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
     ///
     /// The base may be `https://` **or** `http://` (both are supported by the connector).
+    ///
+    /// # Security
+    ///
+    /// Basic credentials are sent as an `Authorization: Basic` header on **every**
+    /// request. Base64 is an encoding, not encryption: over plain `http://` the
+    /// credentials travel effectively in cleartext and can be read by anyone on the
+    /// network path. Always use `https://` outside isolated test environments
+    /// (e.g. a local Docker test server).
     ///
     /// # Arguments
     ///
@@ -848,10 +857,8 @@ pub fn map_sync_response(
             continue;
         }
         let status = item.status.clone();
-        let is_deleted = status
-            .as_deref()
-            .map(|s| s.contains("404") || s.contains("410"))
-            .unwrap_or(false);
+        let code = status.as_deref().and_then(http_status_code);
+        let is_deleted = matches!(code, Some(404) | Some(410));
 
         out.push(SyncItem {
             href: item.href,

@@ -1,3 +1,5 @@
+use anyhow::{Result, anyhow};
+
 pub fn escape_xml(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
@@ -11,6 +13,60 @@ pub fn escape_xml(input: &str) -> String {
         }
     }
     out
+}
+
+/// Validate an iCalendar component name (e.g. `VEVENT`, `VTODO`, `X-CUSTOM`).
+///
+/// Accepts non-empty names made exclusively of ASCII alphanumeric characters
+/// or `-`, matching the iCalendar component-name grammar. Anything else
+/// (whitespace, quotes, XML metacharacters, non-ASCII, …) is rejected so
+/// untrusted values cannot alter the structure of generated request XML.
+///
+/// # Errors
+///
+/// Returns an error when `name` is empty or contains a character outside
+/// `[A-Za-z0-9-]`.
+pub(crate) fn validate_component_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(anyhow!("component name must not be empty"));
+    }
+    if let Some(bad) = name
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || *c == '-'))
+    {
+        return Err(anyhow!(
+            "component name {name:?} contains invalid character {bad:?}: \
+             only ASCII letters, digits and '-' are allowed (e.g. VEVENT, X-CUSTOM)"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate the structure of an iCalendar UTC date-time (RFC 5545 `DATE-TIME`
+/// form 2), e.g. `20240101T000000Z`.
+///
+/// This is a purely structural check — exactly 8 ASCII digits, a literal `T`,
+/// 6 ASCII digits, and a literal `Z` — used to keep untrusted values out of
+/// generated request XML. It deliberately does not validate calendar
+/// semantics (month/day ranges, leap years, …).
+///
+/// # Errors
+///
+/// Returns an error when `value` does not match `YYYYMMDDTHHMMSSZ`.
+pub(crate) fn validate_utc_datetime(value: &str) -> Result<()> {
+    let bytes = value.as_bytes();
+    let structurally_valid = bytes.len() == 16
+        && bytes[..8].iter().all(u8::is_ascii_digit)
+        && bytes[8] == b'T'
+        && bytes[9..15].iter().all(u8::is_ascii_digit)
+        && bytes[15] == b'Z';
+    if !structurally_valid {
+        return Err(anyhow!(
+            "invalid UTC date-time {value:?}: expected iCalendar format \
+             YYYYMMDDTHHMMSSZ (e.g. 20240101T000000Z)"
+        ));
+    }
+    Ok(())
 }
 
 pub fn build_sync_collection_body(
