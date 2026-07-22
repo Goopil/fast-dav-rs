@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Response, StatusCode, Uri, header};
@@ -12,6 +11,7 @@ use crate::carddav::types::{
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::WebDavClient;
 use crate::webdav::types::http_status_code;
+use crate::{Error, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
 
@@ -61,7 +61,7 @@ impl CardDavClient {
     /// # Example
     /// ```no_run
     /// use fast_dav_rs::CardDavClient;
-    /// use anyhow::Result;
+    /// use fast_dav_rs::Result;
     ///
     /// # async fn example() -> Result<()> {
     /// let client = CardDavClient::new(
@@ -89,7 +89,7 @@ impl CardDavClient {
     /// ```no_run
     /// use fast_dav_rs::{CardDavClient, ContentEncoding};
     ///
-    /// # fn example() -> anyhow::Result<()> {
+    /// # fn example() -> fast_dav_rs::Result<()> {
     /// let mut client = CardDavClient::new(
     ///     "https://card.example.com/dav/user01/",
     ///     Some("user01"),
@@ -144,7 +144,7 @@ impl CardDavClient {
     /// # use hyper::{Method, HeaderMap};
     /// # use bytes::Bytes;
     /// #
-    /// # async fn demo(cli: &CardDavClient) -> anyhow::Result<()> {
+    /// # async fn demo(cli: &CardDavClient) -> fast_dav_rs::Result<()> {
     /// let res = cli.send(Method::GET, "Calendars/Personal/", HeaderMap::new(), None, None).await?;
     /// assert!(res.status().is_success());
     /// # Ok(())
@@ -236,7 +236,7 @@ impl CardDavClient {
     ) -> Result<Response<Bytes>> {
         // Validate ETag doesn't contain forbidden characters
         if etag.is_empty() {
-            return Err(anyhow!("ETag cannot be empty"));
+            return Err(Error::InvalidInput("ETag cannot be empty".to_owned()));
         }
 
         let mut h = HeaderMap::new();
@@ -386,10 +386,10 @@ impl CardDavClient {
 "#;
         let resp = self.propfind("", Depth::Zero, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "PROPFIND current-user-principal failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "PROPFIND current-user-principal".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         let mut principal = None;
@@ -417,10 +417,10 @@ impl CardDavClient {
 "#;
         let resp = self.propfind(principal_path, Depth::Zero, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "PROPFIND addressbook-home-set failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "PROPFIND addressbook-home-set".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         let mut homes = Vec::new();
@@ -450,10 +450,10 @@ impl CardDavClient {
 "#;
         let resp = self.propfind(home_set_path, Depth::One, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "PROPFIND addressbooks failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "PROPFIND addressbooks".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_addressbook_list(parse_multistatus_bytes(&body)?.items))
@@ -470,10 +470,10 @@ impl CardDavClient {
 
         let resp = self.report(addressbook_path, Depth::One, &xml).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT addressbook-query failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "REPORT addressbook-query".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
@@ -532,10 +532,10 @@ impl CardDavClient {
 
         let resp = self.report(addressbook_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT addressbook-multiget failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "REPORT addressbook-multiget".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
@@ -553,10 +553,10 @@ impl CardDavClient {
 
         let resp = self.report(addressbook_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT sync-collection failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "REPORT sync-collection".to_owned(),
+                status: resp.status(),
+            });
         }
         let headers = resp.headers().clone();
         let body = resp.into_body();
@@ -620,7 +620,7 @@ impl CardDavClient {
     ///
     /// ```no_run
     /// # use fast_dav_rs::CardDavClient;
-    /// # use anyhow::Result;
+    /// # use fast_dav_rs::Result;
     /// #
     /// # async fn example() -> Result<()> {
     /// # let client = CardDavClient::new("https://example.com/", None, None)?;

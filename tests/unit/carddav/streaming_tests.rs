@@ -1,6 +1,6 @@
-use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use fast_dav_rs::carddav::streaming::*;
+use fast_dav_rs::{Error, Result};
 use http_body_util::Full;
 use hyper::Request;
 use hyper::client::conn::http1;
@@ -53,8 +53,12 @@ async fn parse_streaming_xml(xml: &str) -> Result<ParseResult<Vec<fast_dav_rs::c
     let encodings = fast_dav_rs::detect_encodings(resp.headers());
     let parsed = parse_multistatus_stream(resp.into_body(), &encodings).await?;
 
-    server_task.await??;
-    conn_task.await??;
+    server_task
+        .await
+        .map_err(|error| Error::other(error.to_string()))??;
+    conn_task
+        .await
+        .map_err(|error| Error::other(error.to_string()))??;
 
     Ok(parsed)
 }
@@ -147,7 +151,7 @@ fn test_multistatus_visit_error_propagates() {
 </D:multistatus>
 "#;
 
-    let err = parse_multistatus_bytes_visit(xml.as_bytes(), |_item| Err(anyhow!("boom")));
+    let err = parse_multistatus_bytes_visit(xml.as_bytes(), |_item| Err(Error::other("boom")));
 
     assert!(err.is_err(), "expected visitor error to propagate");
 }

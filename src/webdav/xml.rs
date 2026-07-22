@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use crate::{Error, Result};
 
 pub fn escape_xml(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -28,16 +28,18 @@ pub fn escape_xml(input: &str) -> String {
 /// `[A-Za-z0-9-]`.
 pub(crate) fn validate_component_name(name: &str) -> Result<()> {
     if name.is_empty() {
-        return Err(anyhow!("component name must not be empty"));
+        return Err(Error::InvalidInput(
+            "component name must not be empty".to_owned(),
+        ));
     }
     if let Some(bad) = name
         .chars()
         .find(|c| !(c.is_ascii_alphanumeric() || *c == '-'))
     {
-        return Err(anyhow!(
+        return Err(Error::InvalidInput(format!(
             "component name {name:?} contains invalid character {bad:?}: \
              only ASCII letters, digits and '-' are allowed (e.g. VEVENT, X-CUSTOM)"
-        ));
+        )));
     }
     Ok(())
 }
@@ -61,10 +63,10 @@ pub(crate) fn validate_utc_datetime(value: &str) -> Result<()> {
         && bytes[9..15].iter().all(u8::is_ascii_digit)
         && bytes[15] == b'Z';
     if !structurally_valid {
-        return Err(anyhow!(
+        return Err(Error::InvalidInput(format!(
             "invalid UTC date-time {value:?}: expected iCalendar format \
              YYYYMMDDTHHMMSSZ (e.g. 20240101T000000Z)"
-        ));
+        )));
     }
     Ok(())
 }

@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use bytes::Bytes;
@@ -17,6 +16,7 @@ use crate::common::compression::{
 };
 use crate::common::http::{HyperClient, build_hyper_client};
 use crate::webdav::types::{BatchItem, Depth};
+use crate::{Error, Result};
 
 /// Strategy for compressing outgoing request bodies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +77,9 @@ impl WebDavClient {
     pub fn new(base_url: &str, basic_user: Option<&str>, basic_pass: Option<&str>) -> Result<Self> {
         let client = build_hyper_client()?;
 
-        let base: Uri = base_url.parse()?;
+        let base: Uri = base_url
+            .parse()
+            .map_err(|source| Error::invalid_url(base_url, source))?;
         let auth_header = if let (Some(u), Some(p)) = (basic_user, basic_pass) {
             // Build the header value, then zeroize the intermediate strings so
             // plaintext credentials do not linger in freed heap memory.
@@ -141,7 +143,9 @@ impl WebDavClient {
 
     pub fn build_uri(&self, path: &str) -> Result<Uri> {
         if path.starts_with("http://") || path.starts_with("https://") {
-            return Ok(path.parse()?);
+            return path
+                .parse()
+                .map_err(|source| Error::invalid_url(path, source));
         }
 
         let mut parts = self.base.clone().into_parts();
@@ -178,13 +182,17 @@ impl WebDavClient {
         }
 
         let path_and_query = if let Some(q) = query {
-            format!("{}?{}", combined, q).parse()?
+            format!("{}?{}", combined, q)
+                .parse()
+                .map_err(|source| Error::invalid_url(path, source))?
         } else {
-            combined.parse()?
+            combined
+                .parse()
+                .map_err(|source| Error::invalid_url(path, source))?
         };
 
         parts.path_and_query = Some(path_and_query);
-        Ok(Uri::from_parts(parts)?)
+        Uri::from_parts(parts).map_err(|source| Error::invalid_url(path, source))
     }
 
     fn resolve_request_encoding(&self) -> ContentEncoding {
@@ -443,10 +451,12 @@ impl WebDavClient {
                 None => req_builder.body(Full::new(Bytes::new()))?,
             };
 
+            let limit = per_req_timeout.unwrap_or(self.default_timeout);
             let fut = self.client.request(req);
-            let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
+            let resp = timeout(limit, fut)
                 .await
-                .map_err(|_| anyhow!("request timed out"))??;
+                .map_err(|_| Error::Timeout { limit })?
+                .map_err(Error::from_client)?;
 
             let should_retry =
                 self.handle_request_compression_outcome(attempted_encoding, resp.status());
@@ -517,10 +527,12 @@ impl WebDavClient {
                 None => req_builder.body(Full::new(Bytes::new()))?,
             };
 
+            let limit = per_req_timeout.unwrap_or(self.default_timeout);
             let fut = self.client.request(req);
-            let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
+            let resp = timeout(limit, fut)
                 .await
-                .map_err(|_| anyhow!("request timed out"))??;
+                .map_err(|_| Error::Timeout { limit })?
+                .map_err(Error::from_client)?;
 
             let should_retry =
                 self.handle_request_compression_outcome(attempted_encoding, resp.status());

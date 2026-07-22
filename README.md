@@ -54,6 +54,7 @@ features, and major releases introduce breaking changes when needed.
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Error Handling & Migration](#error-handling--migration)
 - [Configuration](#configuration)
 - [Security](#security)
 - [Usage Examples](#usage-examples)
@@ -103,8 +104,7 @@ cargo add fast-dav-rs
 ### CalDAV discovery
 
 ```rust
-use fast_dav_rs::CalDavClient;
-use anyhow::Result;
+use fast_dav_rs::{CalDavClient, Error, Result};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
     let principal = client
         .discover_current_user_principal()
         .await?
-        .ok_or_else(|| anyhow::anyhow!("no principal returned"))?;
+        .ok_or_else(|| Error::other("no principal returned"))?;
 
     let homes = client.discover_calendar_home_set(&principal).await?;
     let home = homes.first().expect("missing calendar-home-set");
@@ -133,8 +133,7 @@ async fn main() -> Result<()> {
 ### CardDAV discovery
 
 ```rust
-use fast_dav_rs::CardDavClient;
-use anyhow::Result;
+use fast_dav_rs::{CardDavClient, Error, Result};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -147,7 +146,7 @@ async fn main() -> Result<()> {
     let principal = client
         .discover_current_user_principal()
         .await?
-        .ok_or_else(|| anyhow::anyhow!("no principal returned"))?;
+        .ok_or_else(|| Error::other("no principal returned"))?;
 
     let homes = client.discover_addressbook_home_set(&principal).await?;
     let home = homes.first().expect("missing addressbook-home-set");
@@ -159,6 +158,56 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+## Error Handling & Migration
+
+Public APIs return `fast_dav_rs::Result<T>`, whose error type is the public
+`fast_dav_rs::Error` enum. Applications can match its variants to make decisions
+without inspecting error messages or downcasting an opaque error:
+
+```rust
+use fast_dav_rs::Error;
+
+fn is_retryable(error: &Error) -> bool {
+    matches!(error, Error::Timeout { .. } | Error::Transport(_))
+}
+```
+
+### Migrating from `anyhow`
+
+Earlier releases returned `anyhow::Error`. Replace library-facing
+`anyhow::Result<T>` signatures with `fast_dav_rs::Result<T>` when you want to
+preserve and match the typed error:
+
+```rust
+use fast_dav_rs::{CalDavClient, Error, Result};
+
+async fn discover_principal(client: &CalDavClient) -> Result<String> {
+    client
+        .discover_current_user_principal()
+        .await?
+        .ok_or_else(|| Error::other("no principal returned"))
+}
+```
+
+Applications that use `anyhow` at their own boundary can continue to propagate
+library errors with `?`; `fast_dav_rs::Error` implements `std::error::Error`:
+
+```rust
+use anyhow::Result;
+use fast_dav_rs::CalDavClient;
+
+async fn synchronize(client: &CalDavClient) -> Result<()> {
+    client.discover_current_user_principal().await?;
+    Ok(())
+}
+```
+
+Replace calls specific to `anyhow::Error`, such as `downcast_ref`, `context`, or
+`with_context`, with pattern matching on variants such as `Error::Timeout`,
+`Error::UnexpectedStatus`, `Error::InvalidInput`, and `Error::Transport`. Error
+messages remain intended for diagnostics; use variants and their fields for
+programmatic handling.
 
 ## Configuration
 
@@ -198,9 +247,8 @@ bundled Docker setup), so the library does not reject `http://` at runtime — *
 ### CalDAV event CRUD
 
 ```rust
-use fast_dav_rs::CalDavClient;
+use fast_dav_rs::{CalDavClient, Result};
 use bytes::Bytes;
-use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -229,9 +277,8 @@ async fn main() -> Result<()> {
 ### CardDAV contact CRUD
 
 ```rust
-use fast_dav_rs::CardDavClient;
+use fast_dav_rs::{CardDavClient, Result};
 use bytes::Bytes;
-use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -266,9 +313,8 @@ async fn main() -> Result<()> {
 ### CalDAV streaming example
 
 ```rust
-use fast_dav_rs::{CalDavClient, Depth, detect_encoding};
+use fast_dav_rs::{CalDavClient, Depth, Result, detect_encoding};
 use fast_dav_rs::caldav::parse_multistatus_stream;
-use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -292,9 +338,8 @@ async fn main() -> Result<()> {
 ### CardDAV streaming example
 
 ```rust
-use fast_dav_rs::{CardDavClient, Depth, detect_encoding};
+use fast_dav_rs::{CardDavClient, Depth, Result, detect_encoding};
 use fast_dav_rs::carddav::parse_multistatus_stream;
-use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -318,10 +363,9 @@ async fn main() -> Result<()> {
 ## Batch Operations
 
 ```rust
-use fast_dav_rs::{CalDavClient, Depth};
+use fast_dav_rs::{CalDavClient, Depth, Result};
 use bytes::Bytes;
 use std::sync::Arc;
-use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -1,9 +1,10 @@
-use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
+
+use crate::Result;
 
 /// Type alias for the Hyper client used across CalDAV/CardDAV modules.
 pub type HyperClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;

@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Response, Uri, header};
@@ -13,6 +12,7 @@ use crate::common::compression::ContentEncoding;
 use crate::webdav::client::WebDavClient;
 use crate::webdav::types::http_status_code;
 use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
+use crate::{Error, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
 
@@ -62,7 +62,7 @@ impl CalDavClient {
     /// # Example
     /// ```no_run
     /// use fast_dav_rs::CalDavClient;
-    /// use anyhow::Result;
+    /// use fast_dav_rs::Result;
     ///
     /// # async fn example() -> Result<()> {
     /// let client = CalDavClient::new(
@@ -90,7 +90,7 @@ impl CalDavClient {
     /// ```no_run
     /// use fast_dav_rs::{CalDavClient, ContentEncoding};
     ///
-    /// # fn example() -> anyhow::Result<()> {
+    /// # fn example() -> fast_dav_rs::Result<()> {
     /// let mut client = CalDavClient::new(
     ///     "https://cal.example.com/dav/user01/",
     ///     Some("user01"),
@@ -145,7 +145,7 @@ impl CalDavClient {
     /// # use hyper::{Method, HeaderMap};
     /// # use bytes::Bytes;
     /// #
-    /// # async fn demo(cli: &CalDavClient) -> anyhow::Result<()> {
+    /// # async fn demo(cli: &CalDavClient) -> fast_dav_rs::Result<()> {
     /// let res = cli.send(Method::GET, "Calendars/Personal/", HeaderMap::new(), None, None).await?;
     /// assert!(res.status().is_success());
     /// # Ok(())
@@ -237,7 +237,7 @@ impl CalDavClient {
     ) -> Result<Response<Bytes>> {
         // Validate ETag doesn't contain forbidden characters
         if etag.is_empty() {
-            return Err(anyhow!("ETag cannot be empty"));
+            return Err(Error::InvalidInput("ETag cannot be empty".to_owned()));
         }
 
         let mut h = HeaderMap::new();
@@ -366,10 +366,10 @@ impl CalDavClient {
 "#;
         let resp = self.propfind("", Depth::Zero, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "PROPFIND current-user-principal failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "PROPFIND current-user-principal".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         let mut principal = None;
@@ -397,10 +397,10 @@ impl CalDavClient {
 "#;
         let resp = self.propfind(principal_path, Depth::Zero, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "PROPFIND calendar-home-set failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "PROPFIND calendar-home-set".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         let mut homes = Vec::new();
@@ -431,7 +431,10 @@ impl CalDavClient {
 "#;
         let resp = self.propfind(home_set_path, Depth::One, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!("PROPFIND calendars failed with {}", resp.status()));
+            return Err(Error::UnexpectedStatus {
+                operation: "PROPFIND calendars".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_calendar_list(parse_multistatus_bytes(&body)?.items))
@@ -463,23 +466,28 @@ impl CalDavClient {
         end: Option<&str>,
         include_data: bool,
     ) -> Result<Vec<CalendarObject>> {
-        validate_component_name(component)
-            .map_err(|e| anyhow!("invalid calendar-query component: {e}"))?;
+        validate_component_name(component).map_err(|error| {
+            Error::InvalidInput(format!("invalid calendar-query component: {error}"))
+        })?;
         if let Some(s) = start {
-            validate_utc_datetime(s).map_err(|e| anyhow!("invalid calendar-query start: {e}"))?;
+            validate_utc_datetime(s).map_err(|error| {
+                Error::InvalidInput(format!("invalid calendar-query start: {error}"))
+            })?;
         }
         if let Some(e) = end {
-            validate_utc_datetime(e).map_err(|e| anyhow!("invalid calendar-query end: {e}"))?;
+            validate_utc_datetime(e).map_err(|error| {
+                Error::InvalidInput(format!("invalid calendar-query end: {error}"))
+            })?;
         }
 
         let xml = build_calendar_query_body(component, start, end, include_data);
 
         let resp = self.report(calendar_path, Depth::One, &xml).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT calendar-query failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "REPORT calendar-query".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
@@ -502,10 +510,10 @@ impl CalDavClient {
 
         let resp = self.report(calendar_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT calendar-multiget failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "REPORT calendar-multiget".to_owned(),
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
@@ -523,10 +531,10 @@ impl CalDavClient {
 
         let resp = self.report(calendar_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT sync-collection failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: "REPORT sync-collection".to_owned(),
+                status: resp.status(),
+            });
         }
         let headers = resp.headers().clone();
         let body = resp.into_body();
@@ -590,7 +598,7 @@ impl CalDavClient {
     ///
     /// ```no_run
     /// # use fast_dav_rs::CalDavClient;
-    /// # use anyhow::Result;
+    /// # use fast_dav_rs::Result;
     /// #
     /// # async fn example() -> Result<()> {
     /// # let client = CalDavClient::new("https://example.com/", None, None)?;
