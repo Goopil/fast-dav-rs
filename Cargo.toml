@@ -11,7 +11,7 @@ include = ["Cargo.toml", "LICENSE", "/README.md", "src/**/*.rs"]
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 futures = "0.3"
 hyper = { version = "1", features = ["client", "http1", "http2"] }
