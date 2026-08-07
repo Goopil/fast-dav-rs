@@ -10,7 +10,7 @@ use crate::caldav::types::{
     BatchItem, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
-use crate::webdav::client::WebDavClient;
+use crate::webdav::client::{WebDavClient, if_match_header_value};
 use crate::webdav::types::http_status_code;
 use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
 
@@ -221,13 +221,14 @@ impl CalDavClient {
     ///
     /// * `path` - Resource path relative to the base URL
     /// * `ical_bytes` - The iCalendar data to upload
-    /// * `etag` - The ETag to match (should include quotes if required by server)
+    /// * `etag` - The ETag to match; quoted strong and weak ETags are accepted, and bare ETags
+    ///   returned by some servers are quoted automatically
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The path cannot be resolved to a valid URI
-    /// - The ETag value contains invalid characters for HTTP headers
+    /// - The ETag is empty or cannot form a valid HTTP entity-tag
     /// - Network or server errors occur
     pub async fn put_if_match(
         &self,
@@ -235,17 +236,12 @@ impl CalDavClient {
         ical_bytes: Bytes,
         etag: &str,
     ) -> Result<Response<Bytes>> {
-        // Validate ETag doesn't contain forbidden characters
-        if etag.is_empty() {
-            return Err(anyhow!("ETag cannot be empty"));
-        }
-
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("text/calendar; charset=utf-8"),
         );
-        h.insert(header::IF_MATCH, header::HeaderValue::from_str(etag)?);
+        h.insert(header::IF_MATCH, if_match_header_value(etag)?);
         self.send(Method::PUT, path, h, Some(ical_bytes), None)
             .await
     }

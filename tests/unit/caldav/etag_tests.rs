@@ -1,5 +1,44 @@
+use bytes::Bytes;
 use fast_dav_rs::CalDavClient;
 use hyper::http::{HeaderMap, HeaderValue};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+
+async fn capture_request() -> (String, oneshot::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (sender, receiver) = oneshot::channel();
+
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0; 1024];
+        loop {
+            let count = stream.read(&mut buffer).await.unwrap();
+            request.extend_from_slice(&buffer[..count]);
+            if let Some(headers_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                request.truncate(headers_end + 4);
+                break;
+            }
+        }
+        sender.send(String::from_utf8(request).unwrap()).unwrap();
+        stream
+            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    });
+
+    (format!("http://{address}/"), receiver)
+}
+
+fn assert_if_match_header(request: &str, expected: &str) {
+    assert!(request.lines().any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.eq_ignore_ascii_case("if-match") && value.trim() == expected
+        })
+    }));
+}
 
 #[test]
 fn test_etag_from_headers_present() {
@@ -48,24 +87,46 @@ fn test_etag_from_headers_weak_etag() {
     assert_eq!(etag, Some("W/\"weak123\"".to_string()));
 }
 
-#[test]
-fn test_put_if_match_valid_etag() {
-    let _ = CalDavClient::new("https://example.com/dav/", Some("user"), Some("pass"))
-        .expect("Failed to create client");
+#[tokio::test]
+async fn test_conditional_operations_normalize_if_match() {
+    for (etag, expected) in [
+        ("  abc  ", "\"abc\""),
+        ("\"abc\"", "\"abc\""),
+        ("W/\"abc\"", "W/\"abc\""),
+        ("*", "*"),
+    ] {
+        let (base_url, request) = capture_request().await;
+        let mut client = CalDavClient::new(&base_url, None, None).unwrap();
+        client.disable_request_compression();
+        client
+            .put_if_match("event.ics", Bytes::from_static(b"BEGIN:VCALENDAR"), etag)
+            .await
+            .unwrap();
+        let request = request.await.unwrap();
+        assert!(request.starts_with("PUT "));
+        assert_if_match_header(&request, expected);
 
-    // This test just verifies the method compiles and can be called
-    // Actual network testing is done in E2E tests
-    let etag = "\"valid123\"";
-    assert_eq!(etag, "\"valid123\"");
+        let (base_url, request) = capture_request().await;
+        let mut client = CalDavClient::new(&base_url, None, None).unwrap();
+        client.disable_request_compression();
+        client.delete_if_match("event.ics", etag).await.unwrap();
+        let request = request.await.unwrap();
+        assert!(request.starts_with("DELETE "));
+        assert_if_match_header(&request, expected);
+    }
 }
 
-#[test]
-fn test_delete_if_match_valid_etag() {
-    let _ = CalDavClient::new("https://example.com/dav/", Some("user"), Some("pass"))
-        .expect("Failed to create client");
+#[tokio::test]
+async fn test_conditional_operations_reject_invalid_etags_before_request() {
+    let client = CalDavClient::new("http://127.0.0.1:9/", None, None).unwrap();
 
-    // This test just verifies the method compiles and can be called
-    // Actual network testing is done in E2E tests
-    let etag = "\"valid123\"";
-    assert_eq!(etag, "\"valid123\"");
+    for etag in ["", "   ", "\"abc", "W/abc", "abc\ndef"] {
+        assert!(
+            client
+                .put_if_match("event.ics", Bytes::from_static(b"BEGIN:VCALENDAR"), etag)
+                .await
+                .is_err()
+        );
+        assert!(client.delete_if_match("event.ics", etag).await.is_err());
+    }
 }
