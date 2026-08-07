@@ -43,6 +43,40 @@ const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
   </D:prop>
 </D:propfind>"#;
 
+pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
+    let etag = etag.trim();
+    if etag.is_empty() {
+        return Err(anyhow!("ETag cannot be empty"));
+    }
+
+    let value = if etag == "*" || is_valid_entity_tag(etag) {
+        etag.to_owned()
+    } else {
+        if etag.starts_with('"') || etag.starts_with("W/") || etag.contains('"') {
+            return Err(anyhow!("ETag has an invalid entity-tag format"));
+        }
+        if !etag.bytes().all(is_etag_character) {
+            return Err(anyhow!("ETag contains invalid entity-tag characters"));
+        }
+        format!("\"{etag}\"")
+    };
+
+    header::HeaderValue::from_str(&value)
+        .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"))
+}
+
+fn is_valid_entity_tag(etag: &str) -> bool {
+    let opaque_tag = etag.strip_prefix("W/").unwrap_or(etag);
+    opaque_tag
+        .strip_prefix('"')
+        .and_then(|tag| tag.strip_suffix('"'))
+        .is_some_and(|tag| tag.bytes().all(is_etag_character))
+}
+
+fn is_etag_character(byte: u8) -> bool {
+    byte == b'!' || (b'#'..=b'~').contains(&byte) || byte >= 0x80
+}
+
 #[derive(Clone)]
 pub struct WebDavClient {
     base: Uri,
@@ -560,9 +594,16 @@ impl WebDavClient {
     }
 
     /// Conditional `DELETE` guarded by `If-Match`.
+    ///
+    /// Accepts entity-tags returned by DAV servers, including quoted strong and weak ETags, as
+    /// well as bare ETags returned by some servers. Bare ETags are quoted before sending.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ETag is empty or cannot form a valid HTTP entity-tag.
     pub async fn delete_if_match(&self, path: &str, etag: &str) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
-        h.insert(header::IF_MATCH, header::HeaderValue::from_str(etag)?);
+        h.insert(header::IF_MATCH, if_match_header_value(etag)?);
         self.send(Method::DELETE, path, h, None, None).await
     }
 
