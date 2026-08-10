@@ -8,7 +8,7 @@ use hyper::{Uri, header};
 use std::time::Duration;
 use zeroize::Zeroize;
 
-use crate::common::http::{DEFAULT_POOL_MAX_IDLE_PER_HOST, build_hyper_client_with_pool};
+use crate::common::http::{DEFAULT_POOL_MAX_IDLE_PER_HOST, build_hyper_client_full};
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
 
 /// Default request timeout applied when [`WebDavClientBuilder::timeout`] is
@@ -268,7 +268,17 @@ impl WebDavClientBuilder {
             None => None,
         };
 
-        let hyper_client = build_hyper_client_with_pool(self.pool_max_idle_per_host)?;
+        let hyper_client = build_hyper_client_full(
+            self.pool_max_idle_per_host,
+            self.pool_idle_timeout,
+            self.force_http1,
+            self.connect_timeout,
+            self.proxy.take(),
+            self.proxy_basic_user.take(),
+            self.proxy_basic_pass.take(),
+            &self.extra_root_certs_pem,
+            self.danger_accept_invalid_certs,
+        )?;
 
         Ok(WebDavClient::from_parts(
             base,
