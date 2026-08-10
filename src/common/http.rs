@@ -16,14 +16,6 @@ use tower_service::Service;
 #[allow(private_interfaces)]
 pub type HyperClient = Client<hyper_rustls::HttpsConnector<MaybeProxied>, Full<Bytes>>;
 
-/// Default maximum number of idle pooled connections kept alive per host.
-///
-/// Lowered from the previous hardcoded `128`: typical CalDAV/CardDAV
-/// deployments cap per-client connections well below that (often 10–50),
-/// and keeping 128 idle sockets around needlessly exhausts client file
-/// descriptors and server connection limits.
-pub const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 32;
-
 /// Connector that is either direct or proxied via HTTP CONNECT tunnel.
 ///
 /// Implements `tower_service::Service<Uri>` by delegating to the inner
@@ -64,11 +56,6 @@ impl Service<Uri> for MaybeProxied {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_pool_max_idle_is_32() {
-        assert_eq!(DEFAULT_POOL_MAX_IDLE_PER_HOST, 32);
-    }
 
     #[test]
     fn maybe_proxied_direct_construction() {

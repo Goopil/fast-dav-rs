@@ -18,12 +18,20 @@ use std::sync::Arc;
 use std::time::Duration;
 use zeroize::Zeroize;
 
-use crate::common::http::{DEFAULT_POOL_MAX_IDLE_PER_HOST, HyperClient, MaybeProxied};
+use crate::common::http::{HyperClient, MaybeProxied};
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
 
 /// Default request timeout applied when [`WebDavClientBuilder::timeout`] is
 /// not called (and by the `new()` convenience constructors).
 pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Default maximum number of idle pooled connections kept alive per host.
+///
+/// Lowered from the previous hardcoded `128`: typical CalDAV/CardDAV
+/// deployments cap per-client connections well below that (often 10–50),
+/// and keeping 128 idle sockets around needlessly exhausts client file
+/// descriptors and server connection limits.
+pub(crate) const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 32;
 
 /// Builder for [`WebDavClient`].
 ///
