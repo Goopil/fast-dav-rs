@@ -370,7 +370,7 @@ where
             }
             Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
             Ok(Event::Eof) => break,
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(Error::from_quick_xml(error)),
             _ => {}
         }
         buf.clear();
@@ -407,7 +407,7 @@ where
             }
             Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
             Ok(Event::Eof) => break,
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(Error::from_quick_xml(error)),
             _ => {}
         }
         buf.clear();

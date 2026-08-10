@@ -2,7 +2,14 @@ use hyper::StatusCode;
 use std::time::Duration;
 
 /// Error returned by `fast-dav-rs` operations.
+///
+/// The enum is [`#[non_exhaustive`][ne]] so that new variants can be added
+/// without breaking downstream `match` expressions. Always include a
+/// wildcard arm (`_ => …`) when matching.
+///
+/// [ne]: https://doc.rust-lang.org/reference/attributes/type_system.html#the-non_exhaustive-attribute
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// A base URL or resolved request URI is invalid.
     #[error("invalid URL `{url}`: {source}")]
@@ -84,6 +91,11 @@ pub enum Error {
 
     /// An error returned by user-provided callback code or when wrapping an
     /// error that does not fit any other variant.
+    ///
+    /// The `context` string is used for `Display`; the underlying `source` is
+    /// accessible only via [`std::error::Error::source`]. This intentionally
+    /// avoids leaking the cause into the `Display` output, but consumers that
+    /// print errors should walk the source chain to avoid losing information.
     #[error("{context}")]
     Other {
         /// Human-readable context describing where or why the error occurred.
@@ -105,6 +117,15 @@ impl Error {
         }
     }
 
+    /// Classify a `hyper_util` client error as [`Connection`](Self::Connection)
+    /// or [`Transport`](Self::Transport).
+    ///
+    /// Only `ErrorKind::Connect` is mapped to `Connection`. All other kinds —
+    /// including `SendRequest`, which *may* indicate the request never reached
+    /// the server — are mapped to `Transport`. Consumers that need to
+    /// distinguish "request possibly not sent" from "response stream broken"
+    /// should inspect the `hyper_util` error via `source()` rather than
+    /// relying solely on the variant.
     pub(crate) fn from_client(source: hyper_util::client::legacy::Error) -> Self {
         if source.is_connect() {
             Self::Connection(source)
@@ -134,6 +155,21 @@ impl Error {
         Self::Other {
             context: context.into(),
             source: Some(Box::new(source)),
+        }
+    }
+
+    /// Convert a `quick_xml::Error` into the most specific `Error` variant.
+    ///
+    /// `Syntax` and `IllFormed` errors are mapped to [`XmlStructure`](Self::XmlStructure)
+    /// because they indicate a structurally invalid XML document (mismatched tags,
+    /// unclosed elements, …). All other variants (`Io`, `Encoding`, `Escape`,
+    /// `InvalidAttr`, `Namespace`) are mapped to [`Xml`](Self::Xml) via the
+    /// blanket `#[from]` conversion.
+    pub(crate) fn from_quick_xml(error: quick_xml::Error) -> Self {
+        match error {
+            quick_xml::Error::Syntax(s) => Self::XmlStructure(s.to_string()),
+            quick_xml::Error::IllFormed(s) => Self::XmlStructure(s.to_string()),
+            other => Self::Xml(other),
         }
     }
 }

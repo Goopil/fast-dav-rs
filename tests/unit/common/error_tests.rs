@@ -11,7 +11,7 @@ fn invalid_url_preserves_the_offending_value() {
 
     assert!(matches!(
         error,
-        Error::InvalidUrl { ref url, .. } if url == "not a valid url"
+        Error::InvalidUrl { url, .. } if url == "not a valid url"
     ));
 }
 
@@ -25,7 +25,7 @@ async fn invalid_etag_is_a_typed_input_error() {
 
     assert!(matches!(
         error,
-        Error::InvalidInput(ref message) if message == "ETag cannot be empty"
+        Error::InvalidInput(message) if message == "ETag cannot be empty"
     ));
 }
 
@@ -39,7 +39,7 @@ async fn invalid_calendar_component_is_a_typed_input_error() {
 
     assert!(matches!(
         error,
-        Error::InvalidInput(ref message)
+        Error::InvalidInput(message)
             if message.starts_with("invalid calendar-query component:")
     ));
 }

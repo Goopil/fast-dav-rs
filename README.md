@@ -241,6 +241,7 @@ not fit a specific variant, use [`Error::other`] for a standalone message or
 
 ```rust
 use fast_dav_rs::Error;
+use std::error::Error as _;
 
 let standalone = Error::other("no principal returned");
 let with_cause = Error::with_source("callback failed", std::io::Error::other("disk full"));
