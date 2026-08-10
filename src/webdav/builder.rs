@@ -246,6 +246,18 @@ impl WebDavClientBuilder {
         if self.pool_max_idle_per_host == 0 {
             return Err(anyhow!("pool_max_idle_per_host must be > 0"));
         }
+        if let Some(token) = &self.bearer_token
+            && token.is_empty()
+        {
+            return Err(anyhow!("bearer_token must not be empty"));
+        }
+        if let (Some(user), Some(pass)) = (&self.basic_user, &self.basic_pass)
+            && (user.is_empty() || pass.is_empty())
+        {
+            return Err(anyhow!(
+                "basic_auth requires both user and pass to be non-empty"
+            ));
+        }
 
         let base: Uri = self
             .base_url

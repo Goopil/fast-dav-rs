@@ -79,14 +79,15 @@ fn is_etag_character(byte: u8) -> bool {
 pub struct WebDavClient {
     base: Uri,
     client: HyperClient,
-    /// Pre-built `Authorization: Basic …` value attached to every request, if
-    /// credentials were provided.
+    /// Pre-built `Authorization` header (Basic or Bearer) attached to every
+    /// request, if credentials were provided.
     ///
-    /// Residual limitation: the intermediate credential strings are zeroized in
-    /// [`WebDavClient::new`], but this `HeaderValue` necessarily keeps a Base64
-    /// copy of the credentials in memory for the whole lifetime of the client
-    /// (and its clones) and is **not** zeroized on drop. This is an accepted
-    /// trade-off so the header can be attached cheaply to each request.
+    /// Residual limitation: the intermediate credential strings are zeroized
+    /// in [`WebDavClientBuilder::build`], but this `HeaderValue` necessarily
+    /// keeps a copy of the credentials in memory for the whole lifetime of
+    /// the client (and its clones) and is **not** zeroized on drop. This is
+    /// an accepted trade-off so the header can be attached cheaply to each
+    /// request.
     auth_header: Option<header::HeaderValue>,
     default_timeout: Duration,
     request_compression_mode: Arc<RwLock<RequestCompressionMode>>,
