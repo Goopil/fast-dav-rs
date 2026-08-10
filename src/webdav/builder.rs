@@ -324,17 +324,17 @@ impl WebDavClientBuilder {
             None => None,
         };
 
-        let hyper_client = build_hyper_client(
-            self.pool_max_idle_per_host,
-            self.pool_idle_timeout,
-            self.force_http1,
-            self.connect_timeout,
-            self.proxy.take(),
-            self.proxy_basic_user.take(),
-            self.proxy_basic_pass.take(),
-            &self.extra_root_certs_pem,
-            self.danger_accept_invalid_certs,
-        )?;
+        let hyper_client = build_hyper_client(HyperClientConfig {
+            pool_max_idle_per_host: self.pool_max_idle_per_host,
+            pool_idle_timeout: self.pool_idle_timeout,
+            force_http1: self.force_http1,
+            connect_timeout: self.connect_timeout,
+            proxy: self.proxy.take(),
+            proxy_basic_user: self.proxy_basic_user.take(),
+            proxy_basic_pass: self.proxy_basic_pass.take(),
+            extra_root_certs_pem: std::mem::take(&mut self.extra_root_certs_pem),
+            danger_accept_invalid_certs: self.danger_accept_invalid_certs,
+        })?;
 
         Ok(WebDavClient::from_parts(
             base,
@@ -497,13 +497,8 @@ fn build_rustls_config(
 // Hyper client construction
 // ---------------------------------------------------------------------------
 
-/// Build a fully configured Hyper client.
-///
-/// Constructs the connector (with optional proxy tunnel), the TLS config
-/// (with optional extra roots / danger mode), and the Hyper client with
-/// pool settings. Called by [`WebDavClientBuilder::build`].
-#[allow(clippy::too_many_arguments)]
-fn build_hyper_client(
+/// Configuration for the Hyper client connector, TLS, and pool.
+struct HyperClientConfig {
     pool_max_idle_per_host: usize,
     pool_idle_timeout: Option<Duration>,
     force_http1: bool,
@@ -511,19 +506,26 @@ fn build_hyper_client(
     proxy: Option<Uri>,
     proxy_basic_user: Option<String>,
     proxy_basic_pass: Option<String>,
-    extra_root_certs_pem: &[Vec<u8>],
+    extra_root_certs_pem: Vec<Vec<u8>>,
     danger_accept_invalid_certs: bool,
-) -> Result<HyperClient> {
+}
+
+/// Build a fully configured Hyper client.
+///
+/// Constructs the connector (with optional proxy tunnel), the TLS config
+/// (with optional extra roots / danger mode), and the Hyper client with
+/// pool settings. Called by [`WebDavClientBuilder::build`].
+fn build_hyper_client(cfg: HyperClientConfig) -> Result<HyperClient> {
     let mut http = HttpConnector::new();
     http.enforce_http(false);
-    if let Some(t) = connect_timeout {
+    if let Some(t) = cfg.connect_timeout {
         http.set_connect_timeout(Some(t));
     }
 
-    let inner = match proxy {
+    let inner = match cfg.proxy {
         Some(proxy_uri) => {
             let mut tunnel = Tunnel::new(proxy_uri, http);
-            if let (Some(user), Some(pass)) = (proxy_basic_user, proxy_basic_pass) {
+            if let (Some(user), Some(pass)) = (cfg.proxy_basic_user, cfg.proxy_basic_pass) {
                 let basic = B64.encode(format!("{user}:{pass}"));
                 tunnel = tunnel.with_auth(
                     format!("Basic {basic}")
@@ -536,29 +538,134 @@ fn build_hyper_client(
         None => MaybeProxied::Direct(http),
     };
 
-    let tls = build_rustls_config(extra_root_certs_pem, danger_accept_invalid_certs)?;
+    let tls = build_rustls_config(&cfg.extra_root_certs_pem, cfg.danger_accept_invalid_certs)?;
 
     let https_builder = HttpsConnectorBuilder::new()
         .with_tls_config(tls)
         .https_or_http()
         .enable_http1();
 
-    let https = if force_http1 {
+    let https = if cfg.force_http1 {
         https_builder.wrap_connector(inner)
     } else {
         https_builder.enable_http2().wrap_connector(inner)
     };
 
     let mut builder = Client::builder(TokioExecutor::new());
-    if !force_http1 {
+    if !cfg.force_http1 {
         builder.http2_adaptive_window(true);
     }
-    builder.pool_max_idle_per_host(pool_max_idle_per_host);
-    if let Some(t) = pool_idle_timeout {
+    builder.pool_max_idle_per_host(cfg.pool_max_idle_per_host);
+    if let Some(t) = cfg.pool_idle_timeout {
         builder.pool_idle_timeout(t);
     }
 
     Ok(builder.build::<_, Full<Bytes>>(https))
+}
+
+// ---------------------------------------------------------------------------
+// Delegation macro for thin wrapper builders (CalDav, CardDav)
+// ---------------------------------------------------------------------------
+
+/// Generates a thin wrapper builder that delegates all setters to
+/// [`WebDavClientBuilder`] and wraps the result via `from_webdav`.
+#[macro_export]
+macro_rules! impl_dav_builder {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $builder:ident;
+        client = $client:ty;
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug)]
+        $vis struct $builder {
+            inner: $crate::webdav::builder::WebDavClientBuilder,
+        }
+
+        impl $builder {
+            pub(crate) fn new(base_url: impl Into<String>) -> Self {
+                Self {
+                    inner: $crate::webdav::builder::WebDavClientBuilder::new(base_url),
+                }
+            }
+
+            pub fn basic_auth(mut self, user: impl Into<String>, pass: impl Into<String>) -> Self {
+                self.inner = self.inner.basic_auth(user, pass);
+                self
+            }
+
+            pub fn bearer_token(mut self, token: impl Into<String>) -> Self {
+                self.inner = self.inner.bearer_token(token);
+                self
+            }
+
+            pub fn timeout(mut self, timeout: std::time::Duration) -> Self {
+                self.inner = self.inner.timeout(timeout);
+                self
+            }
+
+            pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
+                self.inner = self.inner.connect_timeout(timeout);
+                self
+            }
+
+            pub fn user_agent(mut self, ua: impl Into<String>) -> Self {
+                self.inner = self.inner.user_agent(ua);
+                self
+            }
+
+            pub fn force_http1(mut self, force: bool) -> Self {
+                self.inner = self.inner.force_http1(force);
+                self
+            }
+
+            pub fn pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
+                self.inner = self.inner.pool_max_idle_per_host(max_idle);
+                self
+            }
+
+            pub fn pool_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+                self.inner = self.inner.pool_idle_timeout(timeout);
+                self
+            }
+
+            pub fn request_compression(
+                mut self,
+                mode: $crate::webdav::client::RequestCompressionMode,
+            ) -> Self {
+                self.inner = self.inner.request_compression(mode);
+                self
+            }
+
+            pub fn proxy(mut self, proxy: impl Into<hyper::Uri>) -> Self {
+                self.inner = self.inner.proxy(proxy);
+                self
+            }
+
+            pub fn proxy_basic_auth(
+                mut self,
+                user: impl Into<String>,
+                pass: impl Into<String>,
+            ) -> Self {
+                self.inner = self.inner.proxy_basic_auth(user, pass);
+                self
+            }
+
+            pub fn extra_root_certs_pem(mut self, certs: Vec<Vec<u8>>) -> Self {
+                self.inner = self.inner.extra_root_certs_pem(certs);
+                self
+            }
+
+            pub fn danger_accept_invalid_certs(mut self, accept: bool) -> Self {
+                self.inner = self.inner.danger_accept_invalid_certs(accept);
+                self
+            }
+
+            pub fn build(self) -> anyhow::Result<$client> {
+                Ok(<$client>::from_webdav(self.inner.build()?))
+            }
+        }
+    };
 }
 
 #[cfg(test)]
@@ -588,7 +695,7 @@ mod tests {
             .basic_auth("user", "pass")
             .build()
             .unwrap();
-        let header = client.basic_auth_header().expect("auth header present");
+        let header = client.auth_header().expect("auth header present");
         assert_eq!(header.to_str().unwrap(), "Basic dXNlcjpwYXNz");
     }
 
@@ -598,7 +705,7 @@ mod tests {
             .bearer_token("ya29.token")
             .build()
             .unwrap();
-        let header = client.basic_auth_header().expect("auth header present");
+        let header = client.auth_header().expect("auth header present");
         assert_eq!(header.to_str().unwrap(), "Bearer ya29.token");
     }
 
@@ -609,14 +716,14 @@ mod tests {
             .bearer_token("token123")
             .build()
             .unwrap();
-        let header = client.basic_auth_header().expect("auth header present");
+        let header = client.auth_header().expect("auth header present");
         assert_eq!(header.to_str().unwrap(), "Bearer token123");
     }
 
     #[test]
     fn no_auth_means_no_header() {
         let client = WebDavClient::builder(BASE).build().unwrap();
-        assert!(client.basic_auth_header().is_none());
+        assert!(client.auth_header().is_none());
     }
 
     #[test]
@@ -661,5 +768,102 @@ mod tests {
             .pool_max_idle_per_host(0)
             .build();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn auth_bearer_then_basic_last_wins() {
+        let client = WebDavClient::builder(BASE)
+            .bearer_token("token123")
+            .basic_auth("user", "pass")
+            .build()
+            .unwrap();
+        let header = client.auth_header().expect("auth header present");
+        assert_eq!(header.to_str().unwrap(), "Basic dXNlcjpwYXNz");
+    }
+
+    #[test]
+    fn empty_basic_user_errors() {
+        let result = WebDavClient::builder(BASE).basic_auth("", "pass").build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn empty_basic_pass_errors() {
+        let result = WebDavClient::builder(BASE).basic_auth("user", "").build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn empty_bearer_token_errors() {
+        let result = WebDavClient::builder(BASE).bearer_token("").build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_bearer_chars_errors() {
+        let result = WebDavClient::builder(BASE)
+            .bearer_token("has space")
+            .build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn proxy_auth_without_proxy_errors() {
+        let result = WebDavClient::builder(BASE)
+            .proxy_basic_auth("user", "pass")
+            .build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn debug_redacts_bearer_token() {
+        let builder = WebDavClient::builder(BASE).bearer_token("secret-token");
+        let debug = format!("{builder:?}");
+        assert!(debug.contains("<redacted>"), "debug output: {debug}");
+        assert!(!debug.contains("secret-token"), "debug output: {debug}");
+    }
+
+    #[test]
+    fn debug_omits_auth_fields_when_none() {
+        let builder = WebDavClient::builder(BASE);
+        let debug = format!("{builder:?}");
+        assert!(!debug.contains("basic_auth"), "debug output: {debug}");
+        assert!(!debug.contains("bearer_token"), "debug output: {debug}");
+        assert!(!debug.contains("proxy_basic_auth"), "debug output: {debug}");
+    }
+
+    #[test]
+    fn error_message_contains_timeout_hint() {
+        let result = WebDavClient::builder(BASE).timeout(Duration::ZERO).build();
+        let err = match result {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            err.contains("timeout must be > 0"),
+            "error should mention timeout, got: {err}"
+        );
+    }
+
+    #[test]
+    fn error_message_contains_pool_hint() {
+        let result = WebDavClient::builder(BASE)
+            .pool_max_idle_per_host(0)
+            .build();
+        let err = match result {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            err.contains("pool_max_idle_per_host must be > 0"),
+            "error should mention pool_max_idle_per_host, got: {err}"
+        );
+    }
+
+    #[test]
+    fn new_with_basic_auth_works() {
+        let client = WebDavClient::new(BASE, Some("user"), Some("pass")).unwrap();
+        let header = client.auth_header().expect("auth header present");
+        assert_eq!(header.to_str().unwrap(), "Basic dXNlcjpwYXNz");
     }
 }

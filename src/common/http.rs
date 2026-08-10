@@ -9,12 +9,7 @@ use std::task::{Context, Poll};
 use tower_service::Service;
 
 /// Type alias for the Hyper client used across CalDAV/CardDAV modules.
-///
-/// The `MaybeProxied` connector is `pub(crate)` since it is an implementation
-/// detail of the connector layer; external code consumes it through this
-/// alias.
-#[allow(private_interfaces)]
-pub type HyperClient = Client<hyper_rustls::HttpsConnector<MaybeProxied>, Full<Bytes>>;
+pub(crate) type HyperClient = Client<hyper_rustls::HttpsConnector<MaybeProxied>, Full<Bytes>>;
 
 /// Connector that is either direct or proxied via HTTP CONNECT tunnel.
 ///

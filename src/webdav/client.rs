@@ -163,15 +163,9 @@ impl WebDavClient {
         }
     }
 
-    /// Get the default per-request timeout.
-    #[allow(dead_code)]
-    pub(crate) fn default_timeout(&self) -> Duration {
-        self.default_timeout
-    }
-
     /// Get the auth header value, if credentials were provided.
-    #[allow(dead_code)]
-    pub(crate) fn basic_auth_header(&self) -> Option<&header::HeaderValue> {
+    #[cfg(test)]
+    pub(crate) fn auth_header(&self) -> Option<&header::HeaderValue> {
         self.auth_header.as_ref()
     }
 
@@ -272,6 +266,10 @@ impl WebDavClient {
             .request_compression_mode
             .read()
             .unwrap_or_else(PoisonError::into_inner);
+        self.resolve_request_encoding_with_mode(&mode)
+    }
+
+    fn resolve_request_encoding_with_mode(&self, mode: &RequestCompressionMode) -> ContentEncoding {
         match *mode {
             RequestCompressionMode::Disabled => ContentEncoding::Identity,
             RequestCompressionMode::Force(enc) => enc,
@@ -427,15 +425,12 @@ impl WebDavClient {
         payload: Bytes,
         headers: &mut HeaderMap,
     ) -> (Bytes, Option<ContentEncoding>) {
-        if self
+        let mode = *self
             .request_compression_mode
             .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_auto()
-        {
-            // Recover from poisoning (here and below): the guarded value is a
-            // plain `Option<ContentEncoding>` that cannot be left logically
-            // inconsistent, so taking over the poisoned guard is safe.
+            .unwrap_or_else(PoisonError::into_inner);
+
+        if mode.is_auto() {
             let negotiated = *self
                 .negotiated_request_compression
                 .read()
@@ -454,7 +449,7 @@ impl WebDavClient {
 
         headers.remove(header::CONTENT_ENCODING);
 
-        let encoding = self.resolve_request_encoding();
+        let encoding = self.resolve_request_encoding_with_mode(&mode);
         if encoding == ContentEncoding::Identity {
             return (payload, None);
         }
