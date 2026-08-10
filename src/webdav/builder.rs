@@ -56,37 +56,34 @@ pub struct WebDavClientBuilder {
 /// Manual implementation so held Basic/Bearer credentials are never printed.
 impl std::fmt::Debug for WebDavClientBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WebDavClientBuilder")
-            .field("base_url", &self.base_url)
-            .field(
-                "basic_auth",
-                &self.basic_user.as_ref().map(|_| "<redacted>"),
-            )
-            .field(
-                "bearer_token",
-                &self.bearer_token.as_ref().map(|_| "<redacted>"),
-            )
-            .field("timeout", &self.timeout)
+        let mut d = f.debug_struct("WebDavClientBuilder");
+        d.field("base_url", &self.base_url);
+        if self.basic_user.is_some() {
+            d.field("basic_auth", &"<redacted>");
+        }
+        if self.bearer_token.is_some() {
+            d.field("bearer_token", &"<redacted>");
+        }
+        d.field("timeout", &self.timeout)
             .field("connect_timeout", &self.connect_timeout)
             .field("user_agent", &self.user_agent)
             .field("force_http1", &self.force_http1)
             .field("pool_max_idle_per_host", &self.pool_max_idle_per_host)
             .field("pool_idle_timeout", &self.pool_idle_timeout)
             .field("request_compression", &self.request_compression)
-            .field("proxy", &self.proxy)
-            .field(
-                "proxy_basic_auth",
-                &self.proxy_basic_user.as_ref().map(|_| "<redacted>"),
-            )
-            .field(
-                "extra_root_certs_pem_count",
-                &self.extra_root_certs_pem.len(),
-            )
-            .field(
-                "danger_accept_invalid_certs",
-                &self.danger_accept_invalid_certs,
-            )
-            .finish()
+            .field("proxy", &self.proxy);
+        if self.proxy_basic_user.is_some() {
+            d.field("proxy_basic_auth", &"<redacted>");
+        }
+        d.field(
+            "extra_root_certs_pem_count",
+            &self.extra_root_certs_pem.len(),
+        )
+        .field(
+            "danger_accept_invalid_certs",
+            &self.danger_accept_invalid_certs,
+        )
+        .finish()
     }
 }
 
@@ -251,11 +248,35 @@ impl WebDavClientBuilder {
         {
             return Err(anyhow!("bearer_token must not be empty"));
         }
+        if let Some(token) = &self.bearer_token
+            && !token.bytes().all(|b| {
+                b.is_ascii_alphanumeric()
+                    || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
+            })
+        {
+            return Err(anyhow!(
+                "bearer_token contains invalid characters (allowed: A-Z a-z 0-9 - . _ ~ + / =)"
+            ));
+        }
         if let (Some(user), Some(pass)) = (&self.basic_user, &self.basic_pass)
             && (user.is_empty() || pass.is_empty())
         {
             return Err(anyhow!(
                 "basic_auth requires both user and pass to be non-empty"
+            ));
+        }
+        if self.proxy.is_none()
+            && (self.proxy_basic_user.is_some() || self.proxy_basic_pass.is_some())
+        {
+            return Err(anyhow!(
+                "proxy_basic_auth requires a proxy to be set via .proxy()"
+            ));
+        }
+        if let (Some(user), Some(pass)) = (&self.proxy_basic_user, &self.proxy_basic_pass)
+            && (user.is_empty() || pass.is_empty())
+        {
+            return Err(anyhow!(
+                "proxy_basic_auth requires both user and pass to be non-empty"
             ));
         }
 

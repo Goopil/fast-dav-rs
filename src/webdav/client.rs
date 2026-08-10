@@ -168,8 +168,8 @@ impl WebDavClient {
         self.default_timeout
     }
 
-    /// Get the Basic auth header value, if credentials were provided.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Get the auth header value, if credentials were provided.
+    #[allow(dead_code)]
     pub(crate) fn basic_auth_header(&self) -> Option<&header::HeaderValue> {
         self.auth_header.as_ref()
     }

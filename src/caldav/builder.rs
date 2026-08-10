@@ -42,12 +42,25 @@ impl CalDavClientBuilder {
     }
 
     /// Send **Basic** credentials with every request. Default: no auth.
+    ///
+    /// # Security
+    ///
+    /// Basic credentials are sent as an `Authorization: Basic` header on
+    /// **every** request. Base64 is an encoding, not encryption: over plain
+    /// `http://` the credentials travel effectively in cleartext. Always use
+    /// `https://` outside isolated test environments.
     pub fn basic_auth(mut self, user: impl Into<String>, pass: impl Into<String>) -> Self {
         self.inner = self.inner.basic_auth(user, pass);
         self
     }
 
     /// Send a **Bearer** token with every request (OAuth 2.0). Default: no auth.
+    ///
+    /// # Security
+    ///
+    /// The bearer token is sent as an `Authorization: Bearer` header on
+    /// **every** request. Over plain `http://` the token travels in
+    /// cleartext. Always use `https://` outside isolated test environments.
     pub fn bearer_token(mut self, token: impl Into<String>) -> Self {
         self.inner = self.inner.bearer_token(token);
         self

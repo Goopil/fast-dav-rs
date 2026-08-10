@@ -181,7 +181,14 @@ fn build_rustls_config(
                 let _ = roots.add(cert);
             }
         }
-        _ => {
+        result => {
+            if !result.errors.is_empty() {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "fast-dav-rs: falling back to webpki roots (native roots errors: {:?})",
+                    result.errors
+                );
+            }
             roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         }
     }
