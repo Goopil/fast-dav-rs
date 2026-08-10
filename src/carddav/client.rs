@@ -9,7 +9,7 @@ use crate::carddav::types::{
     AddressBookInfo, AddressObject, BatchItem, DavItem, Depth, SyncItem, SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
-use crate::webdav::client::WebDavClient;
+use crate::webdav::client::{WebDavClient, if_match_header_value};
 use crate::webdav::types::http_status_code;
 use crate::{Error, Result};
 
@@ -220,13 +220,14 @@ impl CardDavClient {
     ///
     /// * `path` - Resource path relative to the base URL
     /// * `vcard_bytes` - The vCard data to upload
-    /// * `etag` - The ETag to match (should include quotes if required by server)
+    /// * `etag` - The ETag to match; quoted strong and weak ETags are accepted, and bare ETags
+    ///   returned by some servers are quoted automatically
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The path cannot be resolved to a valid URI
-    /// - The ETag value contains invalid characters for HTTP headers
+    /// - The ETag is empty or cannot form a valid HTTP entity-tag
     /// - Network or server errors occur
     pub async fn put_if_match(
         &self,
@@ -234,17 +235,12 @@ impl CardDavClient {
         vcard_bytes: Bytes,
         etag: &str,
     ) -> Result<Response<Bytes>> {
-        // Validate ETag doesn't contain forbidden characters
-        if etag.is_empty() {
-            return Err(Error::InvalidInput("ETag cannot be empty".to_owned()));
-        }
-
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("text/vcard; charset=utf-8"),
         );
-        h.insert(header::IF_MATCH, header::HeaderValue::from_str(etag)?);
+        h.insert(header::IF_MATCH, if_match_header_value(etag)?);
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
     }
