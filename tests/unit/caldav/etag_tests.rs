@@ -96,7 +96,7 @@ async fn test_conditional_operations_normalize_if_match() {
         ("*", "*"),
     ] {
         let (base_url, request) = capture_request().await;
-        let mut client = CalDavClient::new(&base_url, None, None).unwrap();
+        let client = CalDavClient::new(&base_url, None, None).unwrap();
         client.disable_request_compression();
         client
             .put_if_match("event.ics", Bytes::from_static(b"BEGIN:VCALENDAR"), etag)
@@ -107,7 +107,7 @@ async fn test_conditional_operations_normalize_if_match() {
         assert_if_match_header(&request, expected);
 
         let (base_url, request) = capture_request().await;
-        let mut client = CalDavClient::new(&base_url, None, None).unwrap();
+        let client = CalDavClient::new(&base_url, None, None).unwrap();
         client.disable_request_compression();
         client.delete_if_match("event.ics", etag).await.unwrap();
         let request = request.await.unwrap();

@@ -5,6 +5,7 @@ use hyper::{HeaderMap, Method, Response, StatusCode, Uri, header};
 use std::sync::Arc;
 use tokio::time::Duration;
 
+use crate::carddav::builder::CardDavClientBuilder;
 use crate::carddav::streaming::parse_multistatus_bytes;
 use crate::carddav::types::{
     AddressBookInfo, AddressObject, BatchItem, DavItem, Depth, SyncItem, SyncResponse,
@@ -73,9 +74,37 @@ impl CardDavClient {
     /// # }
     /// ```
     pub fn new(base_url: &str, basic_user: Option<&str>, basic_pass: Option<&str>) -> Result<Self> {
-        Ok(Self {
-            webdav: WebDavClient::new(base_url, basic_user, basic_pass)?,
-        })
+        let mut builder = Self::builder(base_url);
+        if let (Some(u), Some(p)) = (basic_user, basic_pass) {
+            builder = builder.basic_auth(u, p);
+        }
+        builder.build()
+    }
+
+    /// Create a builder for configuring the client before construction.
+    ///
+    /// Only the base URL is required; every other option has a sensible
+    /// default documented on [`CardDavClientBuilder`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::CardDavClient;
+    /// use std::time::Duration;
+    ///
+    /// let client = CardDavClient::builder("https://card.example.com/dav/")
+    ///     .basic_auth("user", "pass")
+    ///     .timeout(Duration::from_secs(30))
+    ///     .build()?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn builder(base_url: impl Into<String>) -> CardDavClientBuilder {
+        CardDavClientBuilder::new(base_url)
+    }
+
+    /// Wrap a [`WebDavClient`] into a [`CardDavClient`].
+    pub(crate) fn from_webdav(webdav: WebDavClient) -> Self {
+        Self { webdav }
     }
 
     /// Configure request compression for this client.
@@ -90,7 +119,7 @@ impl CardDavClient {
     /// use fast_dav_rs::{CardDavClient, ContentEncoding};
     ///
     /// # fn example() -> anyhow::Result<()> {
-    /// let mut client = CardDavClient::new(
+    /// let client = CardDavClient::new(
     ///     "https://card.example.com/dav/user01/",
     ///     Some("user01"),
     ///     Some("secret"),
@@ -99,22 +128,22 @@ impl CardDavClient {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_request_compression(&mut self, encoding: ContentEncoding) {
+    pub fn set_request_compression(&self, encoding: ContentEncoding) {
         self.webdav.set_request_compression(encoding);
     }
 
     /// Configure the request compression strategy.
-    pub fn set_request_compression_mode(&mut self, mode: RequestCompressionMode) {
+    pub fn set_request_compression_mode(&self, mode: RequestCompressionMode) {
         self.webdav.set_request_compression_mode(mode);
     }
 
     /// Enable adaptive request compression (default behaviour).
-    pub fn set_request_compression_auto(&mut self) {
+    pub fn set_request_compression_auto(&self) {
         self.webdav.set_request_compression_auto();
     }
 
     /// Disable request compression entirely.
-    pub fn disable_request_compression(&mut self) {
+    pub fn disable_request_compression(&self) {
         self.webdav.disable_request_compression();
     }
 
