@@ -204,8 +204,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
                     if key == "name" {
                         let value = attr
-                            .decoded_and_normalized_value(XmlVersion::default(), decoder)
-                            .map_err(|error| Error::XmlDecode(error.to_string()))?
+                            .decoded_and_normalized_value(XmlVersion::default(), decoder)?
                             .into_owned();
                         if !value.is_empty()
                             && !self
@@ -504,9 +503,7 @@ where
 
 pub fn decode_text(raw: &[u8]) -> Result<String> {
     match std::str::from_utf8(raw) {
-        Ok(s) => Ok(unescape(s)
-            .map_err(|error| Error::XmlDecode(error.to_string()))?
-            .into_owned()),
+        Ok(s) => Ok(unescape(s)?.into_owned()),
         Err(_) => Ok(String::from_utf8_lossy(raw).into_owned()),
     }
 }

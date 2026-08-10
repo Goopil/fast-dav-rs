@@ -209,6 +209,44 @@ Replace calls specific to `anyhow::Error`, such as `downcast_ref`, `context`, or
 messages remain intended for diagnostics; use variants and their fields for
 programmatic handling.
 
+### Distinguishing connection vs transport errors
+
+`Error::Connection` is returned when the TCP/TLS handshake itself fails (DNS
+resolution, connection refused, TLS error), while `Error::Transport` covers
+failures during an already-established connection (read/write abort, body
+decode error). This lets retry logic target only transient connection issues:
+
+```rust
+use fast_dav_rs::Error;
+
+fn should_retry(error: &Error) -> bool {
+    match error {
+        // The server was unreachable; a retry may reach a different node.
+        Error::Connection(_) | Error::Timeout { .. } => true,
+        // The request was sent but the response stream broke mid-flight.
+        // Retrying is only safe for idempotent methods (GET, PUT with If-Match).
+        Error::Transport(_) => false,
+        // The server explicitly rejected the request.
+        Error::UnexpectedStatus { status, .. } => {
+            status.is_server_error()
+        }
+        _ => false,
+    }
+}
+```
+
+For errors originating in user callbacks or when wrapping an error that does
+not fit a specific variant, use [`Error::other`] for a standalone message or
+[`Error::with_source`] to preserve the underlying cause in the error chain:
+
+```rust
+use fast_dav_rs::Error;
+
+let standalone = Error::other("no principal returned");
+let with_cause = Error::with_source("callback failed", std::io::Error::other("disk full"));
+assert!(with_cause.source().is_some());
+```
+
 ## Configuration
 
 ### Request compression

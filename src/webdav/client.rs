@@ -46,23 +46,28 @@ const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
     let etag = etag.trim();
     if etag.is_empty() {
-        return Err(anyhow!("ETag cannot be empty"));
+        return Err(Error::InvalidInput("ETag cannot be empty".to_owned()));
     }
 
     let value = if etag == "*" || is_valid_entity_tag(etag) {
         etag.to_owned()
     } else {
         if etag.starts_with('"') || etag.starts_with("W/") || etag.contains('"') {
-            return Err(anyhow!("ETag has an invalid entity-tag format"));
+            return Err(Error::InvalidInput(
+                "ETag has an invalid entity-tag format".to_owned(),
+            ));
         }
         if !etag.bytes().all(is_etag_character) {
-            return Err(anyhow!("ETag contains invalid entity-tag characters"));
+            return Err(Error::InvalidInput(
+                "ETag contains invalid entity-tag characters".to_owned(),
+            ));
         }
         format!("\"{etag}\"")
     };
 
-    header::HeaderValue::from_str(&value)
-        .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"))
+    header::HeaderValue::from_str(&value).map_err(|err| {
+        Error::InvalidInput(format!("ETag cannot be used as an If-Match header: {err}"))
+    })
 }
 
 fn is_valid_entity_tag(etag: &str) -> bool {

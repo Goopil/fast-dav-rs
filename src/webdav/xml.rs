@@ -26,18 +26,18 @@ pub fn escape_xml(input: &str) -> String {
 ///
 /// Returns an error when `name` is empty or contains a character outside
 /// `[A-Za-z0-9-]`.
-pub(crate) fn validate_component_name(name: &str) -> Result<()> {
+pub(crate) fn validate_component_name(name: &str, context: &str) -> Result<()> {
     if name.is_empty() {
-        return Err(Error::InvalidInput(
-            "component name must not be empty".to_owned(),
-        ));
+        return Err(Error::InvalidInput(format!(
+            "{context}: component name must not be empty"
+        )));
     }
     if let Some(bad) = name
         .chars()
         .find(|c| !(c.is_ascii_alphanumeric() || *c == '-'))
     {
         return Err(Error::InvalidInput(format!(
-            "component name {name:?} contains invalid character {bad:?}: \
+            "{context}: component name {name:?} contains invalid character {bad:?}: \
              only ASCII letters, digits and '-' are allowed (e.g. VEVENT, X-CUSTOM)"
         )));
     }
@@ -55,7 +55,7 @@ pub(crate) fn validate_component_name(name: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error when `value` does not match `YYYYMMDDTHHMMSSZ`.
-pub(crate) fn validate_utc_datetime(value: &str) -> Result<()> {
+pub(crate) fn validate_utc_datetime(value: &str, context: &str) -> Result<()> {
     let bytes = value.as_bytes();
     let structurally_valid = bytes.len() == 16
         && bytes[..8].iter().all(u8::is_ascii_digit)
@@ -64,7 +64,7 @@ pub(crate) fn validate_utc_datetime(value: &str) -> Result<()> {
         && bytes[15] == b'Z';
     if !structurally_valid {
         return Err(Error::InvalidInput(format!(
-            "invalid UTC date-time {value:?}: expected iCalendar format \
+            "{context}: invalid UTC date-time {value:?}: expected iCalendar format \
              YYYYMMDDTHHMMSSZ (e.g. 20240101T000000Z)"
         )));
     }

@@ -1,5 +1,4 @@
 use hyper::StatusCode;
-use std::fmt;
 use std::time::Duration;
 
 /// Error returned by `fast-dav-rs` operations.
@@ -67,9 +66,9 @@ pub enum Error {
     #[error("XML structure error: {0}")]
     XmlStructure(String),
 
-    /// XML text or an attribute value could not be decoded.
-    #[error("XML decoding error: {0}")]
-    XmlDecode(String),
+    /// Unescaping XML entity references failed.
+    #[error("XML escape error: {0}")]
+    XmlEscape(#[from] quick_xml::escape::EscapeError),
 
     /// Parsing an XML attribute failed.
     #[error("XML attribute error: {0}")]
@@ -83,9 +82,16 @@ pub enum Error {
     #[error("UTF-8 decoding error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
 
-    /// An error returned by user-provided callback code.
-    #[error("{0}")]
-    Other(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// An error returned by user-provided callback code or when wrapping an
+    /// error that does not fit any other variant.
+    #[error("{context}")]
+    Other {
+        /// Human-readable context describing where or why the error occurred.
+        context: String,
+        /// The underlying error, if any.
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
 }
 
 impl Error {
@@ -108,21 +114,29 @@ impl Error {
     }
 
     /// Wrap an error message originating outside the DAV protocol stack.
+    ///
+    /// Use [`Error::with_source`] when you have an underlying error to chain.
     pub fn other(message: impl Into<String>) -> Self {
-        Self::Other(Box::new(MessageError(message.into())))
+        Self::Other {
+            context: message.into(),
+            source: None,
+        }
+    }
+
+    /// Wrap an error with a context message and an underlying source.
+    ///
+    /// The context is used for `Display`; the source is returned by `source()`
+    /// so the full error chain is preserved.
+    pub fn with_source(
+        context: impl Into<String>,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::Other {
+            context: context.into(),
+            source: Some(Box::new(source)),
+        }
     }
 }
-
-#[derive(Debug)]
-struct MessageError(String);
-
-impl fmt::Display for MessageError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for MessageError {}
 
 /// Result type used by all fallible `fast-dav-rs` APIs.
 pub type Result<T> = std::result::Result<T, Error>;

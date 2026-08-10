@@ -462,18 +462,12 @@ impl CalDavClient {
         end: Option<&str>,
         include_data: bool,
     ) -> Result<Vec<CalendarObject>> {
-        validate_component_name(component).map_err(|error| {
-            Error::InvalidInput(format!("invalid calendar-query component: {error}"))
-        })?;
+        validate_component_name(component, "invalid calendar-query component")?;
         if let Some(s) = start {
-            validate_utc_datetime(s).map_err(|error| {
-                Error::InvalidInput(format!("invalid calendar-query start: {error}"))
-            })?;
+            validate_utc_datetime(s, "invalid calendar-query start")?;
         }
         if let Some(e) = end {
-            validate_utc_datetime(e).map_err(|error| {
-                Error::InvalidInput(format!("invalid calendar-query end: {error}"))
-            })?;
+            validate_utc_datetime(e, "invalid calendar-query end")?;
         }
 
         let xml = build_calendar_query_body(component, start, end, include_data);

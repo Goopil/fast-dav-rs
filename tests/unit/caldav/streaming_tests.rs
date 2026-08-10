@@ -55,10 +55,10 @@ async fn parse_streaming_xml(xml: &str) -> Result<ParseResult<Vec<fast_dav_rs::D
 
     server_task
         .await
-        .map_err(|error| Error::other(error.to_string()))??;
+        .map_err(|error| Error::with_source("server task failed", error))??;
     conn_task
         .await
-        .map_err(|error| Error::other(error.to_string()))??;
+        .map_err(|error| Error::with_source("connection task failed", error))??;
 
     Ok(parsed)
 }
