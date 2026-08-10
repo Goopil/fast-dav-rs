@@ -21,18 +21,6 @@ use zeroize::Zeroize;
 use crate::common::http::{HyperClient, MaybeProxied};
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
 
-/// Default request timeout applied when [`WebDavClientBuilder::timeout`] is
-/// not called (and by the `new()` convenience constructors).
-pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// Default maximum number of idle pooled connections kept alive per host.
-///
-/// Lowered from the previous hardcoded `128`: typical CalDAV/CardDAV
-/// deployments cap per-client connections well below that (often 10–50),
-/// and keeping 128 idle sockets around needlessly exhausts client file
-/// descriptors and server connection limits.
-pub(crate) const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 32;
-
 /// Builder for [`WebDavClient`].
 ///
 /// Created with [`WebDavClient::builder`]. Every option is optional and
@@ -105,11 +93,19 @@ impl std::fmt::Debug for WebDavClientBuilder {
     }
 }
 
-impl WebDavClientBuilder {
-    /// Start a builder for the given **base URL** (collection/home-set).
-    pub(crate) fn new(base_url: impl Into<String>) -> Self {
+/// Default per-request timeout.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Default maximum number of idle pooled connections per host.
+///
+/// Lowered from the previous hardcoded `128`: typical CalDAV/CardDAV
+/// deployments cap per-client connections well below that (often 10–50).
+const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 32;
+
+impl Default for WebDavClientBuilder {
+    fn default() -> Self {
         Self {
-            base_url: base_url.into(),
+            base_url: String::new(),
             basic_user: None,
             basic_pass: None,
             bearer_token: None,
@@ -119,13 +115,22 @@ impl WebDavClientBuilder {
             force_http1: false,
             pool_max_idle_per_host: DEFAULT_POOL_MAX_IDLE_PER_HOST,
             pool_idle_timeout: None,
-            request_compression: RequestCompressionMode::Auto,
+            request_compression: RequestCompressionMode::default(),
             proxy: None,
             proxy_basic_user: None,
             proxy_basic_pass: None,
             extra_root_certs_pem: Vec::new(),
             danger_accept_invalid_certs: false,
         }
+    }
+}
+
+impl WebDavClientBuilder {
+    /// Start a builder for the given **base URL** (collection/home-set).
+    pub(crate) fn new(base_url: impl Into<String>) -> Self {
+        let mut builder = Self::default();
+        builder.base_url = base_url.into();
+        builder
     }
 
     /// Send **Basic** credentials with every request. Default: no auth.

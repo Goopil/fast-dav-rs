@@ -17,11 +17,12 @@ use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::types::{BatchItem, Depth};
 
 /// Strategy for compressing outgoing request bodies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RequestCompressionMode {
     /// Negotiate automatically: attempt gzip on first use, honor the server's advertised
     /// `Accept-Encoding` preference on success, and cache the result; fall back to identity
     /// on 415/501.
+    #[default]
     Auto,
     Disabled,
     Force(ContentEncoding),
