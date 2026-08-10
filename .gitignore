@@ -1,6 +1,8 @@
 /target
 .idea
 .crush
+.claude
+.junie
 .direnv
 
 .DS_Store
