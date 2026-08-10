@@ -1,6 +1,5 @@
 use fast_dav_rs::{CalDavClient, Error, Result};
 use hyper::StatusCode;
-use std::error::Error as StdError;
 use std::time::Duration;
 
 #[test]
@@ -142,11 +141,12 @@ fn other_with_source_preserves_chain() {
     ));
 
     assert!(
-        StdError::source(&error).is_some(),
+        error.source().is_some(),
         "source() must return the inner error"
     );
     assert!(
-        StdError::source(&error)
+        error
+            .source()
             .unwrap()
             .to_string()
             .contains("inner failure"),
@@ -161,5 +161,5 @@ fn other_without_source_has_no_chain() {
         &error,
         Error::Other { context, source: None } if context == "standalone message"
     ));
-    assert!(StdError::source(&error).is_none());
+    assert!(error.source().is_none());
 }

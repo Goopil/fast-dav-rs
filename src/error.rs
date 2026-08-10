@@ -146,8 +146,8 @@ impl Error {
 
     /// Wrap an error with a context message and an underlying source.
     ///
-    /// The context is used for `Display`; the source is returned by `source()`
-    /// so the full error chain is preserved.
+    /// The context is used for `Display`; the source is returned by
+    /// [`Error::source`] so the full error chain is preserved.
     pub fn with_source(
         context: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
@@ -156,6 +156,15 @@ impl Error {
             context: context.into(),
             source: Some(Box::new(source)),
         }
+    }
+
+    /// Return the underlying cause of this error, if any.
+    ///
+    /// This is an inherent method so that callers do not need to import the
+    /// `std::error::Error` trait. It delegates to the trait implementation
+    /// and is therefore equivalent to `<Error as std::error::Error>::source(self)`.
+    pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        <Self as std::error::Error>::source(self)
     }
 
     /// Convert a `quick_xml::Error` into the most specific `Error` variant.
