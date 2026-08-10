@@ -162,8 +162,12 @@ async fn main() -> Result<()> {
 ## Error Handling & Migration
 
 Public APIs return `fast_dav_rs::Result<T>`, whose error type is the public
-`fast_dav_rs::Error` enum. Applications can match its variants to make decisions
-without inspecting error messages or downcasting an opaque error:
+`fast_dav_rs::Error` enum. The enum is `#[non_exhaustive]`, so always include a
+wildcard arm (`_ => …`) when matching — new variants may be added in future
+releases without a breaking change.
+
+Applications can match its variants to make decisions without inspecting error
+messages or downcasting an opaque error:
 
 ```rust
 use fast_dav_rs::Error;
@@ -172,6 +176,28 @@ fn is_retryable(error: &Error) -> bool {
     matches!(error, Error::Timeout { .. } | Error::Transport(_))
 }
 ```
+
+### Error variants
+
+| Variant              | When it occurs                                              |
+|----------------------|-------------------------------------------------------------|
+| `InvalidUrl`         | A base URL or resolved request URI is invalid               |
+| `InvalidInput`       | A caller-provided value failed validation (ETag, dates, …)  |
+| `InvalidHeader`      | An HTTP header value could not be constructed               |
+| `InvalidMethod`      | An HTTP method was invalid                                  |
+| `Http`               | Building an HTTP request failed                             |
+| `Hyper`              | A low-level Hyper connection or body operation failed       |
+| `Connection`         | The TCP/TLS handshake failed (DNS, refused, TLS)            |
+| `Transport`          | A request was sent but the response stream broke            |
+| `UnexpectedStatus`   | The server returned an unexpected HTTP status code          |
+| `Timeout`            | An operation exceeded its configured time limit            |
+| `Xml`                | Parsing or decoding XML failed                              |
+| `XmlStructure`       | The XML element hierarchy is malformed or incomplete        |
+| `XmlEscape`          | Unescaping XML entity references failed                    |
+| `XmlAttribute`       | Parsing an XML attribute failed                             |
+| `Io`                 | An I/O operation failed                                     |
+| `Utf8`               | Decoding UTF-8 text failed                                   |
+| `Other`              | User callback error or error that doesn't fit another variant |
 
 ### Migrating from `anyhow`
 
@@ -245,6 +271,65 @@ use fast_dav_rs::Error;
 let standalone = Error::other("no principal returned");
 let with_cause = Error::with_source("callback failed", std::io::Error::other("disk full"));
 assert!(with_cause.source().is_some());
+```
+
+### Custom errors in streaming callbacks
+
+When using streaming APIs with a visitor callback, return `Error::other` for
+application-level failures and `Error::with_source` to wrap an underlying cause:
+
+```rust,no_run
+use fast_dav_rs::{CalDavClient, Depth, Error, Result};
+use fast_dav_rs::caldav::{parse_multistatus_stream_visit, DavItem};
+
+async fn sync_calendar(client: &CalDavClient, path: &str) -> Result<()> {
+    let resp = client.report(path, Depth::One, "<body/>").await?;
+
+    parse_multistatus_stream_visit(resp.into_body(), &[], |item: DavItem| {
+        // Save to a database; wrap the DB error with context.
+        save_to_db(&item).map_err(|e| {
+            Error::with_source(format!("failed to save {}", item.href), e)
+        })
+    }).await?;
+
+    Ok(())
+}
+
+fn save_to_db(_item: &DavItem) -> std::result::Result<(), DbError> {
+    Ok(())
+}
+
+#[derive(Debug)]
+struct DbError;
+impl std::fmt::Display for DbError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "database error")
+    }
+}
+impl std::error::Error for DbError {}
+```
+
+### Migrating from `anyhow` with `map_err`
+
+If your codebase uses `anyhow::Context` to add context to library errors,
+replace `.context("...")` with `.map_err(|e| Error::with_source("...", e))`:
+
+```rust
+// Before (anyhow)
+use anyhow::Context;
+let principal = client
+    .discover_current_user_principal()
+    .await
+    .context("discovery failed")?
+    .ok_or_else(|| anyhow::anyhow!("no principal"))?;
+
+// After (typed errors)
+use fast_dav_rs::Error;
+let principal = client
+    .discover_current_user_principal()
+    .await
+    .map_err(|e| Error::with_source("discovery failed", e))?
+    .ok_or_else(|| Error::other("no principal"))?;
 ```
 
 ## Configuration
