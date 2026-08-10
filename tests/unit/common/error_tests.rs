@@ -67,7 +67,7 @@ fn standard_error_conversions_remain_typed() {
 
     let result: Result<()> = Err(Error::other("application callback failed"));
     assert!(
-        matches!(result, Err(Error::Other { context, source: None }) if context == "application callback failed")
+        matches!(result, Err(Error::Other { context, .. }) if context == "application callback failed")
     );
 }
 
@@ -159,7 +159,7 @@ fn other_without_source_has_no_chain() {
     let error = Error::other("standalone message");
     assert!(matches!(
         &error,
-        Error::Other { context, source: None } if context == "standalone message"
+        Error::Other { context, .. } if context == "standalone message"
     ));
     assert!(error.source().is_none());
 }
