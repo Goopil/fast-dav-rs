@@ -93,15 +93,6 @@ impl std::fmt::Debug for WebDavClientBuilder {
     }
 }
 
-/// Default per-request timeout.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// Default maximum number of idle pooled connections per host.
-///
-/// Lowered from the previous hardcoded `128`: typical CalDAV/CardDAV
-/// deployments cap per-client connections well below that (often 10–50).
-const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 32;
-
 impl Default for WebDavClientBuilder {
     fn default() -> Self {
         Self {
@@ -109,11 +100,11 @@ impl Default for WebDavClientBuilder {
             basic_user: None,
             basic_pass: None,
             bearer_token: None,
-            timeout: DEFAULT_TIMEOUT,
+            timeout: Duration::from_secs(20),
             connect_timeout: None,
             user_agent: None,
             force_http1: false,
-            pool_max_idle_per_host: DEFAULT_POOL_MAX_IDLE_PER_HOST,
+            pool_max_idle_per_host: 32,
             pool_idle_timeout: None,
             request_compression: RequestCompressionMode::default(),
             proxy: None,
@@ -678,7 +669,6 @@ mod tests {
     #[test]
     fn defaults_match_documented_values() {
         let builder = WebDavClient::builder(BASE);
-        assert_eq!(builder.timeout, DEFAULT_TIMEOUT);
         assert_eq!(builder.timeout, Duration::from_secs(20));
         assert_eq!(builder.pool_max_idle_per_host, 32);
         assert_eq!(builder.request_compression, RequestCompressionMode::Auto);
