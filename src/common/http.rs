@@ -1,16 +1,83 @@
 use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::Full;
+use hyper::Uri;
 use hyper_rustls::HttpsConnectorBuilder;
+use hyper_util::client::legacy::connect::proxy::Tunnel;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tower_service::Service;
 
 /// Type alias for the Hyper client used across CalDAV/CardDAV modules.
-pub type HyperClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
+///
+/// The `MaybeProxied` connector is `pub(crate)` since it is an implementation
+/// detail of the connector layer; external code consumes it through this
+/// alias and the `build_hyper_client*` constructors.
+#[allow(private_interfaces)]
+pub type HyperClient = Client<hyper_rustls::HttpsConnector<MaybeProxied>, Full<Bytes>>;
 
-/// Build a Hyper client configured with HTTP/2, connection pooling, and a TLS connector
-/// that prefers native roots but falls back to the bundled WebPKI store.
+/// Default maximum number of idle pooled connections kept alive per host.
+///
+/// Lowered from the previous hardcoded `128`: typical CalDAV/CardDAV
+/// deployments cap per-client connections well below that (often 10–50),
+/// and keeping 128 idle sockets around needlessly exhausts client file
+/// descriptors and server connection limits.
+pub const DEFAULT_POOL_MAX_IDLE_PER_HOST: usize = 32;
+
+/// Connector that is either direct or proxied via HTTP CONNECT tunnel.
+///
+/// Implements `tower_service::Service<Uri>` by delegating to the inner
+/// connector. The future is boxed since `HttpConnector` and
+/// `Tunnel<HttpConnector>` produce different future types.
+#[allow(dead_code)] // Tunneled variant wired in Task 5
+#[derive(Clone)]
+pub(crate) enum MaybeProxied {
+    Direct(HttpConnector),
+    Tunneled(Tunnel<HttpConnector>),
+}
+
+impl Service<Uri> for MaybeProxied {
+    type Response = <HttpConnector as Service<Uri>>::Response;
+    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self {
+            MaybeProxied::Direct(c) => c.poll_ready(cx).map_err(|e| Box::new(e) as Self::Error),
+            MaybeProxied::Tunneled(c) => c.poll_ready(cx).map_err(|e| Box::new(e) as Self::Error),
+        }
+    }
+
+    fn call(&mut self, dst: Uri) -> Self::Future {
+        match self {
+            MaybeProxied::Direct(c) => {
+                let fut = c.call(dst);
+                Box::pin(async move { fut.await.map_err(|e| Box::new(e) as Self::Error) })
+            }
+            MaybeProxied::Tunneled(c) => {
+                let fut = c.call(dst);
+                Box::pin(async move { fut.await.map_err(|e| Box::new(e) as Self::Error) })
+            }
+        }
+    }
+}
+
+/// Build a Hyper client with the default idle-connection pool limit.
+///
+/// Thin wrapper around [`build_hyper_client_with_pool`].
+#[allow(private_interfaces)]
 pub fn build_hyper_client() -> Result<HyperClient> {
+    build_hyper_client_with_pool(DEFAULT_POOL_MAX_IDLE_PER_HOST)
+}
+
+/// Build a Hyper client configured with HTTP/2, connection pooling capped at
+/// `pool_max_idle_per_host` idle connections per host, and a TLS connector
+/// that prefers native roots but falls back to the bundled WebPKI store.
+#[allow(private_interfaces)]
+pub fn build_hyper_client_with_pool(pool_max_idle_per_host: usize) -> Result<HyperClient> {
     let https_builder = HttpsConnectorBuilder::new()
         .with_native_roots()
         .unwrap_or_else(|err| {
@@ -21,14 +88,32 @@ pub fn build_hyper_client() -> Result<HyperClient> {
             HttpsConnectorBuilder::new().with_webpki_roots()
         });
 
+    let http = HttpConnector::new();
+    let inner = MaybeProxied::Direct(http);
+
     let https = https_builder
         .https_or_http()
         .enable_http1()
         .enable_http2()
-        .build();
+        .wrap_connector(inner);
 
     Ok(Client::builder(TokioExecutor::new())
         .http2_adaptive_window(true)
-        .pool_max_idle_per_host(128)
+        .pool_max_idle_per_host(pool_max_idle_per_host)
         .build::<_, Full<Bytes>>(https))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_pool_max_idle_is_32() {
+        assert_eq!(DEFAULT_POOL_MAX_IDLE_PER_HOST, 32);
+    }
+
+    #[test]
+    fn maybe_proxied_direct_construction() {
+        let _ = MaybeProxied::Direct(HttpConnector::new());
+    }
 }
