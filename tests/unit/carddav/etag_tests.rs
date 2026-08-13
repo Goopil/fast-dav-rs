@@ -139,3 +139,34 @@ async fn test_conditional_operations_reject_invalid_etags_before_request() {
         assert!(client.delete_if_match("contact.vcf", etag).await.is_err());
     }
 }
+
+#[tokio::test]
+async fn test_if_match_rejects_bare_weak_prefix() {
+    let client = CardDavClient::new("http://127.0.0.1:9/", None, None).unwrap();
+    assert!(
+        client
+            .put_if_match("contact.vcf", Bytes::from_static(b"BEGIN:VCARD"), "W/")
+            .await
+            .is_err()
+    );
+    assert!(client.delete_if_match("contact.vcf", "W/").await.is_err());
+}
+
+#[tokio::test]
+async fn test_etag_round_trip_from_headers_to_if_match() {
+    let (base_url, request) = capture_request().await;
+    let mut client = CardDavClient::new(&base_url, None, None).unwrap();
+    client.disable_request_compression();
+
+    let mut headers = HeaderMap::new();
+    headers.insert("ETag", HeaderValue::from_static("\"etag-from-server\""));
+    let etag = CardDavClient::etag_from_headers(&headers).expect("etag present");
+    assert_eq!(etag, "etag-from-server");
+
+    client
+        .put_if_match("contact.vcf", Bytes::from_static(b"BEGIN:VCARD"), &etag)
+        .await
+        .unwrap();
+    let request = request.await.unwrap();
+    assert_if_match_header(&request, "\"etag-from-server\"");
+}
