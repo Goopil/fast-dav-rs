@@ -158,13 +158,11 @@ END:VCALENDAR]]></C:calendar-data>
     assert_eq!(objects.len(), 1);
     let object = &objects[0];
     assert_eq!(object.href, "/dav/user01/Calendars/Personal/meeting.ics");
-    assert!(
-        object
-            .calendar_data
-            .as_ref()
-            .unwrap()
-            .contains("UID:meeting-1")
-    );
+    assert!(object
+        .calendar_data
+        .as_ref()
+        .unwrap()
+        .contains("UID:meeting-1"));
 
     let sync_xml = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -242,7 +240,7 @@ fn test_top_level_sync_token_parsing() {
     );
     assert_eq!(sync.items.len(), 1);
     assert_eq!(sync.items[0].href, "/calendars/user/calendar/event1.ics");
-    assert_eq!(sync.items[0].etag.as_deref(), Some("\"abc123\""));
+    assert_eq!(sync.items[0].etag.as_deref(), Some("abc123"));
 }
 
 #[test]
@@ -421,7 +419,7 @@ fn test_sync_with_deleted_items() {
         .find(|item| item.href.contains("updated.ics"))
         .unwrap();
     assert!(!updated.is_deleted);
-    assert_eq!(updated.etag.as_deref(), Some("\"new-etag\""));
+    assert_eq!(updated.etag.as_deref(), Some("new-etag"));
 }
 
 #[test]
@@ -498,7 +496,7 @@ fn test_sync_token_without_namespace_prefix() {
 
     let sync = map_sync_response(&headers, parsed.items, parsed.sync_token);
     assert_eq!(sync.sync_token.as_deref(), Some("token-no-prefix"));
-    assert_eq!(sync.items[0].etag.as_deref(), Some("\"etag-no-prefix\""));
+    assert_eq!(sync.items[0].etag.as_deref(), Some("etag-no-prefix"));
 }
 
 #[test]
@@ -657,4 +655,12 @@ fn sync_deletion_requires_numeric_404_or_410_status() {
         !custom.is_deleted,
         "\"HTTP/1.1 4040 Custom\" must not be treated as a 404 deletion"
     );
+}
+
+#[test]
+fn map_sync_response_normalizes_quoted_header_token() {
+    let mut headers = HeaderMap::new();
+    headers.insert("Sync-Token", r#""quoted-header-token""#.parse().unwrap());
+    let sync = map_sync_response(&headers, Vec::new(), None);
+    assert_eq!(sync.sync_token.as_deref(), Some("quoted-header-token"));
 }

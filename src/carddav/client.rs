@@ -11,7 +11,7 @@ use crate::carddav::types::{
     AddressBookInfo, AddressObject, BatchItem, DavItem, Depth, SyncItem, SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
-use crate::webdav::client::{WebDavClient, if_match_header_value};
+use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
 use crate::webdav::types::http_status_code;
 
 pub use crate::webdav::client::RequestCompressionMode;
@@ -866,7 +866,7 @@ pub fn map_sync_response(
         headers
             .get("Sync-Token")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(normalize_sync_token)
     });
     let mut out = Vec::new();
 

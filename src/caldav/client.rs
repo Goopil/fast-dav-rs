@@ -11,7 +11,7 @@ use crate::caldav::types::{
     BatchItem, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
-use crate::webdav::client::{WebDavClient, if_match_header_value};
+use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
 use crate::webdav::types::http_status_code;
 use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
 
@@ -789,17 +789,15 @@ pub fn map_sync_response(
     items: Vec<DavItem>,
     top_level_sync_token: Option<String>,
 ) -> SyncResponse {
-    // Prioritize top-level sync-token (RFC 6578), then headers, then per-item tokens
     let mut sync_token = top_level_sync_token.or_else(|| {
         headers
             .get("Sync-Token")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(normalize_sync_token)
     });
     let mut out = Vec::new();
 
     for mut item in items {
-        // Capture per-item sync token if we don't have a top-level one (fallback)
         if item.sync_token.is_some() && sync_token.is_none() {
             sync_token = item.sync_token.clone();
         }
