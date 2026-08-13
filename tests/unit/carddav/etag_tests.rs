@@ -101,6 +101,7 @@ async fn test_conditional_operations_normalize_if_match() {
         ("  abc  ", "\"abc\""),
         ("\"abc\"", "\"abc\""),
         ("W/\"abc\"", "W/\"abc\""),
+        ("W/abc", "W/\"abc\""),
         ("*", "*"),
     ] {
         let (base_url, request) = capture_request().await;
@@ -128,7 +129,7 @@ async fn test_conditional_operations_normalize_if_match() {
 async fn test_conditional_operations_reject_invalid_etags_before_request() {
     let client = CardDavClient::new("http://127.0.0.1:9/", None, None).unwrap();
 
-    for etag in ["", "   ", "\"abc", "W/abc", "abc\ndef"] {
+    for etag in ["", "   ", "\"abc", "abc\ndef"] {
         assert!(
             client
                 .put_if_match("contact.vcf", Bytes::from_static(b"BEGIN:VCARD"), etag)

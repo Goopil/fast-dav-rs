@@ -48,20 +48,32 @@ pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
         return Err(anyhow!("ETag cannot be empty"));
     }
 
-    let value = if etag == "*" || is_valid_entity_tag(etag) {
-        etag.to_owned()
-    } else {
-        if etag.starts_with('"') || etag.starts_with("W/") || etag.contains('"') {
-            return Err(anyhow!("ETag has an invalid entity-tag format"));
-        }
-        if !etag.bytes().all(is_etag_character) {
-            return Err(anyhow!("ETag contains invalid entity-tag characters"));
-        }
-        format!("\"{etag}\"")
-    };
+    if etag == "*" || is_valid_entity_tag(etag) {
+        return header::HeaderValue::from_str(etag)
+            .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"));
+    }
 
+    if let Some(opaque) = etag.strip_prefix("W/") {
+        validate_opaque_tag(opaque)?;
+        let value = format!("W/\"{opaque}\"");
+        return header::HeaderValue::from_str(&value)
+            .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"));
+    }
+
+    validate_opaque_tag(etag)?;
+    let value = format!("\"{etag}\"");
     header::HeaderValue::from_str(&value)
         .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"))
+}
+
+fn validate_opaque_tag(opaque: &str) -> Result<()> {
+    if opaque.is_empty() || opaque.contains('"') {
+        return Err(anyhow!("ETag has an invalid entity-tag format"));
+    }
+    if !opaque.bytes().all(is_etag_character) {
+        return Err(anyhow!("ETag contains invalid entity-tag characters"));
+    }
+    Ok(())
 }
 
 fn is_valid_entity_tag(etag: &str) -> bool {
