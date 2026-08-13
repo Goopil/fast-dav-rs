@@ -872,6 +872,7 @@ pub fn map_sync_response(
 
     for mut item in items {
         // Capture per-item sync token if we don't have a top-level one (fallback)
+        // Already normalized by the streaming parser's normalize_sync_token.
         if item.sync_token.is_some() && sync_token.is_none() {
             sync_token = item.sync_token.clone();
         }

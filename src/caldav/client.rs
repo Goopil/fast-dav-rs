@@ -798,6 +798,7 @@ pub fn map_sync_response(
     let mut out = Vec::new();
 
     for mut item in items {
+        // Already normalized by the streaming parser's normalize_sync_token.
         if item.sync_token.is_some() && sync_token.is_none() {
             sync_token = item.sync_token.clone();
         }
