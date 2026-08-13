@@ -46,7 +46,7 @@ fn test_etag_from_headers_present() {
     headers.insert("ETag", HeaderValue::from_static("\"abc123\""));
 
     let etag = CardDavClient::etag_from_headers(&headers);
-    assert_eq!(etag, Some("\"abc123\"".to_string()));
+    assert_eq!(etag, Some("abc123".to_string()));
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn test_etag_from_headers_multiple_values() {
 
     let etag = CardDavClient::etag_from_headers(&headers);
     // Should return the first value
-    assert_eq!(etag, Some("\"first\"".to_string()));
+    assert_eq!(etag, Some("first".to_string()));
 }
 
 #[test]
@@ -84,7 +84,15 @@ fn test_etag_from_headers_weak_etag() {
     headers.insert("ETag", HeaderValue::from_static("W/\"weak123\""));
 
     let etag = CardDavClient::etag_from_headers(&headers);
-    assert_eq!(etag, Some("W/\"weak123\"".to_string()));
+    assert_eq!(etag, Some("W/weak123".to_string()));
+}
+
+#[test]
+fn test_etag_from_headers_strips_quotes_and_returns_none_if_empty() {
+    let mut headers = HeaderMap::new();
+    headers.insert("ETag", HeaderValue::from_static("\"\""));
+    let etag = CardDavClient::etag_from_headers(&headers);
+    assert_eq!(etag, None);
 }
 
 #[tokio::test]

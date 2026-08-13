@@ -807,11 +807,17 @@ impl WebDavClient {
     }
 
     /// Extract the `ETag` from a response header map, if present.
+    ///
+    /// The returned value is **normalized**: surrounding double quotes are stripped,
+    /// so `"abc"` becomes `abc` and `W/"abc"` becomes `W/abc`.
+    /// Use the value directly with `put_if_match` / `delete_if_match`, which
+    /// re-adds the quoting on the wire.
     pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
         headers
             .get(header::ETAG)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(normalize_etag)
+            .filter(|s| !s.is_empty())
     }
 
     /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
