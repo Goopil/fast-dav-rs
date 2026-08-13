@@ -226,12 +226,12 @@ fn test_map_calendar_list_filters_calendars() {
 fn test_map_calendar_objects() {
     let mut item1 = fast_dav_rs::types::DavItem::new();
     item1.href = "/calendars/user/event1.ics".to_string();
-    item1.etag = Some("\"abc123\"".to_string());
+    item1.etag = Some("abc123".to_string());
     item1.calendar_data = Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string());
 
     let mut item2 = fast_dav_rs::types::DavItem::new();
     item2.href = "/calendars/user/event2.ics".to_string();
-    item2.etag = Some("\"def456\"".to_string());
+    item2.etag = Some("def456".to_string());
     item2.status = Some("HTTP/1.1 404 Not Found".to_string());
 
     let items = vec![item1.clone(), item2.clone()];
@@ -239,13 +239,13 @@ fn test_map_calendar_objects() {
 
     assert_eq!(objects.len(), 2);
     assert_eq!(objects[0].href, "/calendars/user/event1.ics");
-    assert_eq!(objects[0].etag, Some("\"abc123\"".to_string()));
+    assert_eq!(objects[0].etag, Some("abc123".to_string()));
     assert_eq!(
         objects[0].calendar_data,
         Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string())
     );
     assert_eq!(objects[1].href, "/calendars/user/event2.ics");
-    assert_eq!(objects[1].etag, Some("\"def456\"".to_string()));
+    assert_eq!(objects[1].etag, Some("def456".to_string()));
     assert_eq!(
         objects[1].status,
         Some("HTTP/1.1 404 Not Found".to_string())
@@ -262,7 +262,7 @@ fn test_map_sync_response() {
 
     let mut item1 = fast_dav_rs::types::DavItem::new();
     item1.href = "/calendars/user/event1.ics".to_string();
-    item1.etag = Some("\"abc123\"".to_string());
+    item1.etag = Some("abc123".to_string());
     item1.calendar_data = Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string());
 
     let mut item2 = fast_dav_rs::types::DavItem::new();
@@ -285,7 +285,7 @@ fn test_map_sync_response() {
 
     // Check the first item (regular item with data)
     assert_eq!(response.items[0].href, "/calendars/user/event1.ics");
-    assert_eq!(response.items[0].etag, Some("\"abc123\"".to_string()));
+    assert_eq!(response.items[0].etag, Some("abc123".to_string()));
     assert!(!response.items[0].is_deleted); // Should not be deleted
 
     // Check second item (deleted item)
