@@ -65,7 +65,7 @@ END:VCARD
             "text/vcard;version=3.0".to_string()
         ]
     );
-    assert_eq!(book.etag.as_deref(), Some("\"etag-123\""));
+    assert_eq!(book.etag.as_deref(), Some("etag-123"));
     assert_eq!(book.sync_token.as_deref(), Some("token-123"));
     let data = book.address_data.as_ref().expect("address data present");
     assert!(data.contains("BEGIN:VCARD"));
@@ -112,7 +112,7 @@ fn parse_multistatus_extracts_common_properties_and_top_level_sync_token() {
     assert_eq!(item.href, "/dav/user01/ab/");
     assert_eq!(item.status.as_deref(), Some("HTTP/1.1 200 OK"));
     assert_eq!(item.displayname.as_deref(), Some("Contacts"));
-    assert_eq!(item.etag.as_deref(), Some("\"etag-777\""));
+    assert_eq!(item.etag.as_deref(), Some("etag-777"));
     assert!(item.is_collection);
     assert!(item.is_addressbook);
     assert_eq!(item.sync_token.as_deref(), Some("item-token"));

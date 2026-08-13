@@ -61,7 +61,7 @@ END:VCALENDAR
         calendar.supported_components,
         vec!["VEVENT".to_string(), "VTODO".to_string()]
     );
-    assert_eq!(calendar.etag.as_deref(), Some("\"etag-123\""));
+    assert_eq!(calendar.etag.as_deref(), Some("etag-123"));
     assert_eq!(calendar.sync_token.as_deref(), Some("token-123"));
     let data = calendar
         .calendar_data
@@ -111,7 +111,7 @@ fn parse_multistatus_extracts_common_properties_and_top_level_sync_token() {
     assert_eq!(item.href, "/dav/user01/cal/");
     assert_eq!(item.status.as_deref(), Some("HTTP/1.1 200 OK"));
     assert_eq!(item.displayname.as_deref(), Some("Work"));
-    assert_eq!(item.etag.as_deref(), Some("\"etag-999\""));
+    assert_eq!(item.etag.as_deref(), Some("etag-999"));
     assert!(item.is_collection);
     assert!(item.is_calendar);
     assert_eq!(item.sync_token.as_deref(), Some("item-token"));

@@ -1,5 +1,6 @@
+use crate::webdav::client::normalize_etag;
 use crate::webdav::types::DavItemCommon;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommonElement {
@@ -150,7 +151,7 @@ impl CommonParser {
             CommonElement::Prop,
             CommonElement::Getetag,
         ]) {
-            self.current.etag = Some(trimmed.to_string());
+            self.current.etag = Some(normalize_etag(trimmed));
         } else if self.path_ends_with(&[
             CommonElement::Response,
             CommonElement::Propstat,
