@@ -1,5 +1,5 @@
-use fast_dav_rs::carddav::Depth;
 use fast_dav_rs::CardDavClient;
+use fast_dav_rs::carddav::Depth;
 use hyper::http::HeaderMap;
 
 #[test]

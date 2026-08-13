@@ -158,11 +158,13 @@ END:VCALENDAR]]></C:calendar-data>
     assert_eq!(objects.len(), 1);
     let object = &objects[0];
     assert_eq!(object.href, "/dav/user01/Calendars/Personal/meeting.ics");
-    assert!(object
-        .calendar_data
-        .as_ref()
-        .unwrap()
-        .contains("UID:meeting-1"));
+    assert!(
+        object
+            .calendar_data
+            .as_ref()
+            .unwrap()
+            .contains("UID:meeting-1")
+    );
 
     let sync_xml = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">

@@ -101,11 +101,13 @@ END:VCARD]]></C:address-data>
     assert_eq!(objects.len(), 1);
     let object = &objects[0];
     assert_eq!(object.href, "/dav/user01/AddressBooks/Personal/contact.vcf");
-    assert!(object
-        .address_data
-        .as_ref()
-        .unwrap()
-        .contains("UID:contact-1"));
+    assert!(
+        object
+            .address_data
+            .as_ref()
+            .unwrap()
+            .contains("UID:contact-1")
+    );
 
     let sync_xml = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">

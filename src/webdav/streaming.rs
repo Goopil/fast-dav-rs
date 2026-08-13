@@ -1,6 +1,6 @@
 use crate::webdav::client::{normalize_etag, normalize_sync_token};
 use crate::webdav::types::DavItemCommon;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommonElement {
