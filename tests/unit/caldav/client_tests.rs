@@ -424,3 +424,25 @@ fn clone_shares_compression_mode() {
         RequestCompressionMode::Disabled
     );
 }
+
+#[test]
+fn sync_token_round_trip_unquoted_in_request_body() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "Sync-Token",
+        r#""http://example.com/sync/99""#.parse().unwrap(),
+    );
+    let sync = fast_dav_rs::client::map_sync_response(&headers, Vec::new(), None);
+    let normalized = sync.sync_token.expect("sync token present");
+    assert_eq!(normalized, "http://example.com/sync/99");
+
+    let body = fast_dav_rs::client::build_sync_collection_body(Some(&normalized), None, true);
+    assert!(
+        body.contains("<D:sync-token>http://example.com/sync/99</D:sync-token>"),
+        "sync-token should appear unquoted in request body, got: {body}"
+    );
+    assert!(
+        !body.contains("<D:sync-token>\""),
+        "sync-token should not have extra quotes in request body"
+    );
+}
