@@ -76,6 +76,24 @@ fn is_etag_character(byte: u8) -> bool {
     byte == b'!' || (b'#'..=b'~').contains(&byte) || byte >= 0x80
 }
 
+pub(crate) fn normalize_etag(etag: &str) -> String {
+    let etag = etag.trim();
+    if etag.is_empty() {
+        return String::new();
+    }
+    let (prefix, rest) = if let Some(s) = etag.strip_prefix("W/") {
+        ("W/", s)
+    } else {
+        ("", etag)
+    };
+    let rest = rest.trim_matches('"');
+    format!("{prefix}{rest}")
+}
+
+pub(crate) fn normalize_sync_token(token: &str) -> String {
+    token.trim().trim_matches('"').to_string()
+}
+
 #[derive(Clone)]
 pub struct WebDavClient {
     base: Uri,
@@ -1021,5 +1039,63 @@ mod tests {
             client.request_compression_mode(),
             RequestCompressionMode::Disabled
         );
+    }
+
+    #[test]
+    fn test_normalize_etag_strips_double_quotes_strong() {
+        assert_eq!(normalize_etag(r#""abc123""#), "abc123");
+    }
+
+    #[test]
+    fn test_normalize_etag_strips_double_quotes_weak() {
+        assert_eq!(normalize_etag(r#"W/"weak123""#), "W/weak123");
+    }
+
+    #[test]
+    fn test_normalize_etag_bare_value_unchanged() {
+        assert_eq!(normalize_etag("abc123"), "abc123");
+    }
+
+    #[test]
+    fn test_normalize_etag_bare_weak_unchanged() {
+        assert_eq!(normalize_etag("W/abc123"), "W/abc123");
+    }
+
+    #[test]
+    fn test_normalize_etag_trims_whitespace() {
+        assert_eq!(normalize_etag(r#"  "abc123"  "#), "abc123");
+    }
+
+    #[test]
+    fn test_normalize_etag_empty_string() {
+        assert_eq!(normalize_etag(""), "");
+    }
+
+    #[test]
+    fn test_normalize_etag_only_quotes() {
+        assert_eq!(normalize_etag(r#""""#), "");
+    }
+
+    #[test]
+    fn test_normalize_etag_preserves_single_quotes_inside() {
+        assert_eq!(normalize_etag(r#""ab'cd""#), "ab'cd");
+    }
+
+    #[test]
+    fn test_normalize_sync_token_strips_double_quotes() {
+        assert_eq!(normalize_sync_token(r#""token-123""#), "token-123");
+    }
+
+    #[test]
+    fn test_normalize_sync_token_bare_unchanged() {
+        assert_eq!(
+            normalize_sync_token("http://example.com/sync/42"),
+            "http://example.com/sync/42"
+        );
+    }
+
+    #[test]
+    fn test_normalize_sync_token_trims_whitespace() {
+        assert_eq!(normalize_sync_token(r#"  "token"  "#), "token");
     }
 }
