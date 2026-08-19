@@ -88,7 +88,7 @@ fn is_etag_character(byte: u8) -> bool {
     byte == b'!' || (b'#'..=b'~').contains(&byte) || byte >= 0x80
 }
 
-pub(crate) fn normalize_etag(etag: &str) -> String {
+pub fn normalize_etag(etag: &str) -> String {
     let etag = etag.trim();
     if etag.is_empty() {
         return String::new();
@@ -102,7 +102,7 @@ pub(crate) fn normalize_etag(etag: &str) -> String {
     format!("{prefix}{rest}")
 }
 
-pub(crate) fn normalize_sync_token(token: &str) -> String {
+pub fn normalize_sync_token(token: &str) -> String {
     token.trim().trim_matches('"').to_string()
 }
 
@@ -830,6 +830,20 @@ impl WebDavClient {
             .and_then(|v| v.to_str().ok())
             .map(normalize_etag)
             .filter(|s| !s.is_empty())
+    }
+
+    /// Normalize an ETag by stripping surrounding double quotes.
+    ///
+    /// `"abc"` becomes `abc`, `W/"abc"` becomes `W/abc`; bare values are
+    /// returned unchanged.
+    pub fn normalize_etag(etag: &str) -> String {
+        normalize_etag(etag)
+    }
+
+    /// Normalize a sync token by trimming whitespace and stripping
+    /// surrounding double quotes.
+    pub fn normalize_sync_token(token: &str) -> String {
+        normalize_sync_token(token)
     }
 
     /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.

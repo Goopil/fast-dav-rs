@@ -597,6 +597,21 @@ impl CardDavClient {
         WebDavClient::etag_from_headers(headers)
     }
 
+    /// Normalize an ETag by stripping surrounding double quotes.
+    ///
+    /// `"abc"` becomes `abc`, `W/"abc"` becomes `W/abc`; bare values are
+    /// returned unchanged.  Use the normalized value with [`Self::put_if_match`]
+    /// / [`Self::delete_if_match`], which re-add quoting on the wire.
+    pub fn normalize_etag(etag: &str) -> String {
+        WebDavClient::normalize_etag(etag)
+    }
+
+    /// Normalize a sync token by trimming whitespace and stripping
+    /// surrounding double quotes.
+    pub fn normalize_sync_token(token: &str) -> String {
+        WebDavClient::normalize_sync_token(token)
+    }
+
     // ----------- Batch (limited concurrency) -----------
 
     /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.

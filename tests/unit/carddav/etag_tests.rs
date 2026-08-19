@@ -170,3 +170,39 @@ async fn test_etag_round_trip_from_headers_to_if_match() {
     let request = request.await.unwrap();
     assert_if_match_header(&request, "\"etag-from-server\"");
 }
+
+#[test]
+fn test_normalize_etag_strips_double_quotes_strong() {
+    assert_eq!(CardDavClient::normalize_etag(r#""abc123""#), "abc123");
+}
+
+#[test]
+fn test_normalize_etag_strips_double_quotes_weak() {
+    assert_eq!(CardDavClient::normalize_etag(r#"W/"weak123""#), "W/weak123");
+}
+
+#[test]
+fn test_normalize_etag_bare_value_unchanged() {
+    assert_eq!(CardDavClient::normalize_etag("abc123"), "abc123");
+}
+
+#[test]
+fn test_normalize_etag_empty_string() {
+    assert_eq!(CardDavClient::normalize_etag(""), "");
+}
+
+#[test]
+fn test_normalize_sync_token_strips_double_quotes() {
+    assert_eq!(
+        CardDavClient::normalize_sync_token(r#""token-123""#),
+        "token-123"
+    );
+}
+
+#[test]
+fn test_normalize_sync_token_bare_unchanged() {
+    assert_eq!(
+        CardDavClient::normalize_sync_token("http://example.com/sync/42"),
+        "http://example.com/sync/42"
+    );
+}
