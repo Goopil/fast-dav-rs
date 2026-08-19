@@ -155,7 +155,7 @@ async fn test_if_match_rejects_bare_weak_prefix() {
 #[tokio::test]
 async fn test_etag_round_trip_from_headers_to_if_match() {
     let (base_url, request) = capture_request().await;
-    let mut client = CalDavClient::new(&base_url, None, None).unwrap();
+    let client = CalDavClient::new(&base_url, None, None).unwrap();
     client.disable_request_compression();
 
     let mut headers = HeaderMap::new();
