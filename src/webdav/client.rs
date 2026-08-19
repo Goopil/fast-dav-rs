@@ -1,6 +1,4 @@
 use anyhow::{Result, anyhow};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
 use bytes::Bytes;
 use futures::{StreamExt, stream::FuturesOrdered};
 use http_body_util::Full;
@@ -9,21 +7,22 @@ use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
 use std::sync::{Arc, PoisonError, RwLock};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
-use zeroize::Zeroize;
 
 use crate::common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
     detect_encodings, detect_request_compression_preference,
 };
-use crate::common::http::{HyperClient, build_hyper_client};
+use crate::common::http::HyperClient;
+use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::types::{BatchItem, Depth};
 
 /// Strategy for compressing outgoing request bodies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RequestCompressionMode {
     /// Negotiate automatically: attempt gzip on first use, honor the server's advertised
     /// `Accept-Encoding` preference on success, and cache the result; fall back to identity
     /// on 415/501.
+    #[default]
     Auto,
     Disabled,
     Force(ContentEncoding),
@@ -81,17 +80,20 @@ fn is_etag_character(byte: u8) -> bool {
 pub struct WebDavClient {
     base: Uri,
     client: HyperClient,
-    /// Pre-built `Authorization: Basic …` value attached to every request, if
-    /// credentials were provided.
+    /// Pre-built `Authorization` header (Basic or Bearer) attached to every
+    /// request, if credentials were provided.
     ///
-    /// Residual limitation: the intermediate credential strings are zeroized in
-    /// [`WebDavClient::new`], but this `HeaderValue` necessarily keeps a Base64
-    /// copy of the credentials in memory for the whole lifetime of the client
-    /// (and its clones) and is **not** zeroized on drop. This is an accepted
-    /// trade-off so the header can be attached cheaply to each request.
+    /// Residual limitation: the intermediate credential strings are zeroized
+    /// in [`WebDavClientBuilder::build`], but this `HeaderValue` necessarily
+    /// keeps a copy of the credentials in memory for the whole lifetime of
+    /// the client (and its clones) and is **not** zeroized on drop. This is
+    /// an accepted trade-off so the header can be attached cheaply to each
+    /// request.
     auth_header: Option<header::HeaderValue>,
     default_timeout: Duration,
-    request_compression_mode: RequestCompressionMode,
+    request_compression_mode: Arc<RwLock<RequestCompressionMode>>,
+    /// Pre-parsed `User-Agent` header injected on every request, if set.
+    user_agent: Option<header::HeaderValue>,
     negotiated_request_compression: Arc<RwLock<Option<ContentEncoding>>>,
     request_compression_probe: Arc<Mutex<()>>,
 }
@@ -109,41 +111,76 @@ impl WebDavClient {
     /// network path. Always use `https://` outside isolated test environments
     /// (e.g. a local Docker test server).
     pub fn new(base_url: &str, basic_user: Option<&str>, basic_pass: Option<&str>) -> Result<Self> {
-        let client = build_hyper_client()?;
+        let mut builder = Self::builder(base_url);
+        if let (Some(u), Some(p)) = (basic_user, basic_pass) {
+            builder = builder.basic_auth(u, p);
+        }
+        builder.build()
+    }
 
-        let base: Uri = base_url.parse()?;
-        let auth_header = if let (Some(u), Some(p)) = (basic_user, basic_pass) {
-            // Build the header value, then zeroize the intermediate strings so
-            // plaintext credentials do not linger in freed heap memory.
-            let mut token = format!("{}:{}", u, p);
-            let mut val = format!("Basic {}", B64.encode(&token));
-            let header_value = header::HeaderValue::from_str(&val);
-            token.zeroize();
-            val.zeroize();
-            Some(header_value?)
-        } else {
-            None
-        };
+    /// Create a builder for configuring the client before construction.
+    ///
+    /// Only the base URL is required; every other option has a sensible
+    /// default documented on [`WebDavClientBuilder`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::webdav::WebDavClient;
+    /// use std::time::Duration;
+    ///
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .basic_auth("user", "pass")
+    ///     .timeout(Duration::from_secs(10))
+    ///     .build()?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn builder(base_url: impl Into<String>) -> WebDavClientBuilder {
+        WebDavClientBuilder::new(base_url)
+    }
 
-        Ok(Self {
+    /// Construct a client from pre-built parts.
+    ///
+    /// This is the internal constructor used by [`WebDavClient::new`] and
+    /// [`WebDavClientBuilder::build`].
+    pub(crate) fn from_parts(
+        base: Uri,
+        client: HyperClient,
+        auth_header: Option<header::HeaderValue>,
+        user_agent: Option<header::HeaderValue>,
+        default_timeout: Duration,
+        request_compression_mode: RequestCompressionMode,
+    ) -> Self {
+        Self {
             base,
             client,
             auth_header,
-            default_timeout: Duration::from_secs(20),
-            request_compression_mode: RequestCompressionMode::Auto,
+            user_agent,
+            default_timeout,
+            request_compression_mode: Arc::new(RwLock::new(request_compression_mode)),
             negotiated_request_compression: Arc::new(RwLock::new(None)),
             request_compression_probe: Arc::new(Mutex::new(())),
-        })
+        }
+    }
+
+    /// Get the auth header value, if credentials were provided.
+    #[cfg(test)]
+    pub(crate) fn auth_header(&self) -> Option<&header::HeaderValue> {
+        self.auth_header.as_ref()
     }
 
     /// Configure request compression for this client.
-    pub fn set_request_compression(&mut self, encoding: ContentEncoding) {
+    pub fn set_request_compression(&self, encoding: ContentEncoding) {
         self.set_request_compression_mode(RequestCompressionMode::Force(encoding));
     }
 
     /// Configure the request compression strategy.
-    pub fn set_request_compression_mode(&mut self, mode: RequestCompressionMode) {
-        self.request_compression_mode = mode;
+    pub fn set_request_compression_mode(&self, mode: RequestCompressionMode) {
+        let mut guard = self
+            .request_compression_mode
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        *guard = mode;
         match mode {
             RequestCompressionMode::Auto => self.set_negotiated_encoding(None),
             RequestCompressionMode::Disabled => {
@@ -154,18 +191,21 @@ impl WebDavClient {
     }
 
     /// Enable adaptive request compression (default behaviour).
-    pub fn set_request_compression_auto(&mut self) {
+    pub fn set_request_compression_auto(&self) {
         self.set_request_compression_mode(RequestCompressionMode::Auto);
     }
 
     /// Disable request compression entirely.
-    pub fn disable_request_compression(&mut self) {
+    pub fn disable_request_compression(&self) {
         self.set_request_compression_mode(RequestCompressionMode::Disabled);
     }
 
     /// Get the current request compression strategy.
     pub fn request_compression_mode(&self) -> RequestCompressionMode {
-        self.request_compression_mode
+        *self
+            .request_compression_mode
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Get the currently resolved request compression encoding.
@@ -222,18 +262,22 @@ impl WebDavClient {
     }
 
     fn resolve_request_encoding(&self) -> ContentEncoding {
-        match self.request_compression_mode {
+        let mode = self
+            .request_compression_mode
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.resolve_request_encoding_with_mode(&mode)
+    }
+
+    fn resolve_request_encoding_with_mode(&self, mode: &RequestCompressionMode) -> ContentEncoding {
+        match *mode {
             RequestCompressionMode::Disabled => ContentEncoding::Identity,
             RequestCompressionMode::Force(enc) => enc,
-            RequestCompressionMode::Auto => {
-                // Recover from poisoning: the guarded value is a plain
-                // `Option<ContentEncoding>` that cannot be left logically
-                // inconsistent, so taking over the poisoned guard is safe.
-                self.negotiated_request_compression
-                    .read()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .unwrap_or(AUTO_DEFAULT_ENCODING)
-            }
+            RequestCompressionMode::Auto => self
+                .negotiated_request_compression
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .unwrap_or(AUTO_DEFAULT_ENCODING),
         }
     }
 
@@ -255,7 +299,12 @@ impl WebDavClient {
     /// and keeps gzip — proven to work by the probe — otherwise. On failure,
     /// request compression is disabled (identity).
     async fn probe_request_compression_support(&self) {
-        if !self.request_compression_mode.is_auto() {
+        if !self
+            .request_compression_mode
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_auto()
+        {
             return;
         }
 
@@ -344,7 +393,12 @@ impl WebDavClient {
         attempted: Option<ContentEncoding>,
         status: StatusCode,
     ) -> bool {
-        if !self.request_compression_mode.is_auto() {
+        if !self
+            .request_compression_mode
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_auto()
+        {
             return false;
         }
 
@@ -371,10 +425,12 @@ impl WebDavClient {
         payload: Bytes,
         headers: &mut HeaderMap,
     ) -> (Bytes, Option<ContentEncoding>) {
-        if self.request_compression_mode.is_auto() {
-            // Recover from poisoning (here and below): the guarded value is a
-            // plain `Option<ContentEncoding>` that cannot be left logically
-            // inconsistent, so taking over the poisoned guard is safe.
+        let mode = *self
+            .request_compression_mode
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+
+        if mode.is_auto() {
             let negotiated = *self
                 .negotiated_request_compression
                 .read()
@@ -393,7 +449,7 @@ impl WebDavClient {
 
         headers.remove(header::CONTENT_ENCODING);
 
-        let encoding = self.resolve_request_encoding();
+        let encoding = self.resolve_request_encoding_with_mode(&mode);
         if encoding == ContentEncoding::Identity {
             return (payload, None);
         }
@@ -450,6 +506,10 @@ impl WebDavClient {
 
             if let Some(ref auth_header) = auth {
                 req_builder = req_builder.header(header::AUTHORIZATION, auth_header);
+            }
+
+            if let Some(ua) = &self.user_agent {
+                headers.insert(header::USER_AGENT, ua.clone());
             }
 
             let mut final_body: Option<Bytes> = None;
@@ -524,6 +584,10 @@ impl WebDavClient {
 
             if let Some(ref auth_header) = auth {
                 req_builder = req_builder.header(header::AUTHORIZATION, auth_header);
+            }
+
+            if let Some(ua) = &self.user_agent {
+                headers.insert(header::USER_AGENT, ua.clone());
             }
 
             let mut final_body: Option<Bytes> = None;
@@ -926,5 +990,36 @@ impl WebDavClient {
             None,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::compression::ContentEncoding;
+
+    const BASE: &str = "https://dav.example.com/user01/";
+
+    #[test]
+    fn clone_shares_compression_mode() {
+        let client_a = WebDavClient::new(BASE, None, None).unwrap();
+        let client_b = client_a.clone();
+
+        client_a.set_request_compression_mode(RequestCompressionMode::Force(ContentEncoding::Zstd));
+
+        assert_eq!(
+            client_b.request_compression_mode(),
+            RequestCompressionMode::Force(ContentEncoding::Zstd)
+        );
+    }
+
+    #[test]
+    fn set_compression_does_not_require_mut() {
+        let client = WebDavClient::new(BASE, None, None).unwrap();
+        client.set_request_compression_mode(RequestCompressionMode::Disabled);
+        assert_eq!(
+            client.request_compression_mode(),
+            RequestCompressionMode::Disabled
+        );
     }
 }

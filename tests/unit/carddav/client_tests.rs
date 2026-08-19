@@ -291,3 +291,60 @@ fn test_map_sync_response() {
     );
     assert!(response.items[1].is_deleted); // Should be marked as deleted
 }
+
+#[test]
+fn builder_propagates_options() {
+    use fast_dav_rs::RequestCompressionMode;
+    use std::time::Duration;
+
+    let client = CardDavClient::builder("https://card.example.com/dav/")
+        .basic_auth("user", "pass")
+        .timeout(Duration::from_secs(3))
+        .pool_max_idle_per_host(8)
+        .request_compression(RequestCompressionMode::Force(
+            fast_dav_rs::ContentEncoding::Gzip,
+        ))
+        .build()
+        .expect("build succeeds");
+
+    assert_eq!(
+        client.request_compression_mode(),
+        RequestCompressionMode::Force(fast_dav_rs::ContentEncoding::Gzip)
+    );
+    assert_eq!(
+        client.request_compression(),
+        fast_dav_rs::ContentEncoding::Gzip
+    );
+}
+
+#[test]
+fn builder_invalid_url() {
+    let result = CardDavClient::builder("not a valid url").build();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder_bearer_auth() {
+    let client = CardDavClient::builder("https://card.example.com/dav/")
+        .bearer_token("test-token")
+        .build()
+        .expect("build succeeds");
+    let _ = client;
+}
+
+#[test]
+fn clone_shares_compression_mode() {
+    use fast_dav_rs::RequestCompressionMode;
+
+    let client_a = CardDavClient::builder("https://card.example.com/dav/")
+        .build()
+        .unwrap();
+    let client_b = client_a.clone();
+
+    client_a.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    assert_eq!(
+        client_b.request_compression_mode(),
+        RequestCompressionMode::Disabled
+    );
+}

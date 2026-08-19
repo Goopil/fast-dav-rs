@@ -1,34 +1,59 @@
-use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::Full;
-use hyper_rustls::HttpsConnectorBuilder;
+use hyper::Uri;
+use hyper_util::client::legacy::connect::proxy::Tunnel;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
-use hyper_util::rt::TokioExecutor;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tower_service::Service;
 
 /// Type alias for the Hyper client used across CalDAV/CardDAV modules.
-pub type HyperClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
+pub(crate) type HyperClient = Client<hyper_rustls::HttpsConnector<MaybeProxied>, Full<Bytes>>;
 
-/// Build a Hyper client configured with HTTP/2, connection pooling, and a TLS connector
-/// that prefers native roots but falls back to the bundled WebPKI store.
-pub fn build_hyper_client() -> Result<HyperClient> {
-    let https_builder = HttpsConnectorBuilder::new()
-        .with_native_roots()
-        .unwrap_or_else(|err| {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "fast-dav-rs: falling back to webpki roots (native roots unavailable: {err})"
-            );
-            HttpsConnectorBuilder::new().with_webpki_roots()
-        });
+/// Connector that is either direct or proxied via HTTP CONNECT tunnel.
+///
+/// Implements `tower_service::Service<Uri>` by delegating to the inner
+/// connector. The future is boxed since `HttpConnector` and
+/// `Tunnel<HttpConnector>` produce different future types.
+#[derive(Clone)]
+pub(crate) enum MaybeProxied {
+    Direct(HttpConnector),
+    Tunneled(Tunnel<HttpConnector>),
+}
 
-    let https = https_builder
-        .https_or_http()
-        .enable_http1()
-        .enable_http2()
-        .build();
+impl Service<Uri> for MaybeProxied {
+    type Response = <HttpConnector as Service<Uri>>::Response;
+    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    Ok(Client::builder(TokioExecutor::new())
-        .http2_adaptive_window(true)
-        .pool_max_idle_per_host(128)
-        .build::<_, Full<Bytes>>(https))
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self {
+            MaybeProxied::Direct(c) => c.poll_ready(cx).map_err(|e| Box::new(e) as Self::Error),
+            MaybeProxied::Tunneled(c) => c.poll_ready(cx).map_err(|e| Box::new(e) as Self::Error),
+        }
+    }
+
+    fn call(&mut self, dst: Uri) -> Self::Future {
+        match self {
+            MaybeProxied::Direct(c) => {
+                let fut = c.call(dst);
+                Box::pin(async move { fut.await.map_err(|e| Box::new(e) as Self::Error) })
+            }
+            MaybeProxied::Tunneled(c) => {
+                let fut = c.call(dst);
+                Box::pin(async move { fut.await.map_err(|e| Box::new(e) as Self::Error) })
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maybe_proxied_direct_construction() {
+        let _ = MaybeProxied::Direct(HttpConnector::new());
+    }
 }

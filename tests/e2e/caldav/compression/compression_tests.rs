@@ -22,7 +22,7 @@ async fn test_compression_support() {
     ];
 
     for encoding in encodings {
-        let mut client_with_encoding = client.clone();
+        let client_with_encoding = client.clone();
         client_with_encoding.set_request_compression(encoding);
 
         // Test a simple GET request
