@@ -48,20 +48,32 @@ pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
         return Err(anyhow!("ETag cannot be empty"));
     }
 
-    let value = if etag == "*" || is_valid_entity_tag(etag) {
-        etag.to_owned()
-    } else {
-        if etag.starts_with('"') || etag.starts_with("W/") || etag.contains('"') {
-            return Err(anyhow!("ETag has an invalid entity-tag format"));
-        }
-        if !etag.bytes().all(is_etag_character) {
-            return Err(anyhow!("ETag contains invalid entity-tag characters"));
-        }
-        format!("\"{etag}\"")
-    };
+    if etag == "*" || is_valid_entity_tag(etag) {
+        return header::HeaderValue::from_str(etag)
+            .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"));
+    }
 
+    if let Some(opaque) = etag.strip_prefix("W/") {
+        validate_opaque_tag(opaque)?;
+        let value = format!("W/\"{opaque}\"");
+        return header::HeaderValue::from_str(&value)
+            .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"));
+    }
+
+    validate_opaque_tag(etag)?;
+    let value = format!("\"{etag}\"");
     header::HeaderValue::from_str(&value)
         .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"))
+}
+
+fn validate_opaque_tag(opaque: &str) -> Result<()> {
+    if opaque.is_empty() || opaque.contains('"') {
+        return Err(anyhow!("ETag has an invalid entity-tag format"));
+    }
+    if !opaque.bytes().all(is_etag_character) {
+        return Err(anyhow!("ETag contains invalid entity-tag characters"));
+    }
+    Ok(())
 }
 
 fn is_valid_entity_tag(etag: &str) -> bool {
@@ -74,6 +86,24 @@ fn is_valid_entity_tag(etag: &str) -> bool {
 
 fn is_etag_character(byte: u8) -> bool {
     byte == b'!' || (b'#'..=b'~').contains(&byte) || byte >= 0x80
+}
+
+pub fn normalize_etag(etag: &str) -> String {
+    let etag = etag.trim();
+    if etag.is_empty() {
+        return String::new();
+    }
+    let (prefix, rest) = if let Some(s) = etag.strip_prefix("W/") {
+        ("W/", s)
+    } else {
+        ("", etag)
+    };
+    let rest = rest.trim_matches('"');
+    format!("{prefix}{rest}")
+}
+
+pub fn normalize_sync_token(token: &str) -> String {
+    token.trim().trim_matches('"').to_string()
 }
 
 #[derive(Clone)]
@@ -789,11 +819,31 @@ impl WebDavClient {
     }
 
     /// Extract the `ETag` from a response header map, if present.
+    ///
+    /// The returned value is **normalized**: surrounding double quotes are stripped,
+    /// so `"abc"` becomes `abc` and `W/"abc"` becomes `W/abc`.
+    /// Use the value directly with `put_if_match` / `delete_if_match`, which
+    /// re-adds the quoting on the wire.
     pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
         headers
             .get(header::ETAG)
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(normalize_etag)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Normalize an ETag by stripping surrounding double quotes.
+    ///
+    /// `"abc"` becomes `abc`, `W/"abc"` becomes `W/abc`; bare values are
+    /// returned unchanged.
+    pub fn normalize_etag(etag: &str) -> String {
+        normalize_etag(etag)
+    }
+
+    /// Normalize a sync token by trimming whitespace and stripping
+    /// surrounding double quotes.
+    pub fn normalize_sync_token(token: &str) -> String {
+        normalize_sync_token(token)
     }
 
     /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
@@ -1021,5 +1071,63 @@ mod tests {
             client.request_compression_mode(),
             RequestCompressionMode::Disabled
         );
+    }
+
+    #[test]
+    fn test_normalize_etag_strips_double_quotes_strong() {
+        assert_eq!(normalize_etag(r#""abc123""#), "abc123");
+    }
+
+    #[test]
+    fn test_normalize_etag_strips_double_quotes_weak() {
+        assert_eq!(normalize_etag(r#"W/"weak123""#), "W/weak123");
+    }
+
+    #[test]
+    fn test_normalize_etag_bare_value_unchanged() {
+        assert_eq!(normalize_etag("abc123"), "abc123");
+    }
+
+    #[test]
+    fn test_normalize_etag_bare_weak_unchanged() {
+        assert_eq!(normalize_etag("W/abc123"), "W/abc123");
+    }
+
+    #[test]
+    fn test_normalize_etag_trims_whitespace() {
+        assert_eq!(normalize_etag(r#"  "abc123"  "#), "abc123");
+    }
+
+    #[test]
+    fn test_normalize_etag_empty_string() {
+        assert_eq!(normalize_etag(""), "");
+    }
+
+    #[test]
+    fn test_normalize_etag_only_quotes() {
+        assert_eq!(normalize_etag(r#""""#), "");
+    }
+
+    #[test]
+    fn test_normalize_etag_preserves_single_quotes_inside() {
+        assert_eq!(normalize_etag(r#""ab'cd""#), "ab'cd");
+    }
+
+    #[test]
+    fn test_normalize_sync_token_strips_double_quotes() {
+        assert_eq!(normalize_sync_token(r#""token-123""#), "token-123");
+    }
+
+    #[test]
+    fn test_normalize_sync_token_bare_unchanged() {
+        assert_eq!(
+            normalize_sync_token("http://example.com/sync/42"),
+            "http://example.com/sync/42"
+        );
+    }
+
+    #[test]
+    fn test_normalize_sync_token_trims_whitespace() {
+        assert_eq!(normalize_sync_token(r#"  "token"  "#), "token");
     }
 }

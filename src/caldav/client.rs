@@ -11,7 +11,7 @@ use crate::caldav::types::{
     BatchItem, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
-use crate::webdav::client::{WebDavClient, if_match_header_value};
+use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
 use crate::webdav::types::http_status_code;
 use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
 
@@ -567,6 +567,21 @@ impl CalDavClient {
         WebDavClient::etag_from_headers(headers)
     }
 
+    /// Normalize an ETag by stripping surrounding double quotes.
+    ///
+    /// `"abc"` becomes `abc`, `W/"abc"` becomes `W/abc`; bare values are
+    /// returned unchanged.  Use the normalized value with [`Self::put_if_match`]
+    /// / [`Self::delete_if_match`], which re-add quoting on the wire.
+    pub fn normalize_etag(etag: &str) -> String {
+        WebDavClient::normalize_etag(etag)
+    }
+
+    /// Normalize a sync token by trimming whitespace and stripping
+    /// surrounding double quotes.
+    pub fn normalize_sync_token(token: &str) -> String {
+        WebDavClient::normalize_sync_token(token)
+    }
+
     // ----------- Batch (limited concurrency) -----------
 
     /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
@@ -789,17 +804,16 @@ pub fn map_sync_response(
     items: Vec<DavItem>,
     top_level_sync_token: Option<String>,
 ) -> SyncResponse {
-    // Prioritize top-level sync-token (RFC 6578), then headers, then per-item tokens
     let mut sync_token = top_level_sync_token.or_else(|| {
         headers
             .get("Sync-Token")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(normalize_sync_token)
     });
     let mut out = Vec::new();
 
     for mut item in items {
-        // Capture per-item sync token if we don't have a top-level one (fallback)
+        // Already normalized by the streaming parser's normalize_sync_token.
         if item.sync_token.is_some() && sync_token.is_none() {
             sync_token = item.sync_token.clone();
         }

@@ -221,12 +221,12 @@ fn test_map_addressbook_list_filters_addressbooks() {
 fn test_map_address_objects() {
     let mut item1 = fast_dav_rs::carddav::types::DavItem::new();
     item1.href = "/addressbooks/user/contact1.vcf".to_string();
-    item1.etag = Some("\"abc123\"".to_string());
+    item1.etag = Some("abc123".to_string());
     item1.address_data = Some("BEGIN:VCARD...END:VCARD".to_string());
 
     let mut item2 = fast_dav_rs::carddav::types::DavItem::new();
     item2.href = "/addressbooks/user/contact2.vcf".to_string();
-    item2.etag = Some("\"def456\"".to_string());
+    item2.etag = Some("def456".to_string());
     item2.status = Some("HTTP/1.1 404 Not Found".to_string());
 
     let items = vec![item1.clone(), item2.clone()];
@@ -234,13 +234,13 @@ fn test_map_address_objects() {
 
     assert_eq!(objects.len(), 2);
     assert_eq!(objects[0].href, "/addressbooks/user/contact1.vcf");
-    assert_eq!(objects[0].etag, Some("\"abc123\"".to_string()));
+    assert_eq!(objects[0].etag, Some("abc123".to_string()));
     assert_eq!(
         objects[0].address_data,
         Some("BEGIN:VCARD...END:VCARD".to_string())
     );
     assert_eq!(objects[1].href, "/addressbooks/user/contact2.vcf");
-    assert_eq!(objects[1].etag, Some("\"def456\"".to_string()));
+    assert_eq!(objects[1].etag, Some("def456".to_string()));
     assert_eq!(
         objects[1].status,
         Some("HTTP/1.1 404 Not Found".to_string())
@@ -257,7 +257,7 @@ fn test_map_sync_response() {
 
     let mut item1 = fast_dav_rs::carddav::types::DavItem::new();
     item1.href = "/addressbooks/user/contact1.vcf".to_string();
-    item1.etag = Some("\"abc123\"".to_string());
+    item1.etag = Some("abc123".to_string());
     item1.address_data = Some("BEGIN:VCARD...END:VCARD".to_string());
 
     let mut item2 = fast_dav_rs::carddav::types::DavItem::new();
@@ -280,7 +280,7 @@ fn test_map_sync_response() {
 
     // Check the first item (regular item with data)
     assert_eq!(response.items[0].href, "/addressbooks/user/contact1.vcf");
-    assert_eq!(response.items[0].etag, Some("\"abc123\"".to_string()));
+    assert_eq!(response.items[0].etag, Some("abc123".to_string()));
     assert!(!response.items[0].is_deleted); // Should not be deleted
 
     // Check second item (deleted item)
@@ -346,5 +346,28 @@ fn clone_shares_compression_mode() {
     assert_eq!(
         client_b.request_compression_mode(),
         RequestCompressionMode::Disabled
+    );
+}
+
+#[test]
+fn sync_token_round_trip_unquoted_in_request_body() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "Sync-Token",
+        r#""http://example.com/sync/99""#.parse().unwrap(),
+    );
+    let sync = fast_dav_rs::carddav::client::map_sync_response(&headers, Vec::new(), None);
+    let normalized = sync.sync_token.expect("sync token present");
+    assert_eq!(normalized, "http://example.com/sync/99");
+
+    let body =
+        fast_dav_rs::carddav::client::build_sync_collection_body(Some(&normalized), None, true);
+    assert!(
+        body.contains("<D:sync-token>http://example.com/sync/99</D:sync-token>"),
+        "sync-token should appear unquoted in request body, got: {body}"
+    );
+    assert!(
+        !body.contains("<D:sync-token>\""),
+        "sync-token should not have extra quotes in request body"
     );
 }
