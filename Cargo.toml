@@ -1,6 +1,6 @@
 [package]
 name = "fast-dav-rs"
-version = "0.5.0"
+version = "0.7.0"
 edition = "2024"
 description = "Fast CalDAV/CardDAV client with hyper + rustls, HTTP/2, compression, batching, and streaming XML parsing."
 license = "LGPL-3.0"
@@ -12,6 +12,11 @@ include = ["Cargo.toml", "LICENSE", "/README.md", "src/**/*.rs"]
 [dependencies]
 anyhow = "1"
 base64 = "0.23"
+rustls = "0.23"
+rustls-pemfile = "2"
+rustls-native-certs = "0.8"
+webpki-roots = "0.26"
+tower-service = "0.3"
 bytes = "1"
 futures = "0.3"
 hyper = { version = "1", features = ["client", "http1", "http2"] }
@@ -20,7 +25,7 @@ quick-xml = { version = "0.41.0", features = ["async-tokio"] }
 tokio = { version = "1", features = ["macros", "sync", "time"] }
 tokio-util = "0.7"
 async-compression = { version = "0.4", features = ["tokio", "brotli", "gzip", "zstd"] }
-hyper-util = { version = "0.1", features = ["client", "http1", "http2", "tokio"] }
+hyper-util = { version = "0.1", features = ["client", "http1", "http2", "tokio", "client-proxy"] }
 http-body-util = "0.1"
 zeroize = "1"
 

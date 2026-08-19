@@ -1,3 +1,4 @@
+use crate::webdav::client::{normalize_etag, normalize_sync_token};
 use crate::webdav::types::DavItemCommon;
 use anyhow::{Result, anyhow};
 
@@ -150,14 +151,14 @@ impl CommonParser {
             CommonElement::Prop,
             CommonElement::Getetag,
         ]) {
-            self.current.etag = Some(trimmed.to_string());
+            self.current.etag = Some(normalize_etag(trimmed));
         } else if self.path_ends_with(&[
             CommonElement::Response,
             CommonElement::Propstat,
             CommonElement::Prop,
             CommonElement::SyncToken,
         ]) {
-            self.current.sync_token = Some(trimmed.to_string());
+            self.current.sync_token = Some(normalize_sync_token(trimmed));
         } else if self.path_ends_with(&[
             CommonElement::Response,
             CommonElement::Propstat,

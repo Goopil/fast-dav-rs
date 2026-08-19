@@ -137,5 +137,5 @@ fn test_parse_multistatus_unexpected_elements() {
         .items;
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].href, "/dav/user01/contact1.vcf");
-    assert_eq!(items[0].etag.as_deref(), Some("\"etag-1\""));
+    assert_eq!(items[0].etag.as_deref(), Some("etag-1"));
 }

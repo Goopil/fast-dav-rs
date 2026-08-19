@@ -1,9 +1,11 @@
 //! CardDAV client, streaming helpers, and types for addressbook discovery, queries, and sync.
 
+pub mod builder;
 pub mod client;
 pub mod streaming;
 pub mod types;
 
+pub use builder::CardDavClientBuilder;
 pub use client::{
     CardDavClient, build_addressbook_multiget_body, build_addressbook_query_body,
     build_addressbook_query_filter_email, build_addressbook_query_filter_fn,

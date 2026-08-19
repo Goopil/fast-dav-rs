@@ -1,5 +1,6 @@
 use crate::caldav::types::DavItem;
 use crate::common::compression::ContentEncoding;
+use crate::webdav::client::normalize_sync_token;
 use crate::webdav::streaming::{CommonParser, path_ends_with};
 use anyhow::{Result, anyhow};
 use futures::TryStreamExt;
@@ -303,8 +304,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         ]) {
             self.current.calendar_color = Some(trimmed.to_string());
         } else if self.path_ends_with(&[ElementName::Multistatus, ElementName::SyncToken]) {
-            // Top-level sync-token in sync-collection responses (RFC 6578)
-            self.sync_token = Some(trimmed.to_string());
+            self.sync_token = Some(normalize_sync_token(trimmed));
         } else if self.path_ends_with(&[
             ElementName::Response,
             ElementName::Propstat,
