@@ -2,12 +2,16 @@
 name = "fast-dav-rs"
 version = "0.7.1"
 edition = "2024"
+rust-version = "1.85"
 description = "Fast CalDAV/CardDAV client with hyper + rustls, HTTP/2, compression, batching, and streaming XML parsing."
 license = "LGPL-3.0"
+keywords = ["caldav", "carddav", "webdav", "client"]
+categories = ["network-programming", "asynchronous", "api-bindings"]
 documentation = "https://docs.rs/fast-dav-rs"
 homepage = "https://github.com/Goopil/fast-dav-rs"
 repository = "https://github.com/Goopil/fast-dav-rs"
-include = ["Cargo.toml", "LICENSE", "/README.md", "src/**/*.rs"]
+readme = "README.md"
+include = ["Cargo.toml", "LICENSE", "README.md", "src/**/*.rs"]
 
 [dependencies]
 anyhow = "1"
@@ -42,3 +46,10 @@ path = "tests/unit/mod.rs"
 [[test]]
 name = "e2e_tests"
 path = "tests/e2e/mod.rs"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
