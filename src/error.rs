@@ -188,8 +188,9 @@ impl Error {
     /// `Syntax` and `IllFormed` errors are mapped to [`XmlStructure`](Self::XmlStructure)
     /// because they indicate a structurally invalid XML document (mismatched tags,
     /// unclosed elements, …). The `quick_xml` message is stringified because
-    /// `Syntax` and `IllFormed` carry only a `Cow<str>` message — there is no
-    /// deeper source chain to preserve. All other variants (`Io`, `Encoding`,
+    /// `Syntax` and `IllFormed` carry `SyntaxError`/`IllFormedError` (which
+    /// implement `Display` but have no `source()` chain) — there is no deeper
+    /// source chain to preserve. All other variants (`Io`, `Encoding`,
     /// `Escape`, `InvalidAttr`, `Namespace`) are mapped to [`Xml`](Self::Xml) via the
     /// blanket `#[from]` conversion, which preserves the full error chain.
     pub(crate) fn from_quick_xml(error: quick_xml::Error) -> Self {
