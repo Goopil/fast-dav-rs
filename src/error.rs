@@ -172,7 +172,7 @@ impl Error {
     /// Wrap an error with a context message and an underlying source.
     ///
     /// The context is used for `Display`; the source is returned by
-    /// [`Error::source`] so the full error chain is preserved.
+    /// [`std::error::Error::source`] so the full error chain is preserved.
     pub fn with_source(
         context: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,

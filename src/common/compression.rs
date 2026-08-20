@@ -251,7 +251,7 @@ pub fn decompress_stream(
 /// # Example
 ///
 /// ```
-/// use fast_dav_rs::compression::{compress_payload, ContentEncoding};
+/// use fast_dav_rs::common::compression::{compress_payload, ContentEncoding};
 /// use bytes::Bytes;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -304,7 +304,7 @@ pub async fn compress_payload(data: Bytes, encoding: ContentEncoding) -> Result<
 /// # Example
 ///
 /// ```
-/// use fast_dav_rs::compression::{add_content_encoding, ContentEncoding};
+/// use fast_dav_rs::common::compression::{add_content_encoding, ContentEncoding};
 /// use hyper::HeaderMap;
 ///
 /// let mut headers = HeaderMap::new();
