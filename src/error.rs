@@ -3,11 +3,11 @@ use std::time::Duration;
 
 /// Error returned by `fast-dav-rs` operations.
 ///
-/// The enum is [`#[non_exhaustive`][ne]] so that new variants can be added
+/// The enum is `#[non_exhaustive]` so that new variants can be added
 /// without breaking downstream `match` expressions. Always include a
 /// wildcard arm (`_ => …`) when matching.
 ///
-/// [ne]: https://doc.rust-lang.org/reference/attributes/type_system.html#the-non_exhaustive-attribute
+/// [non_exhaustive]: https://doc.rust-lang.org/reference/attributes/type_system.html#the-non_exhaustive-attribute
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
