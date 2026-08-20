@@ -89,6 +89,21 @@ pub enum Error {
     #[error("UTF-8 decoding error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
 
+    /// A TLS, certificate, or PKI operation failed.
+    ///
+    /// Covers PEM parsing errors, rustls configuration failures, and
+    /// native certificate store errors. The `context` string describes
+    /// where or why the error occurred; the underlying cause is
+    /// accessible via `source()`.
+    #[error("TLS error: {context}")]
+    Tls {
+        /// Human-readable context describing the TLS failure.
+        context: String,
+        /// The underlying error, if any.
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+
     /// An error returned by user-provided callback code or when wrapping an
     /// error that does not fit any other variant.
     ///
@@ -114,6 +129,16 @@ impl Error {
         Self::InvalidUrl {
             url: url.into(),
             source: Box::new(source),
+        }
+    }
+
+    pub(crate) fn tls(
+        context: impl Into<String>,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::Tls {
+            context: context.into(),
+            source: Some(Box::new(source)),
         }
     }
 

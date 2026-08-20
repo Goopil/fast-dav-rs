@@ -163,3 +163,34 @@ fn other_without_source_has_no_chain() {
     ));
     assert!(error.source().is_none());
 }
+
+#[test]
+fn tls_error_preserves_source_chain() {
+    let source = std::io::Error::other("PEM parse failed");
+    let error = Error::tls("failed to parse PEM certificate", source);
+
+    assert!(matches!(
+        &error,
+        Error::Tls { context, source: Some(_) } if context == "failed to parse PEM certificate"
+    ));
+    assert!(
+        error.source().is_some(),
+        "source() must return the inner error"
+    );
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .to_string()
+            .contains("PEM parse failed"),
+        "source chain must preserve the inner message"
+    );
+}
+
+#[test]
+fn tls_error_display_includes_context() {
+    let source = std::io::Error::other("bad cert");
+    let error = Error::tls("rustls config", source);
+    let display = error.to_string();
+    assert!(display.contains("rustls config"), "display: {display}");
+}
