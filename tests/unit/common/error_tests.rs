@@ -1,5 +1,6 @@
-use fast_dav_rs::{CalDavClient, Error, Result};
+use fast_dav_rs::{CalDavClient, Error, Result, WebDavClient};
 use hyper::StatusCode;
+use hyper::{HeaderMap, Method};
 use std::time::Duration;
 
 #[test]
@@ -200,3 +201,37 @@ fn tls_error_display_includes_context() {
     let display = error.to_string();
     assert!(display.contains("rustls config"), "display: {display}");
 }
+
+/// A connection-refused error must be classified as `Error::Connection`.
+///
+/// `hyper_util::client::legacy::Error`'s `ErrorKind` enum is private, so
+/// we cannot construct a connect error in isolation. Instead we trigger a
+/// real connection failure by pointing the client at `127.0.0.1:1`, a port
+/// that is virtually always closed (connection refused → `is_connect()` is
+/// `true` → `Error::Connection`). If something *is* listening on port 1,
+/// pick another closed port.
+#[tokio::test]
+async fn connection_error_maps_to_connection_variant() {
+    // Port 1 is reserved and almost never has a listener.
+    let client = WebDavClient::builder("http://127.0.0.1:1/")
+        .timeout(Duration::from_secs(2))
+        .build()
+        .expect("builder must succeed for a valid URL");
+
+    let result = client
+        .send(Method::GET, "", HeaderMap::new(), None, None)
+        .await;
+
+    let err = result.expect_err("connection to a closed port should fail");
+    assert!(
+        matches!(err, Error::Connection(_)),
+        "connect-refused should map to Error::Connection, got: {err:?}"
+    );
+}
+
+// NOTE: A transport-specific error (`Error::Transport`) requires a server
+// that accepts a connection and then breaks the response stream mid-flight
+// (e.g. an early EOF after the status line). This cannot be unit-tested
+// without a real or mock server and is exercised by the e2e test suite
+// against a live DAV server. The test above covers the connect-path, which
+// is the most common retry-relevant case.
