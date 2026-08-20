@@ -59,7 +59,7 @@ pub enum Error {
     },
 
     /// An operation exceeded its configured time limit.
-    #[error("operation timed out after {limit:?}")]
+    #[error("operation timed out after {}s", limit.as_secs())]
     Timeout {
         /// The configured time limit.
         limit: Duration,

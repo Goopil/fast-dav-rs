@@ -59,7 +59,7 @@ fn public_error_variants_expose_retry_relevant_context() {
     let timeout_error = Error::Timeout {
         limit: Duration::from_secs(20),
     };
-    assert!(timeout_error.to_string().contains("20s"));
+    assert_eq!(timeout_error.to_string(), "operation timed out after 20s");
 }
 
 #[test]
