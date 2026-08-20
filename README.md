@@ -334,6 +334,48 @@ let principal = client
     .ok_or_else(|| Error::other("no principal"))?;
 ```
 
+### Complete migration example
+
+A compilable, step-by-step migration example lives in
+[`examples/migration.rs`](examples/migration.rs). It covers defining a typed
+`Error` enum with `#[from]` and `#[error(...)]`, using `?` with automatic
+conversions, replacing `anyhow!()` and `.context()`, and pattern matching on
+variants for programmatic error handling.
+
+Run it:
+
+```sh
+cargo run --example migration
+```
+
+Key patterns at a glance:
+
+```rust
+// 1. Define typed variants — #[from] generates From impls so `?` works
+#[derive(Debug, thiserror::Error)]
+pub enum AppError {
+    #[error("invalid port `{raw}`: {source}")]
+    InvalidPort { raw: String, #[source] source: ParseIntError },
+
+    #[error("port out of range: {0}")]
+    OutOfRange(u16),
+}
+
+// 2. Use ? — ParseIntError converts via #[from] automatically
+fn parse_port(raw: &str) -> Result<u16, AppError> {
+    let port: u16 = raw.parse()
+        .map_err(|source| AppError::InvalidPort { raw: raw.to_owned(), source })?;
+    Ok(port)
+}
+
+// 3. Match on variants — the payoff over anyhow
+match parse_port("abc") {
+    Ok(port) => println!("port: {port}"),
+    Err(AppError::InvalidPort { raw, .. }) => eprintln!("bad input: {raw}"),
+    Err(AppError::OutOfRange(p)) => eprintln!("port {p} is reserved"),
+}
+```
+
 ## Configuration
 
 ### Request compression
