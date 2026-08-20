@@ -139,6 +139,11 @@ fn test_multistatus_visit_matches_vec() {
         assert_eq!(lhs.displayname, rhs.displayname);
         assert_eq!(lhs.etag, rhs.etag);
     }
+
+    assert_eq!(items[0].etag.as_deref(), Some("etag-1"));
+    assert_eq!(items[1].etag.as_deref(), Some("etag-2"));
+    assert_eq!(visited[0].etag.as_deref(), Some("etag-1"));
+    assert_eq!(visited[1].etag.as_deref(), Some("etag-2"));
 }
 
 #[test]

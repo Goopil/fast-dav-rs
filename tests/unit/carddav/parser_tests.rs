@@ -65,7 +65,7 @@ END:VCARD
             "text/vcard;version=3.0".to_string()
         ]
     );
-    assert_eq!(book.etag.as_deref(), Some("\"etag-123\""));
+    assert_eq!(book.etag.as_deref(), Some("etag-123"));
     assert_eq!(book.sync_token.as_deref(), Some("token-123"));
     let data = book.address_data.as_ref().expect("address data present");
     assert!(data.contains("BEGIN:VCARD"));
@@ -112,7 +112,7 @@ fn parse_multistatus_extracts_common_properties_and_top_level_sync_token() {
     assert_eq!(item.href, "/dav/user01/ab/");
     assert_eq!(item.status.as_deref(), Some("HTTP/1.1 200 OK"));
     assert_eq!(item.displayname.as_deref(), Some("Contacts"));
-    assert_eq!(item.etag.as_deref(), Some("\"etag-777\""));
+    assert_eq!(item.etag.as_deref(), Some("etag-777"));
     assert!(item.is_collection);
     assert!(item.is_addressbook);
     assert_eq!(item.sync_token.as_deref(), Some("item-token"));
@@ -150,4 +150,33 @@ fn parse_multistatus_preserves_multiline_address_data() {
     let item = &result.items[0];
     let data = item.address_data.as_ref().expect("address data present");
     assert_eq!(data, "BEGIN:VCARD\nEND:VCARD\n");
+}
+
+#[test]
+fn parse_multistatus_normalizes_quoted_sync_token() {
+    let xml = r#"
+<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:sync-token>"http://example.com/sync/99"</D:sync-token>
+  <D:response>
+    <D:href>/dav/user01/ab/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:sync-token>"item-token-quoted"</D:sync-token>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>
+"#;
+    let result = parse_multistatus_bytes(xml.as_bytes()).expect("xml parsing succeeds");
+    assert_eq!(
+        result.sync_token.as_deref(),
+        Some("http://example.com/sync/99")
+    );
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(
+        result.items[0].sync_token.as_deref(),
+        Some("item-token-quoted")
+    );
 }

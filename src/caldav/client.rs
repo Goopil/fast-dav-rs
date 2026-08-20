@@ -4,12 +4,13 @@ use hyper::{HeaderMap, Method, Response, Uri, header};
 use std::sync::Arc;
 use tokio::time::Duration;
 
+use crate::caldav::builder::CalDavClientBuilder;
 use crate::caldav::streaming::parse_multistatus_bytes;
 use crate::caldav::types::{
     BatchItem, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
-use crate::webdav::client::{WebDavClient, if_match_header_value};
+use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
 use crate::webdav::types::http_status_code;
 use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
 use crate::{Error, Result};
@@ -74,9 +75,37 @@ impl CalDavClient {
     /// # }
     /// ```
     pub fn new(base_url: &str, basic_user: Option<&str>, basic_pass: Option<&str>) -> Result<Self> {
-        Ok(Self {
-            webdav: WebDavClient::new(base_url, basic_user, basic_pass)?,
-        })
+        let mut builder = Self::builder(base_url);
+        if let (Some(u), Some(p)) = (basic_user, basic_pass) {
+            builder = builder.basic_auth(u, p);
+        }
+        builder.build()
+    }
+
+    /// Create a builder for configuring the client before construction.
+    ///
+    /// Only the base URL is required; every other option has a sensible
+    /// default documented on [`CalDavClientBuilder`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::CalDavClient;
+    /// use std::time::Duration;
+    ///
+    /// let client = CalDavClient::builder("https://cal.example.com/dav/")
+    ///     .basic_auth("user", "pass")
+    ///     .timeout(Duration::from_secs(30))
+    ///     .build()?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn builder(base_url: impl Into<String>) -> CalDavClientBuilder {
+        CalDavClientBuilder::new(base_url)
+    }
+
+    /// Wrap a [`WebDavClient`] into a [`CalDavClient`].
+    pub(crate) fn from_webdav(webdav: WebDavClient) -> Self {
+        Self { webdav }
     }
 
     /// Configure request compression for this client.
@@ -91,7 +120,7 @@ impl CalDavClient {
     /// use fast_dav_rs::{CalDavClient, ContentEncoding};
     ///
     /// # fn example() -> fast_dav_rs::Result<()> {
-    /// let mut client = CalDavClient::new(
+    /// let client = CalDavClient::new(
     ///     "https://cal.example.com/dav/user01/",
     ///     Some("user01"),
     ///     Some("secret"),
@@ -100,22 +129,22 @@ impl CalDavClient {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_request_compression(&mut self, encoding: ContentEncoding) {
+    pub fn set_request_compression(&self, encoding: ContentEncoding) {
         self.webdav.set_request_compression(encoding);
     }
 
     /// Configure the request compression strategy.
-    pub fn set_request_compression_mode(&mut self, mode: RequestCompressionMode) {
+    pub fn set_request_compression_mode(&self, mode: RequestCompressionMode) {
         self.webdav.set_request_compression_mode(mode);
     }
 
     /// Enable adaptive request compression (default behaviour).
-    pub fn set_request_compression_auto(&mut self) {
+    pub fn set_request_compression_auto(&self) {
         self.webdav.set_request_compression_auto();
     }
 
     /// Disable request compression entirely.
-    pub fn disable_request_compression(&mut self) {
+    pub fn disable_request_compression(&self) {
         self.webdav.disable_request_compression();
     }
 
@@ -540,6 +569,21 @@ impl CalDavClient {
         WebDavClient::etag_from_headers(headers)
     }
 
+    /// Normalize an ETag by stripping surrounding double quotes.
+    ///
+    /// `"abc"` becomes `abc`, `W/"abc"` becomes `W/abc`; bare values are
+    /// returned unchanged.  Use the normalized value with [`Self::put_if_match`]
+    /// / [`Self::delete_if_match`], which re-add quoting on the wire.
+    pub fn normalize_etag(etag: &str) -> String {
+        WebDavClient::normalize_etag(etag)
+    }
+
+    /// Normalize a sync token by trimming whitespace and stripping
+    /// surrounding double quotes.
+    pub fn normalize_sync_token(token: &str) -> String {
+        WebDavClient::normalize_sync_token(token)
+    }
+
     // ----------- Batch (limited concurrency) -----------
 
     /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
@@ -762,17 +806,16 @@ pub fn map_sync_response(
     items: Vec<DavItem>,
     top_level_sync_token: Option<String>,
 ) -> SyncResponse {
-    // Prioritize top-level sync-token (RFC 6578), then headers, then per-item tokens
     let mut sync_token = top_level_sync_token.or_else(|| {
         headers
             .get("Sync-Token")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .map(normalize_sync_token)
     });
     let mut out = Vec::new();
 
     for mut item in items {
-        // Capture per-item sync token if we don't have a top-level one (fallback)
+        // Already normalized by the streaming parser's normalize_sync_token.
         if item.sync_token.is_some() && sync_token.is_none() {
             sync_token = item.sync_token.clone();
         }

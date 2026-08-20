@@ -675,6 +675,24 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! ## Advanced configuration with the builder
+//!
+//! For production use, the builder pattern gives you full control over
+//! timeouts, connection pool, TLS, proxy, and auth:
+//!
+//! ```no_run
+//! use fast_dav_rs::CalDavClient;
+//! use std::time::Duration;
+//!
+//! let client = CalDavClient::builder("https://cal.example.com/dav/")
+//!     .bearer_token("ya29.token...")
+//!     .timeout(Duration::from_secs(30))
+//!     .user_agent("MyApp/1.0")
+//!     .pool_max_idle_per_host(10)
+//!     .build()?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 pub mod caldav;
 pub mod carddav;
 pub mod common;
@@ -684,6 +702,7 @@ pub mod webdav;
 pub use error::{Error, Result};
 
 // Backwards-compatible re-exports
+pub use caldav::builder::CalDavClientBuilder;
 pub use caldav::streaming::{
     parse_multistatus_bytes, parse_multistatus_bytes_visit, parse_multistatus_stream,
     parse_multistatus_stream_visit, parse_multistatus_stream_visit_with_timeout,
@@ -694,11 +713,14 @@ pub use caldav::{
     build_calendar_multiget_body, build_calendar_query_body, build_sync_collection_body,
     map_calendar_list, map_calendar_objects, map_sync_response,
 };
+pub use carddav::builder::CardDavClientBuilder;
 pub use carddav::{AddressBookInfo, AddressObject, CardDavClient};
 pub use common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, detect_encoding,
     detect_encodings, detect_request_compression_preference,
 };
+pub use webdav::builder::WebDavClientBuilder;
+pub use webdav::{RequestCompressionMode, WebDavClient};
 
 // Legacy module paths kept for compatibility with existing imports.
 pub mod client {

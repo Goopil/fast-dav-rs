@@ -226,12 +226,12 @@ fn test_map_calendar_list_filters_calendars() {
 fn test_map_calendar_objects() {
     let mut item1 = fast_dav_rs::types::DavItem::new();
     item1.href = "/calendars/user/event1.ics".to_string();
-    item1.etag = Some("\"abc123\"".to_string());
+    item1.etag = Some("abc123".to_string());
     item1.calendar_data = Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string());
 
     let mut item2 = fast_dav_rs::types::DavItem::new();
     item2.href = "/calendars/user/event2.ics".to_string();
-    item2.etag = Some("\"def456\"".to_string());
+    item2.etag = Some("def456".to_string());
     item2.status = Some("HTTP/1.1 404 Not Found".to_string());
 
     let items = vec![item1.clone(), item2.clone()];
@@ -239,13 +239,13 @@ fn test_map_calendar_objects() {
 
     assert_eq!(objects.len(), 2);
     assert_eq!(objects[0].href, "/calendars/user/event1.ics");
-    assert_eq!(objects[0].etag, Some("\"abc123\"".to_string()));
+    assert_eq!(objects[0].etag, Some("abc123".to_string()));
     assert_eq!(
         objects[0].calendar_data,
         Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string())
     );
     assert_eq!(objects[1].href, "/calendars/user/event2.ics");
-    assert_eq!(objects[1].etag, Some("\"def456\"".to_string()));
+    assert_eq!(objects[1].etag, Some("def456".to_string()));
     assert_eq!(
         objects[1].status,
         Some("HTTP/1.1 404 Not Found".to_string())
@@ -262,7 +262,7 @@ fn test_map_sync_response() {
 
     let mut item1 = fast_dav_rs::types::DavItem::new();
     item1.href = "/calendars/user/event1.ics".to_string();
-    item1.etag = Some("\"abc123\"".to_string());
+    item1.etag = Some("abc123".to_string());
     item1.calendar_data = Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string());
 
     let mut item2 = fast_dav_rs::types::DavItem::new();
@@ -285,7 +285,7 @@ fn test_map_sync_response() {
 
     // Check the first item (regular item with data)
     assert_eq!(response.items[0].href, "/calendars/user/event1.ics");
-    assert_eq!(response.items[0].etag, Some("\"abc123\"".to_string()));
+    assert_eq!(response.items[0].etag, Some("abc123".to_string()));
     assert!(!response.items[0].is_deleted); // Should not be deleted
 
     // Check second item (deleted item)
@@ -364,4 +364,85 @@ async fn test_calendar_query_timerange_rejects_malformed_end() {
         .await
         .expect_err("malformed end must be rejected before any request");
     assert!(err.to_string().contains("invalid calendar-query end"));
+}
+
+#[test]
+fn builder_propagates_options() {
+    use fast_dav_rs::RequestCompressionMode;
+    use std::time::Duration;
+
+    let client = CalDavClient::builder("https://cal.example.com/dav/")
+        .basic_auth("user", "pass")
+        .timeout(Duration::from_secs(3))
+        .pool_max_idle_per_host(8)
+        .request_compression(RequestCompressionMode::Force(
+            fast_dav_rs::ContentEncoding::Gzip,
+        ))
+        .build()
+        .expect("build succeeds");
+
+    assert_eq!(
+        client.request_compression_mode(),
+        RequestCompressionMode::Force(fast_dav_rs::ContentEncoding::Gzip)
+    );
+    assert_eq!(
+        client.request_compression(),
+        fast_dav_rs::ContentEncoding::Gzip
+    );
+}
+
+#[test]
+fn builder_invalid_url() {
+    let result = CalDavClient::builder("not a valid url").build();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder_bearer_auth() {
+    let client = CalDavClient::builder("https://cal.example.com/dav/")
+        .bearer_token("test-token")
+        .build()
+        .expect("build succeeds");
+    // We can't directly access the auth header from CalDavClient,
+    // but we verified it compiles and builds successfully.
+    let _ = client;
+}
+
+#[test]
+fn clone_shares_compression_mode() {
+    use fast_dav_rs::RequestCompressionMode;
+
+    let client_a = CalDavClient::builder("https://cal.example.com/dav/")
+        .build()
+        .unwrap();
+    let client_b = client_a.clone();
+
+    client_a.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    assert_eq!(
+        client_b.request_compression_mode(),
+        RequestCompressionMode::Disabled
+    );
+}
+
+#[test]
+fn sync_token_round_trip_unquoted_in_request_body() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "Sync-Token",
+        r#""http://example.com/sync/99""#.parse().unwrap(),
+    );
+    let sync = fast_dav_rs::client::map_sync_response(&headers, Vec::new(), None);
+    let normalized = sync.sync_token.expect("sync token present");
+    assert_eq!(normalized, "http://example.com/sync/99");
+
+    let body = fast_dav_rs::client::build_sync_collection_body(Some(&normalized), None, true);
+    assert!(
+        body.contains("<D:sync-token>http://example.com/sync/99</D:sync-token>"),
+        "sync-token should appear unquoted in request body, got: {body}"
+    );
+    assert!(
+        !body.contains("<D:sync-token>\""),
+        "sync-token should not have extra quotes in request body"
+    );
 }

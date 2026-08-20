@@ -356,6 +356,57 @@ so you can override the default timeout for specific requests.
 `propfind_many` and `report_many` accept a `max_concurrency` parameter to bound the number of in-flight
 requests while preserving input order in the result list.
 
+## Advanced Configuration
+
+For production use, use the builder pattern to configure auth, timeouts,
+connection pool, TLS, proxy, and more:
+
+### Basic auth + timeout + pool
+
+```rust
+use fast_dav_rs::CalDavClient;
+use std::time::Duration;
+
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .basic_auth("user", "pass")
+    .timeout(Duration::from_secs(30))
+    .user_agent("MyApp/1.0")
+    .pool_max_idle_per_host(10)
+    .build()?;
+```
+
+### Bearer/OAuth 2.0 token
+
+```rust
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .bearer_token("ya29.token...")
+    .build()?;
+```
+
+### Proxy + custom CA for debugging
+
+Route traffic through a debugging proxy (Proxyman/Charles/mitmproxy)
+and trust its MITM CA — works on Android non-rooted and iOS/macOS alike:
+
+```rust
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .basic_auth("user", "pass")
+    .proxy("http://127.0.0.1:9090")
+    .proxy_basic_auth("proxyuser", "proxypass")
+    .extra_root_certs_pem(vec![std::fs::read("/path/proxyman-ca.pem")?])
+    .build()?;
+```
+
+### Force HTTP/1.1
+
+For servers or proxies that misbehave with HTTP/2:
+
+```rust
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .force_http1(true)
+    .build()?;
+```
+
 ## Security
 
 Basic credentials are sent as an `Authorization: Basic` header on every request. Base64 is an
