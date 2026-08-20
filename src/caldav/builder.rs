@@ -26,7 +26,7 @@ impl_dav_builder! {
     ///     .pool_max_idle_per_host(8)
     ///     .request_compression(RequestCompressionMode::Auto)
     ///     .build()?;
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), fast_dav_rs::Error>(())
     /// ```
     pub struct CalDavClientBuilder;
     client = CalDavClient;

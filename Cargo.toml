@@ -14,7 +14,6 @@ readme = "README.md"
 include = ["Cargo.toml", "LICENSE", "README.md", "src/**/*.rs"]
 
 [dependencies]
-anyhow = "1"
 base64 = "0.23"
 rustls = "0.23"
 rustls-pemfile = "2"
@@ -32,6 +31,7 @@ async-compression = { version = "0.4", features = ["tokio", "brotli", "gzip", "z
 hyper-util = { version = "0.1", features = ["client", "http1", "http2", "tokio", "client-proxy"] }
 http-body-util = "0.1"
 zeroize = "1"
+thiserror = { version = "2", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

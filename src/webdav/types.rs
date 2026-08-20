@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::Result;
 
 /// WebDAV Depth
 #[derive(Copy, Clone)]
