@@ -96,7 +96,7 @@ impl CardDavClient {
     ///     .basic_auth("user", "pass")
     ///     .timeout(Duration::from_secs(30))
     ///     .build()?;
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), fast_dav_rs::Error>(())
     /// ```
     pub fn builder(base_url: impl Into<String>) -> CardDavClientBuilder {
         CardDavClientBuilder::new(base_url)

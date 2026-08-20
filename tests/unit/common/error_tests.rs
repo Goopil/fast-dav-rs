@@ -167,7 +167,10 @@ fn other_without_source_has_no_chain() {
 #[test]
 fn tls_error_preserves_source_chain() {
     let source = std::io::Error::other("PEM parse failed");
-    let error = Error::tls("failed to parse PEM certificate", source);
+    let error = Error::Tls {
+        context: "failed to parse PEM certificate".to_owned(),
+        source: Some(Box::new(source)),
+    };
 
     assert!(matches!(
         &error,
@@ -190,7 +193,10 @@ fn tls_error_preserves_source_chain() {
 #[test]
 fn tls_error_display_includes_context() {
     let source = std::io::Error::other("bad cert");
-    let error = Error::tls("rustls config", source);
+    let error = Error::Tls {
+        context: "rustls config".to_owned(),
+        source: Some(Box::new(source)),
+    };
     let display = error.to_string();
     assert!(display.contains("rustls config"), "display: {display}");
 }

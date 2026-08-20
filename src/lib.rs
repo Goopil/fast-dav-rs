@@ -691,7 +691,7 @@
 //!     .user_agent("MyApp/1.0")
 //!     .pool_max_idle_per_host(10)
 //!     .build()?;
-//! # Ok::<(), anyhow::Error>(())
+//! # Ok::<(), fast_dav_rs::Error>(())
 //! ```
 pub mod caldav;
 pub mod carddav;

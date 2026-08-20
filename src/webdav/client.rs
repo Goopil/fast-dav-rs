@@ -170,7 +170,7 @@ impl WebDavClient {
     ///     .basic_auth("user", "pass")
     ///     .timeout(Duration::from_secs(10))
     ///     .build()?;
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), fast_dav_rs::Error>(())
     /// ```
     pub fn builder(base_url: impl Into<String>) -> WebDavClientBuilder {
         WebDavClientBuilder::new(base_url)

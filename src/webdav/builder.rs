@@ -1,7 +1,6 @@
 //! Builder for [`WebDavClient`] — configure auth, timeout, connection pool,
 //! TLS, proxy, and request compression before the client is constructed.
 
-use anyhow::{Result, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use bytes::Bytes;
@@ -20,6 +19,7 @@ use zeroize::Zeroize;
 
 use crate::common::http::{HyperClient, MaybeProxied};
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
+use crate::{Error, Result};
 
 /// Builder for [`WebDavClient`].
 ///
@@ -38,7 +38,7 @@ use crate::webdav::client::{RequestCompressionMode, WebDavClient};
 ///     .pool_max_idle_per_host(8)
 ///     .request_compression(RequestCompressionMode::Auto)
 ///     .build()?;
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), fast_dav_rs::Error>(())
 /// ```
 pub struct WebDavClientBuilder {
     base_url: String,
@@ -252,15 +252,19 @@ impl WebDavClientBuilder {
     /// certificates cannot be parsed.
     pub fn build(mut self) -> Result<WebDavClient> {
         if self.timeout.is_zero() {
-            return Err(anyhow!("timeout must be > 0"));
+            return Err(Error::InvalidInput("timeout must be > 0".to_owned()));
         }
         if self.pool_max_idle_per_host == 0 {
-            return Err(anyhow!("pool_max_idle_per_host must be > 0"));
+            return Err(Error::InvalidInput(
+                "pool_max_idle_per_host must be > 0".to_owned(),
+            ));
         }
         if let Some(token) = &self.bearer_token
             && token.is_empty()
         {
-            return Err(anyhow!("bearer_token must not be empty"));
+            return Err(Error::InvalidInput(
+                "bearer_token must not be empty".to_owned(),
+            ));
         }
         if let Some(token) = &self.bearer_token
             && !token.bytes().all(|b| {
@@ -268,38 +272,37 @@ impl WebDavClientBuilder {
                     || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
             })
         {
-            return Err(anyhow!(
+            return Err(Error::InvalidInput(
                 "bearer_token contains invalid characters (allowed: A-Z a-z 0-9 - . _ ~ + / =)"
+                    .to_owned(),
             ));
         }
         if let (Some(user), Some(pass)) = (&self.basic_user, &self.basic_pass)
             && (user.is_empty() || pass.is_empty())
         {
-            return Err(anyhow!(
-                "basic_auth requires both user and pass to be non-empty"
+            return Err(Error::InvalidInput(
+                "basic_auth requires both user and pass to be non-empty".to_owned(),
             ));
         }
         if self.proxy.is_none()
             && (self.proxy_basic_user.is_some() || self.proxy_basic_pass.is_some())
         {
-            return Err(anyhow!(
-                "proxy_basic_auth requires a proxy to be set via .proxy()"
+            return Err(Error::InvalidInput(
+                "proxy_basic_auth requires a proxy to be set via .proxy()".to_owned(),
             ));
         }
         if let (Some(user), Some(pass)) = (&self.proxy_basic_user, &self.proxy_basic_pass)
             && (user.is_empty() || pass.is_empty())
         {
-            return Err(anyhow!(
-                "proxy_basic_auth requires both user and pass to be non-empty"
+            return Err(Error::InvalidInput(
+                "proxy_basic_auth requires both user and pass to be non-empty".to_owned(),
             ));
         }
 
         let base: Uri = self
             .base_url
             .parse()
-            .map_err(|e: hyper::http::uri::InvalidUri| {
-                anyhow!("invalid URL {:?}: {e}", self.base_url)
-            })?;
+            .map_err(|source| Error::invalid_url(&self.base_url, source))?;
 
         let auth_header = build_auth_header(
             self.basic_user.take(),
@@ -308,10 +311,7 @@ impl WebDavClientBuilder {
         )?;
 
         let user_agent = match self.user_agent.take() {
-            Some(ua) => Some(
-                header::HeaderValue::from_str(&ua)
-                    .map_err(|e| anyhow!("invalid User-Agent header value: {e}"))?,
-            ),
+            Some(ua) => Some(header::HeaderValue::from_str(&ua)?),
             None => None,
         };
 
@@ -473,7 +473,7 @@ fn build_rustls_config(
 
     for pem in extra_root_certs_pem {
         for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
-            let cert = cert.map_err(|e| anyhow!("failed to parse PEM certificate: {e}"))?;
+            let cert = cert.map_err(|e| Error::tls("failed to parse PEM certificate", e))?;
             let _ = roots.add(cert);
         }
     }
@@ -518,11 +518,7 @@ fn build_hyper_client(cfg: HyperClientConfig) -> Result<HyperClient> {
             let mut tunnel = Tunnel::new(proxy_uri, http);
             if let (Some(user), Some(pass)) = (cfg.proxy_basic_user, cfg.proxy_basic_pass) {
                 let basic = B64.encode(format!("{user}:{pass}"));
-                tunnel = tunnel.with_auth(
-                    format!("Basic {basic}")
-                        .parse()
-                        .map_err(|e| anyhow!("invalid proxy auth header: {e}"))?,
-                );
+                tunnel = tunnel.with_auth(format!("Basic {basic}").parse()?);
             }
             MaybeProxied::Tunneled(tunnel)
         }
@@ -652,7 +648,7 @@ macro_rules! impl_dav_builder {
                 self
             }
 
-            pub fn build(self) -> anyhow::Result<$client> {
+            pub fn build(self) -> $crate::Result<$client> {
                 Ok(<$client>::from_webdav(self.inner.build()?))
             }
         }
@@ -826,12 +822,12 @@ mod tests {
     fn error_message_contains_timeout_hint() {
         let result = WebDavClient::builder(BASE).timeout(Duration::ZERO).build();
         let err = match result {
-            Err(e) => e.to_string(),
+            Err(e) => e,
             Ok(_) => panic!("expected error"),
         };
         assert!(
-            err.contains("timeout must be > 0"),
-            "error should mention timeout, got: {err}"
+            matches!(err, Error::InvalidInput(ref msg) if msg.contains("timeout must be > 0")),
+            "error should be InvalidInput mentioning timeout, got: {err}"
         );
     }
 
@@ -841,12 +837,12 @@ mod tests {
             .pool_max_idle_per_host(0)
             .build();
         let err = match result {
-            Err(e) => e.to_string(),
+            Err(e) => e,
             Ok(_) => panic!("expected error"),
         };
         assert!(
-            err.contains("pool_max_idle_per_host must be > 0"),
-            "error should mention pool_max_idle_per_host, got: {err}"
+            matches!(err, Error::InvalidInput(ref msg) if msg.contains("pool_max_idle_per_host must be > 0")),
+            "error should be InvalidInput mentioning pool, got: {err}"
         );
     }
 
