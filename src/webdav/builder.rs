@@ -355,6 +355,9 @@ impl Drop for WebDavClientBuilder {
         self.bearer_token.zeroize();
         self.proxy_basic_user.zeroize();
         self.proxy_basic_pass.zeroize();
+        for mut pem in std::mem::take(&mut self.extra_root_certs_pem) {
+            pem.zeroize();
+        }
     }
 }
 
