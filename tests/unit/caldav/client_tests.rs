@@ -86,19 +86,19 @@ fn test_depth_values() {
 #[test]
 fn test_escape_xml_basic() {
     assert_eq!(
-        fast_dav_rs::client::escape_xml("Hello & World"),
+        fast_dav_rs::caldav::client::escape_xml("Hello & World"),
         "Hello &amp; World"
     );
     assert_eq!(
-        fast_dav_rs::client::escape_xml("Test <tag>"),
+        fast_dav_rs::caldav::client::escape_xml("Test <tag>"),
         "Test &lt;tag&gt;"
     );
     assert_eq!(
-        fast_dav_rs::client::escape_xml("\"quotes\""),
+        fast_dav_rs::caldav::client::escape_xml("\"quotes\""),
         "&quot;quotes&quot;"
     );
     assert_eq!(
-        fast_dav_rs::client::escape_xml("'apos'"),
+        fast_dav_rs::caldav::client::escape_xml("'apos'"),
         "&apos;apos&apos;"
     );
 }
@@ -107,18 +107,18 @@ fn test_escape_xml_basic() {
 fn test_escape_xml_complex() {
     let input = "Mix & match <tag attr=\"value\"> with 'quotes'";
     let expected = "Mix &amp; match &lt;tag attr=&quot;value&quot;&gt; with &apos;quotes&apos;";
-    assert_eq!(fast_dav_rs::client::escape_xml(input), expected);
+    assert_eq!(fast_dav_rs::caldav::client::escape_xml(input), expected);
 }
 
 #[test]
 fn test_escape_xml_empty() {
-    assert_eq!(fast_dav_rs::client::escape_xml(""), "");
+    assert_eq!(fast_dav_rs::caldav::client::escape_xml(""), "");
 }
 
 #[test]
 fn test_escape_xml_no_special_chars() {
     assert_eq!(
-        fast_dav_rs::client::escape_xml("normal text"),
+        fast_dav_rs::caldav::client::escape_xml("normal text"),
         "normal text"
     );
 }
@@ -126,14 +126,14 @@ fn test_escape_xml_no_special_chars() {
 #[test]
 fn test_escape_xml_multiple_same_char() {
     assert_eq!(
-        fast_dav_rs::client::escape_xml("&&&&"),
+        fast_dav_rs::caldav::client::escape_xml("&&&&"),
         "&amp;&amp;&amp;&amp;"
     );
 }
 
 #[test]
 fn test_build_calendar_query_body() {
-    let body = fast_dav_rs::client::build_calendar_query_body(
+    let body = fast_dav_rs::caldav::client::build_calendar_query_body(
         "VEVENT",
         Some("20240101T000000Z"),
         Some("20240201T000000Z"),
@@ -147,7 +147,7 @@ fn test_build_calendar_query_body() {
 
 #[test]
 fn test_build_calendar_query_body_no_time_range() {
-    let body = fast_dav_rs::client::build_calendar_query_body("VTODO", None, None, false);
+    let body = fast_dav_rs::caldav::client::build_calendar_query_body("VTODO", None, None, false);
     assert!(!body.contains("<C:calendar-data/>"));
     assert!(body.contains("name=\"VTODO\""));
     assert!(!body.contains("start="));
@@ -156,7 +156,7 @@ fn test_build_calendar_query_body_no_time_range() {
 
 #[test]
 fn test_build_calendar_query_body_partial_time_range() {
-    let body = fast_dav_rs::client::build_calendar_query_body(
+    let body = fast_dav_rs::caldav::client::build_calendar_query_body(
         "VEVENT",
         Some("20240101T000000Z"),
         None,
@@ -169,7 +169,7 @@ fn test_build_calendar_query_body_partial_time_range() {
 
 #[test]
 fn test_build_calendar_multiget_and_escapes() {
-    let body = fast_dav_rs::client::build_calendar_multiget_body(
+    let body = fast_dav_rs::caldav::client::build_calendar_multiget_body(
         vec![
             "/calendars/user/event1.ics",
             "/calendars/user/event&special.ics",
@@ -185,13 +185,14 @@ fn test_build_calendar_multiget_and_escapes() {
 
 #[test]
 fn test_build_calendar_multiget_empty() {
-    let body = fast_dav_rs::client::build_calendar_multiget_body(Vec::<String>::new(), true);
+    let body =
+        fast_dav_rs::caldav::client::build_calendar_multiget_body(Vec::<String>::new(), true);
     assert!(body.is_none());
 }
 
 #[test]
 fn test_build_sync_collection_body() {
-    let body = fast_dav_rs::client::build_sync_collection_body(
+    let body = fast_dav_rs::caldav::client::build_sync_collection_body(
         Some("http://example.com/sync-token-123"),
         Some(50),
         true,
@@ -204,18 +205,18 @@ fn test_build_sync_collection_body() {
 
 #[test]
 fn test_map_calendar_list_filters_calendars() {
-    let mut item = fast_dav_rs::types::DavItem::new();
+    let mut item = fast_dav_rs::caldav::types::DavItem::new();
     item.href = "/calendars/user/personal/".to_string();
     item.displayname = Some("Personal".to_string());
     item.is_calendar = true;
 
-    let mut collection_item = fast_dav_rs::types::DavItem::new();
+    let mut collection_item = fast_dav_rs::caldav::types::DavItem::new();
     collection_item.href = "/calendars/user/collection/".to_string();
     collection_item.displayname = Some("Collection".to_string());
     collection_item.is_collection = true;
 
     let items = vec![item.clone(), collection_item.clone()];
-    let calendars = fast_dav_rs::client::map_calendar_list(items);
+    let calendars = fast_dav_rs::caldav::client::map_calendar_list(items);
 
     assert_eq!(calendars.len(), 1);
     assert_eq!(calendars[0].href, "/calendars/user/personal/");
@@ -224,18 +225,18 @@ fn test_map_calendar_list_filters_calendars() {
 
 #[test]
 fn test_map_calendar_objects() {
-    let mut item1 = fast_dav_rs::types::DavItem::new();
+    let mut item1 = fast_dav_rs::caldav::types::DavItem::new();
     item1.href = "/calendars/user/event1.ics".to_string();
     item1.etag = Some("abc123".to_string());
     item1.calendar_data = Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string());
 
-    let mut item2 = fast_dav_rs::types::DavItem::new();
+    let mut item2 = fast_dav_rs::caldav::types::DavItem::new();
     item2.href = "/calendars/user/event2.ics".to_string();
     item2.etag = Some("def456".to_string());
     item2.status = Some("HTTP/1.1 404 Not Found".to_string());
 
     let items = vec![item1.clone(), item2.clone()];
-    let objects = fast_dav_rs::client::map_calendar_objects(items);
+    let objects = fast_dav_rs::caldav::client::map_calendar_objects(items);
 
     assert_eq!(objects.len(), 2);
     assert_eq!(objects[0].href, "/calendars/user/event1.ics");
@@ -260,22 +261,22 @@ fn test_map_sync_response() {
         "http://example.com/sync-token-456".parse().unwrap(),
     );
 
-    let mut item1 = fast_dav_rs::types::DavItem::new();
+    let mut item1 = fast_dav_rs::caldav::types::DavItem::new();
     item1.href = "/calendars/user/event1.ics".to_string();
     item1.etag = Some("abc123".to_string());
     item1.calendar_data = Some("BEGIN:VCALENDAR...END:VCALENDAR".to_string());
 
-    let mut item2 = fast_dav_rs::types::DavItem::new();
+    let mut item2 = fast_dav_rs::caldav::types::DavItem::new();
     item2.href = "/calendars/user/event2.ics".to_string();
     item2.status = Some("HTTP/1.1 404 Not Found".to_string());
 
-    let mut collection_item = fast_dav_rs::types::DavItem::new();
+    let mut collection_item = fast_dav_rs::caldav::types::DavItem::new();
     collection_item.href = "/calendars/user/subcalendar/".to_string();
     collection_item.sync_token = Some("http://example.com/sync-token-789".to_string());
     collection_item.is_collection = true;
 
     let items = vec![item1, item2, collection_item];
-    let response = fast_dav_rs::client::map_sync_response(&headers, items, None);
+    let response = fast_dav_rs::caldav::client::map_sync_response(&headers, items, None);
 
     assert_eq!(
         response.sync_token,
@@ -432,11 +433,12 @@ fn sync_token_round_trip_unquoted_in_request_body() {
         "Sync-Token",
         r#""http://example.com/sync/99""#.parse().unwrap(),
     );
-    let sync = fast_dav_rs::client::map_sync_response(&headers, Vec::new(), None);
+    let sync = fast_dav_rs::caldav::client::map_sync_response(&headers, Vec::new(), None);
     let normalized = sync.sync_token.expect("sync token present");
     assert_eq!(normalized, "http://example.com/sync/99");
 
-    let body = fast_dav_rs::client::build_sync_collection_body(Some(&normalized), None, true);
+    let body =
+        fast_dav_rs::caldav::client::build_sync_collection_body(Some(&normalized), None, true);
     assert!(
         body.contains("<D:sync-token>http://example.com/sync/99</D:sync-token>"),
         "sync-token should appear unquoted in request body, got: {body}"

@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use fast_dav_rs::streaming::*;
+use fast_dav_rs::caldav::streaming::*;
 use fast_dav_rs::{Error, Result};
 use http_body_util::Full;
 use hyper::Request;

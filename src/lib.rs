@@ -723,18 +723,34 @@ pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{RequestCompressionMode, WebDavClient};
 
 // Legacy module paths kept for compatibility with existing imports.
+#[deprecated(
+    since = "0.8.0",
+    note = "use `fast_dav_rs::caldav::client` directly instead"
+)]
 pub mod client {
     pub use crate::caldav::client::*;
 }
 
+#[deprecated(
+    since = "0.8.0",
+    note = "use `fast_dav_rs::caldav::streaming` directly instead"
+)]
 pub mod streaming {
     pub use crate::caldav::streaming::*;
 }
 
+#[deprecated(
+    since = "0.8.0",
+    note = "use `fast_dav_rs::caldav::types` directly instead"
+)]
 pub mod types {
     pub use crate::caldav::types::*;
 }
 
+#[deprecated(
+    since = "0.8.0",
+    note = "use `fast_dav_rs::common::compression` directly instead"
+)]
 pub mod compression {
     pub use crate::common::compression::*;
 }

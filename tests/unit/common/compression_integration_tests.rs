@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use fast_dav_rs::compression::*;
+use fast_dav_rs::common::compression::*;
 
 #[tokio::test]
 async fn test_compress_payload_identity() {
