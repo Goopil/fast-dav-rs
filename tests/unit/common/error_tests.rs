@@ -91,9 +91,14 @@ fn from_invalid_method() {
 
 #[test]
 fn from_http_error() {
-    let uri_result: std::result::Result<hyper::http::uri::Uri, _> = "bad uri with spaces".parse();
-    let uri_err = uri_result.unwrap_err();
-    let http_err: hyper::http::Error = uri_err.into();
+    // hyper::http::Error::from(InvalidUriParts) is the most direct path.
+    // InvalidUriParts is produced when parts are inconsistent (e.g. scheme
+    // set but authority missing for an absolute URI).
+    let mut parts = hyper::http::uri::Parts::default();
+    parts.scheme = Some("http".parse().unwrap());
+    // No authority — this is invalid for an absolute URI.
+    let invalid_uri = hyper::http::uri::Uri::from_parts(parts).unwrap_err();
+    let http_err: hyper::http::Error = invalid_uri.into();
     let error: Error = http_err.into();
     assert!(matches!(error, Error::Http(_)));
 }
