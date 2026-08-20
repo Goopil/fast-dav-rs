@@ -298,6 +298,16 @@ impl WebDavClientBuilder {
                 "proxy_basic_auth requires both user and pass to be non-empty".to_owned(),
             ));
         }
+        if let (Some(user), Some(pass)) = (&self.proxy_basic_user, &self.proxy_basic_pass) {
+            for (label, value) in [("user", user.as_str()), ("pass", pass.as_str())] {
+                if value.bytes().any(|b| b <= 0x20 || b == 0x7F) {
+                    return Err(Error::InvalidInput(format!(
+                        "proxy_basic_auth {label} contains control or whitespace characters \
+                         which are not allowed in HTTP header values"
+                    )));
+                }
+            }
+        }
 
         let base: Uri = self
             .base_url
@@ -659,6 +669,7 @@ macro_rules! impl_dav_builder {
 mod tests {
     use super::*;
     use crate::common::compression::ContentEncoding;
+    use std::str::FromStr;
 
     const BASE: &str = "https://dav.example.com/user01/";
 
@@ -799,6 +810,38 @@ mod tests {
             .proxy_basic_auth("user", "pass")
             .build();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn proxy_basic_auth_with_newline_user_errors() {
+        let result = WebDavClient::builder(BASE)
+            .proxy(Uri::from_str("http://127.0.0.1:9090").unwrap())
+            .proxy_basic_auth("user\ninjected", "pass")
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidInput(ref msg) if msg.contains("proxy_basic_auth")),
+            "should be InvalidInput about proxy_basic_auth, got: {err}"
+        );
+    }
+
+    #[test]
+    fn proxy_basic_auth_with_newline_pass_errors() {
+        let result = WebDavClient::builder(BASE)
+            .proxy(Uri::from_str("http://127.0.0.1:9090").unwrap())
+            .proxy_basic_auth("user", "pass\ninjected")
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidInput(ref msg) if msg.contains("proxy_basic_auth")),
+            "should be InvalidInput about proxy_basic_auth, got: {err}"
+        );
     }
 
     #[test]
