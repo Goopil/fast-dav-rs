@@ -1,6 +1,7 @@
 use fast_dav_rs::{CalDavClient, Error, Result, WebDavClient};
 use hyper::StatusCode;
 use hyper::{HeaderMap, Method};
+use std::error::Error as _;
 use std::time::Duration;
 
 #[test]
