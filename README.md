@@ -197,6 +197,7 @@ fn is_retryable(error: &Error) -> bool {
 | `XmlAttribute`       | Parsing an XML attribute failed                             |
 | `Io`                 | An I/O operation failed                                     |
 | `Utf8`               | Decoding UTF-8 text failed                                   |
+| `Tls`                | TLS, certificate, or PEM parsing failed                     |
 | `Other`              | User callback error or error that doesn't fit another variant |
 
 ### Migrating from `anyhow`

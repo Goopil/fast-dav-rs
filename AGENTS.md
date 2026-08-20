@@ -93,11 +93,15 @@ src/
 - Use `tokio::sync::{Mutex, Semaphore}` for async synchronization
 
 ### Error Handling
-- Return `Result<T>` from public functions
-- Use `anyhow::anyhow!()` for creating errors with context
-- Use `map_err()` to add context to external library errors
-- For user-facing errors, provide clear, actionable messages
-- Use `?` operator extensively for error propagation
+- Return `Result<T>` (aliased to `Result<T, Error>`) from public functions
+- Use the `Error` enum from `src/error.rs` for all error creation
+- Use `Error::InvalidInput` for validation errors (ETag, component names, config)
+- Use `Error::UnexpectedStatus { operation, status }` for HTTP status mismatches
+- Use `Error::Timeout { limit }` for timeout errors
+- Use `Error::Tls` for TLS/certificate/PEM errors
+- Use `Error::other()` or `Error::with_source()` for catch-all errors
+- Use `?` operator extensively for error propagation — `#[from]` conversions handle most library errors automatically
+- The `Error` enum is `#[non_exhaustive]` — always include a wildcard arm when matching
 
 ### Naming Conventions
 - **Structs**: `PascalCase` (e.g., `CalDavClient`, `WebDavClient`)
