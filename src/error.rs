@@ -164,18 +164,32 @@ pub enum Error {
     /// native certificate store errors. The `context` string describes
     /// where or why the error occurred; the underlying cause is
     /// accessible via `source()`.
+    ///
+    /// `source` is `None` when the error has no underlying cause — for
+    /// example, when native certificate loading returns no roots and we
+    /// fall back to the bundled webpki roots without a specific error.
+    /// `source` is `Some` when wrapping a concrete error from rustls,
+    /// `rustls_pemfile`, or `rustls_native_certs`.
     #[error("TLS error: {context}")]
     #[non_exhaustive]
     Tls {
         /// Human-readable context describing the TLS failure.
         context: String,
-        /// The underlying error, if any.
+        /// The underlying error, if any. `None` when the error has no
+        /// deeper cause (e.g. "no roots found" without a specific error).
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
     /// An error returned by user-provided callback code or when wrapping an
     /// error that does not fit any other variant.
+    ///
+    /// # When to use this variant
+    ///
+    /// This is an **escape-hatch** for cases that do not fit a specific
+    /// variant — primarily errors from user-provided callbacks. If a new
+    /// specific failure mode becomes common, prefer adding a dedicated
+    /// variant over relying on `Other`.
     ///
     /// The `context` string is used for `Display`; the underlying `source` is
     /// accessible only via [`std::error::Error::source`]. This intentionally
@@ -299,6 +313,9 @@ impl Error {
 
     /// Wrap an error message originating outside the DAV protocol stack.
     ///
+    /// This is an **escape-hatch** for errors that do not fit a specific
+    /// [`Error`] variant. Prefer a dedicated variant when one exists.
+    ///
     /// Use [`Error::with_source`] when you have an underlying error to chain.
     pub fn other(message: impl Into<String>) -> Self {
         Self::Other {
@@ -308,6 +325,9 @@ impl Error {
     }
 
     /// Wrap an error with a context message and an underlying source.
+    ///
+    /// This is an **escape-hatch** for errors that do not fit a specific
+    /// [`Error`] variant. Prefer a dedicated variant when one exists.
     ///
     /// The context is used for `Display`; the source is returned by
     /// [`std::error::Error::source`] so the full error chain is preserved.
