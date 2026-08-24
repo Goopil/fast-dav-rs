@@ -139,3 +139,131 @@ fn test_parse_multistatus_unexpected_elements() {
     assert_eq!(items[0].href, "/dav/user01/contact1.vcf");
     assert_eq!(items[0].etag.as_deref(), Some("etag-1"));
 }
+
+#[test]
+fn test_parse_address_data_type_without_version() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-address-data>
+          <C:address-data-type content-type="text/vcard"/>
+        </C:supported-address-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].supported_address_data,
+        vec!["text/vcard".to_string()]
+    );
+}
+
+#[test]
+fn test_parse_address_data_type_empty_version_ignored() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-address-data>
+          <C:address-data-type content-type="text/vcard" version=""/>
+        </C:supported-address-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].supported_address_data,
+        vec!["text/vcard".to_string()]
+    );
+}
+
+#[test]
+fn test_parse_address_data_type_empty_content_type_skipped() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-address-data>
+          <C:address-data-type content-type="" version="4.0"/>
+        </C:supported-address-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert!(items[0].supported_address_data.is_empty());
+}
+
+#[test]
+fn test_parse_address_data_type_duplicate_not_duplicated() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-address-data>
+          <C:address-data-type content-type="text/vcard" version="4.0"/>
+          <C:address-data-type content-type="text/vcard" version="4.0"/>
+        </C:supported-address-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].supported_address_data,
+        vec!["text/vcard;version=4.0".to_string()]
+    );
+}
+
+#[test]
+fn test_parse_empty_address_data_text() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:address-data></C:address-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert!(items[0].address_data.is_none());
+}

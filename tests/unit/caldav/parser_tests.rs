@@ -179,3 +179,62 @@ fn parse_multistatus_normalizes_quoted_sync_token() {
         Some("item-token-quoted")
     );
 }
+
+#[test]
+fn parse_multistatus_preserves_calendar_timezone() {
+    let xml = r#"
+<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/cal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:calendar-timezone><![CDATA[BEGIN:VTIMEZONE
+END:VTIMEZONE
+]]></C:calendar-timezone>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>
+"#;
+
+    let result = parse_multistatus_bytes(xml.as_bytes()).expect("xml parsing succeeds");
+    assert_eq!(result.items.len(), 1);
+
+    let tz = result.items[0]
+        .calendar_timezone
+        .as_ref()
+        .expect("calendar timezone present");
+    assert!(tz.contains("BEGIN:VTIMEZONE"));
+    assert!(tz.contains("END:VTIMEZONE"));
+}
+
+#[test]
+fn parse_multistatus_preserves_multiline_calendar_timezone() {
+    let xml = r#"
+<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/cal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:calendar-timezone><![CDATA[BEGIN:VTIMEZONE
+]]><![CDATA[END:VTIMEZONE
+]]></C:calendar-timezone>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>
+"#;
+
+    let result = parse_multistatus_bytes(xml.as_bytes()).expect("xml parsing succeeds");
+    assert_eq!(result.items.len(), 1);
+
+    let tz = result.items[0]
+        .calendar_timezone
+        .as_ref()
+        .expect("calendar timezone present");
+    assert_eq!(tz, "BEGIN:VTIMEZONE\nEND:VTIMEZONE\n");
+}

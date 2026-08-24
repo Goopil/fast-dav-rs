@@ -202,3 +202,29 @@ impl CommonParser {
         path_ends_with(&self.stack, needle)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn on_end_mismatched_closing_tag() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        let err = parser.on_end(b"D:prop").unwrap_err();
+        assert!(
+            err.to_string().contains("does not match"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn on_end_without_opening_tag() {
+        let mut parser = CommonParser::new();
+        let err = parser.on_end(b"D:response").unwrap_err();
+        assert!(
+            err.to_string().contains("without a matching opening tag"),
+            "unexpected error: {err}"
+        );
+    }
+}

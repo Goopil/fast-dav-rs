@@ -1156,4 +1156,154 @@ mod tests {
     fn test_normalize_sync_token_trims_whitespace() {
         assert_eq!(normalize_sync_token(r#"  "token"  "#), "token");
     }
+
+    #[test]
+    fn test_if_match_wildcard() {
+        let val = if_match_header_value("*").unwrap();
+        assert_eq!(val.to_str().unwrap(), "*");
+    }
+
+    #[test]
+    fn test_if_match_quoted_strong_etag() {
+        let val = if_match_header_value(r#""abc123""#).unwrap();
+        assert_eq!(val.to_str().unwrap(), r#""abc123""#);
+    }
+
+    #[test]
+    fn test_if_match_unquoted_gets_quoted() {
+        let val = if_match_header_value("abc123").unwrap();
+        assert_eq!(val.to_str().unwrap(), r#""abc123""#);
+    }
+
+    #[test]
+    fn test_if_match_weak_quoted() {
+        let val = if_match_header_value(r#"W/"abc""#).unwrap();
+        assert_eq!(val.to_str().unwrap(), r#"W/"abc""#);
+    }
+
+    #[test]
+    fn test_if_match_weak_unquoted_gets_quoted() {
+        let val = if_match_header_value("W/abc").unwrap();
+        assert_eq!(val.to_str().unwrap(), r#"W/"abc""#);
+    }
+
+    #[test]
+    fn test_if_match_trims_whitespace() {
+        let val = if_match_header_value("  abc  ").unwrap();
+        assert_eq!(val.to_str().unwrap(), r#""abc""#);
+    }
+
+    #[test]
+    fn test_if_match_empty_rejected() {
+        let err = if_match_header_value("").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::Empty,
+                source: None
+            }
+        ));
+    }
+
+    #[test]
+    fn test_if_match_whitespace_only_rejected() {
+        let err = if_match_header_value("   ").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::Empty,
+                source: None
+            }
+        ));
+    }
+
+    #[test]
+    fn test_validate_opaque_tag_empty() {
+        let err = validate_opaque_tag("").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::InvalidFormat,
+                source: None
+            }
+        ));
+    }
+
+    #[test]
+    fn test_validate_opaque_tag_contains_double_quote() {
+        let err = validate_opaque_tag(r#"abc"def"#).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::InvalidFormat,
+                source: None
+            }
+        ));
+    }
+
+    #[test]
+    fn test_validate_opaque_tag_invalid_characters() {
+        let err = validate_opaque_tag("abc\ndef").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::InvalidCharacters,
+                source: None
+            }
+        ));
+    }
+
+    #[test]
+    fn test_validate_opaque_tag_valid() {
+        assert!(validate_opaque_tag("abc123").is_ok());
+        assert!(validate_opaque_tag("W/abc").is_ok());
+    }
+
+    #[test]
+    fn test_is_valid_entity_tag_strong_quoted() {
+        assert!(is_valid_entity_tag(r#""abc""#));
+    }
+
+    #[test]
+    fn test_is_valid_entity_tag_weak_quoted() {
+        assert!(is_valid_entity_tag(r#"W/"abc""#));
+    }
+
+    #[test]
+    fn test_is_valid_entity_tag_unquoted_is_invalid() {
+        assert!(!is_valid_entity_tag("abc"));
+    }
+
+    #[test]
+    fn test_is_valid_entity_tag_missing_closing_quote() {
+        assert!(!is_valid_entity_tag(r#""abc"#));
+    }
+
+    #[test]
+    fn test_is_valid_entity_tag_missing_opening_quote() {
+        assert!(!is_valid_entity_tag(r#"abc""#));
+    }
+
+    #[test]
+    fn test_is_valid_entity_tag_invalid_chars_inside_quotes() {
+        assert!(!is_valid_entity_tag("\"ab\nc\""));
+    }
+
+    #[test]
+    fn test_is_etag_character_allowed() {
+        assert!(is_etag_character(b'!'));
+        assert!(is_etag_character(b'#'));
+        assert!(is_etag_character(b'~'));
+        assert!(is_etag_character(b'A'));
+        assert!(is_etag_character(b'0'));
+        assert!(is_etag_character(0x80));
+    }
+
+    #[test]
+    fn test_is_etag_character_disallowed() {
+        assert!(!is_etag_character(b'"'));
+        assert!(!is_etag_character(b' '));
+        assert!(!is_etag_character(0x7F));
+        assert!(!is_etag_character(b'\n'));
+    }
 }
