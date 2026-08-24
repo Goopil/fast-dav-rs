@@ -334,3 +334,14 @@ async fn connection_error_maps_to_connection_variant() {
 // without a real or mock server and is exercised by the e2e test suite
 // against a live DAV server. The test above covers the connect-path, which
 // is the most common retry-relevant case.
+
+#[test]
+fn from_rustls_error() {
+    let rustls_error = rustls::Error::General("test TLS failure".to_owned());
+    let error: Error = rustls_error.into();
+    assert!(matches!(error, Error::TlsRustls(_)));
+    assert!(
+        error.to_string().contains("test TLS failure"),
+        "display should contain the rustls message, got: {error}"
+    );
+}
