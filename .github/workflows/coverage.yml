@@ -43,6 +43,11 @@ jobs:
         with:
           tool: cargo-tarpaulin
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Generate coverage (unit tests only)
         run: |
           cargo tarpaulin \
@@ -52,12 +57,24 @@ jobs:
             --engine llvm \
             -- --test-threads 4
 
+      - name: Run tests with JUnit XML output
+        run: |
+          cargo nextest run --test unit_tests --no-fail-fast --profile ci
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: target/tarpaulin/lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report-type: test_results
+          files: target/nextest/junit.xml
 
       - name: SonarCloud analysis
         uses: SonarSource/sonarqube-scan-action@v8.2.1
