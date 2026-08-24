@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use crate::{Error, Result};
 
 pub fn escape_xml(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -26,18 +26,25 @@ pub fn escape_xml(input: &str) -> String {
 ///
 /// Returns an error when `name` is empty or contains a character outside
 /// `[A-Za-z0-9-]`.
-pub(crate) fn validate_component_name(name: &str) -> Result<()> {
+pub(crate) fn validate_component_name(name: &str, context: &str) -> Result<()> {
     if name.is_empty() {
-        return Err(anyhow!("component name must not be empty"));
+        return Err(Error::InvalidComponentName {
+            context: context.to_owned(),
+            name: name.to_owned(),
+            reason: "component name must not be empty",
+            bad_char: None,
+        });
     }
     if let Some(bad) = name
         .chars()
         .find(|c| !(c.is_ascii_alphanumeric() || *c == '-'))
     {
-        return Err(anyhow!(
-            "component name {name:?} contains invalid character {bad:?}: \
-             only ASCII letters, digits and '-' are allowed (e.g. VEVENT, X-CUSTOM)"
-        ));
+        return Err(Error::InvalidComponentName {
+            context: context.to_owned(),
+            name: name.to_owned(),
+            reason: "only ASCII letters, digits and '-' are allowed (e.g. VEVENT, X-CUSTOM)",
+            bad_char: Some(bad),
+        });
     }
     Ok(())
 }
@@ -53,7 +60,7 @@ pub(crate) fn validate_component_name(name: &str) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error when `value` does not match `YYYYMMDDTHHMMSSZ`.
-pub(crate) fn validate_utc_datetime(value: &str) -> Result<()> {
+pub(crate) fn validate_utc_datetime(value: &str, context: &str) -> Result<()> {
     let bytes = value.as_bytes();
     let structurally_valid = bytes.len() == 16
         && bytes[..8].iter().all(u8::is_ascii_digit)
@@ -61,10 +68,11 @@ pub(crate) fn validate_utc_datetime(value: &str) -> Result<()> {
         && bytes[9..15].iter().all(u8::is_ascii_digit)
         && bytes[15] == b'Z';
     if !structurally_valid {
-        return Err(anyhow!(
-            "invalid UTC date-time {value:?}: expected iCalendar format \
-             YYYYMMDDTHHMMSSZ (e.g. 20240101T000000Z)"
-        ));
+        return Err(Error::InvalidDateTime {
+            context: context.to_owned(),
+            value: value.to_owned(),
+            reason: "expected iCalendar format YYYYMMDDTHHMMSSZ (e.g. 20240101T000000Z)",
+        });
     }
     Ok(())
 }

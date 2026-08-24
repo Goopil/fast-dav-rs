@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use fast_dav_rs::compression::*;
+use fast_dav_rs::common::compression::*;
 use hyper::http::{self, HeaderMap};
 
 #[test]

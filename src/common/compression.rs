@@ -3,7 +3,6 @@
 //! This module provides support for automatic compression and decompression
 //! of HTTP responses using various encoding formats.
 
-use anyhow::Result;
 use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
 use bytes::Bytes;
 use futures::TryStreamExt;
@@ -13,6 +12,8 @@ use hyper::{HeaderMap, header, http};
 use std::io::Cursor;
 use tokio::io::{AsyncBufRead, AsyncReadExt, BufReader};
 use tokio_util::io::StreamReader;
+
+use crate::Result;
 
 /// Supported content encodings for streaming decompression.
 ///
@@ -250,7 +251,7 @@ pub fn decompress_stream(
 /// # Example
 ///
 /// ```
-/// use fast_dav_rs::compression::{compress_payload, ContentEncoding};
+/// use fast_dav_rs::common::compression::{compress_payload, ContentEncoding};
 /// use bytes::Bytes;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -303,7 +304,7 @@ pub async fn compress_payload(data: Bytes, encoding: ContentEncoding) -> Result<
 /// # Example
 ///
 /// ```
-/// use fast_dav_rs::compression::{add_content_encoding, ContentEncoding};
+/// use fast_dav_rs::common::compression::{add_content_encoding, ContentEncoding};
 /// use hyper::HeaderMap;
 ///
 /// let mut headers = HeaderMap::new();

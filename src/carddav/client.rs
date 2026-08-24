@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Response, StatusCode, Uri, header};
@@ -13,6 +12,7 @@ use crate::carddav::types::{
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
 use crate::webdav::types::http_status_code;
+use crate::{Error, Operation, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
 
@@ -62,7 +62,7 @@ impl CardDavClient {
     /// # Example
     /// ```no_run
     /// use fast_dav_rs::CardDavClient;
-    /// use anyhow::Result;
+    /// use fast_dav_rs::Result;
     ///
     /// # async fn example() -> Result<()> {
     /// let client = CardDavClient::new(
@@ -96,7 +96,7 @@ impl CardDavClient {
     ///     .basic_auth("user", "pass")
     ///     .timeout(Duration::from_secs(30))
     ///     .build()?;
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), fast_dav_rs::Error>(())
     /// ```
     pub fn builder(base_url: impl Into<String>) -> CardDavClientBuilder {
         CardDavClientBuilder::new(base_url)
@@ -118,7 +118,7 @@ impl CardDavClient {
     /// ```no_run
     /// use fast_dav_rs::{CardDavClient, ContentEncoding};
     ///
-    /// # fn example() -> anyhow::Result<()> {
+    /// # fn example() -> fast_dav_rs::Result<()> {
     /// let client = CardDavClient::new(
     ///     "https://card.example.com/dav/user01/",
     ///     Some("user01"),
@@ -173,7 +173,7 @@ impl CardDavClient {
     /// # use hyper::{Method, HeaderMap};
     /// # use bytes::Bytes;
     /// #
-    /// # async fn demo(cli: &CardDavClient) -> anyhow::Result<()> {
+    /// # async fn demo(cli: &CardDavClient) -> fast_dav_rs::Result<()> {
     /// let res = cli.send(Method::GET, "Calendars/Personal/", HeaderMap::new(), None, None).await?;
     /// assert!(res.status().is_success());
     /// # Ok(())
@@ -197,7 +197,7 @@ impl CardDavClient {
     /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
     ///
     /// Use this when you want to parse the response on the fly, e.g. with
-    /// [`crate::streaming::parse_multistatus_stream`].
+    /// [`crate::carddav::streaming::parse_multistatus_stream`].
     pub async fn send_stream(
         &self,
         method: Method,
@@ -411,10 +411,10 @@ impl CardDavClient {
 "#;
         let resp = self.propfind("", Depth::Zero, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "PROPFIND current-user-principal failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::PropfindCurrentUserPrincipal,
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         let mut principal = None;
@@ -442,10 +442,10 @@ impl CardDavClient {
 "#;
         let resp = self.propfind(principal_path, Depth::Zero, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "PROPFIND addressbook-home-set failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::PropfindAddressbookHomeSet,
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         let mut homes = Vec::new();
@@ -475,10 +475,10 @@ impl CardDavClient {
 "#;
         let resp = self.propfind(home_set_path, Depth::One, body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "PROPFIND addressbooks failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::PropfindCollections,
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_addressbook_list(parse_multistatus_bytes(&body)?.items))
@@ -495,10 +495,10 @@ impl CardDavClient {
 
         let resp = self.report(addressbook_path, Depth::One, &xml).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT addressbook-query failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::ReportAddressbookQuery,
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
@@ -557,10 +557,10 @@ impl CardDavClient {
 
         let resp = self.report(addressbook_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT addressbook-multiget failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::ReportAddressbookMultiget,
+                status: resp.status(),
+            });
         }
         let body = resp.into_body();
         Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
@@ -578,10 +578,10 @@ impl CardDavClient {
 
         let resp = self.report(addressbook_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "REPORT sync-collection failed with {}",
-                resp.status()
-            ));
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::ReportSyncCollection,
+                status: resp.status(),
+            });
         }
         let headers = resp.headers().clone();
         let body = resp.into_body();
@@ -660,7 +660,7 @@ impl CardDavClient {
     ///
     /// ```no_run
     /// # use fast_dav_rs::CardDavClient;
-    /// # use anyhow::Result;
+    /// # use fast_dav_rs::Result;
     /// #
     /// # async fn example() -> Result<()> {
     /// # let client = CardDavClient::new("https://example.com/", None, None)?;
@@ -678,7 +678,7 @@ impl CardDavClient {
 
     /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
     ///
-    /// Combine with [`crate::streaming::parse_multistatus_stream`].
+    /// Combine with [`crate::carddav::streaming::parse_multistatus_stream`].
     pub async fn propfind_stream(
         &self,
         path: &str,
@@ -689,7 +689,7 @@ impl CardDavClient {
     }
     /// Streaming variant of `REPORT`, returning the non-aggregated body.
     ///
-    /// Combine with [`crate::streaming::parse_multistatus_stream`].
+    /// Combine with [`crate::carddav::streaming::parse_multistatus_stream`].
     pub async fn report_stream(
         &self,
         path: &str,

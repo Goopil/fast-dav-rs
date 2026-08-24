@@ -2,7 +2,7 @@ use crate::carddav::types::DavItem;
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::normalize_sync_token;
 use crate::webdav::streaming::{CommonParser, path_ends_with};
-use anyhow::{Result, anyhow};
+use crate::{Error, Result};
 use futures::TryStreamExt;
 use http_body_util::BodyStream;
 use hyper::body::Incoming;
@@ -153,9 +153,9 @@ impl<C: ItemConsumer> MultistatusParser<C> {
 
     fn finish(self) -> Result<ParseResult<C>> {
         if let Some(unclosed) = self.stack.last() {
-            return Err(anyhow!(
-                "XML structure error: unexpected end of input with unclosed element {unclosed:?}"
-            ));
+            return Err(Error::XmlStructure(format!(
+                "unexpected end of input with unclosed element {unclosed:?}"
+            )));
         }
 
         Ok(ParseResult {
@@ -204,16 +204,14 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                     let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
                     if key == "content-type" {
                         let value = attr
-                            .decoded_and_normalized_value(XmlVersion::default(), decoder)
-                            .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
+                            .decoded_and_normalized_value(XmlVersion::default(), decoder)?
                             .into_owned();
                         if !value.is_empty() {
                             content_type = Some(value);
                         }
                     } else if key == "version" {
                         let value = attr
-                            .decoded_and_normalized_value(XmlVersion::default(), decoder)
-                            .map_err(|e| anyhow!("Invalid XML attribute: {e}"))?
+                            .decoded_and_normalized_value(XmlVersion::default(), decoder)?
                             .into_owned();
                         if !value.is_empty() {
                             version = Some(value);
@@ -353,8 +351,8 @@ where
     loop {
         let event = tokio::time::timeout(idle_timeout, xml.read_event_into_async(&mut buf))
             .await
-            .map_err(|_| {
-                anyhow!("streaming read timed out after {idle_timeout:?} of inactivity")
+            .map_err(|_| Error::Timeout {
+                limit: idle_timeout,
             })?;
         match event {
             Ok(Event::Start(e)) => parser.on_start(&e, xml.decoder())?,
@@ -372,7 +370,7 @@ where
             }
             Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
             Ok(Event::Eof) => break,
-            Err(e) => return Err(anyhow!("XML parsing error: {e}")),
+            Err(error) => return Err(Error::from_quick_xml(error)),
             _ => {}
         }
         buf.clear();
@@ -409,7 +407,7 @@ where
             }
             Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
             Ok(Event::Eof) => break,
-            Err(e) => return Err(anyhow!("XML error: {e}")),
+            Err(error) => return Err(Error::from_quick_xml(error)),
             _ => {}
         }
         buf.clear();
@@ -505,9 +503,7 @@ where
 
 pub fn decode_text(raw: &[u8]) -> Result<String> {
     match std::str::from_utf8(raw) {
-        Ok(s) => Ok(unescape(s)
-            .map_err(|err| anyhow!("XML decode error: {err}"))?
-            .into_owned()),
+        Ok(s) => Ok(unescape(s)?.into_owned()),
         Err(_) => Ok(String::from_utf8_lossy(raw).into_owned()),
     }
 }

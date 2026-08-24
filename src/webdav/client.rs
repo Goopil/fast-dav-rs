@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use futures::{StreamExt, stream::FuturesOrdered};
 use http_body_util::Full;
@@ -13,8 +12,10 @@ use crate::common::compression::{
     detect_encodings, detect_request_compression_preference,
 };
 use crate::common::http::HyperClient;
+use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::types::{BatchItem, Depth};
+use crate::{Error, Result};
 
 /// Strategy for compressing outgoing request bodies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -45,33 +46,48 @@ const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
     let etag = etag.trim();
     if etag.is_empty() {
-        return Err(anyhow!("ETag cannot be empty"));
+        return Err(Error::InvalidEtag {
+            reason: EtagReason::Empty,
+            source: None,
+        });
     }
 
     if etag == "*" || is_valid_entity_tag(etag) {
-        return header::HeaderValue::from_str(etag)
-            .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"));
+        return header::HeaderValue::from_str(etag).map_err(|err| Error::InvalidEtag {
+            reason: EtagReason::InvalidHeaderValue,
+            source: Some(Box::new(err)),
+        });
     }
 
     if let Some(opaque) = etag.strip_prefix("W/") {
         validate_opaque_tag(opaque)?;
         let value = format!("W/\"{opaque}\"");
-        return header::HeaderValue::from_str(&value)
-            .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"));
+        return header::HeaderValue::from_str(&value).map_err(|err| Error::InvalidEtag {
+            reason: EtagReason::InvalidHeaderValue,
+            source: Some(Box::new(err)),
+        });
     }
 
     validate_opaque_tag(etag)?;
     let value = format!("\"{etag}\"");
-    header::HeaderValue::from_str(&value)
-        .map_err(|err| anyhow!("ETag cannot be used as an If-Match header: {err}"))
+    header::HeaderValue::from_str(&value).map_err(|err| Error::InvalidEtag {
+        reason: EtagReason::InvalidHeaderValue,
+        source: Some(Box::new(err)),
+    })
 }
 
 fn validate_opaque_tag(opaque: &str) -> Result<()> {
     if opaque.is_empty() || opaque.contains('"') {
-        return Err(anyhow!("ETag has an invalid entity-tag format"));
+        return Err(Error::InvalidEtag {
+            reason: EtagReason::InvalidFormat,
+            source: None,
+        });
     }
     if !opaque.bytes().all(is_etag_character) {
-        return Err(anyhow!("ETag contains invalid entity-tag characters"));
+        return Err(Error::InvalidEtag {
+            reason: EtagReason::InvalidCharacters,
+            source: None,
+        });
     }
     Ok(())
 }
@@ -163,7 +179,7 @@ impl WebDavClient {
     ///     .basic_auth("user", "pass")
     ///     .timeout(Duration::from_secs(10))
     ///     .build()?;
-    /// # Ok::<(), anyhow::Error>(())
+    /// # Ok::<(), fast_dav_rs::Error>(())
     /// ```
     pub fn builder(base_url: impl Into<String>) -> WebDavClientBuilder {
         WebDavClientBuilder::new(base_url)
@@ -245,7 +261,9 @@ impl WebDavClient {
 
     pub fn build_uri(&self, path: &str) -> Result<Uri> {
         if path.starts_with("http://") || path.starts_with("https://") {
-            return Ok(path.parse()?);
+            return path
+                .parse()
+                .map_err(|source| Error::invalid_url(path, source));
         }
 
         let mut parts = self.base.clone().into_parts();
@@ -282,13 +300,17 @@ impl WebDavClient {
         }
 
         let path_and_query = if let Some(q) = query {
-            format!("{}?{}", combined, q).parse()?
+            format!("{}?{}", combined, q)
+                .parse()
+                .map_err(|source| Error::invalid_url(path, source))?
         } else {
-            combined.parse()?
+            combined
+                .parse()
+                .map_err(|source| Error::invalid_url(path, source))?
         };
 
         parts.path_and_query = Some(path_and_query);
-        Ok(Uri::from_parts(parts)?)
+        Uri::from_parts(parts).map_err(|source| Error::invalid_url(path, source))
     }
 
     fn resolve_request_encoding(&self) -> ContentEncoding {
@@ -567,10 +589,12 @@ impl WebDavClient {
                 None => req_builder.body(Full::new(Bytes::new()))?,
             };
 
+            let limit = per_req_timeout.unwrap_or(self.default_timeout);
             let fut = self.client.request(req);
-            let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
+            let resp = timeout(limit, fut)
                 .await
-                .map_err(|_| anyhow!("request timed out"))??;
+                .map_err(|_| Error::Timeout { limit })?
+                .map_err(Error::from_client)?;
 
             let should_retry =
                 self.handle_request_compression_outcome(attempted_encoding, resp.status());
@@ -645,10 +669,12 @@ impl WebDavClient {
                 None => req_builder.body(Full::new(Bytes::new()))?,
             };
 
+            let limit = per_req_timeout.unwrap_or(self.default_timeout);
             let fut = self.client.request(req);
-            let resp = timeout(per_req_timeout.unwrap_or(self.default_timeout), fut)
+            let resp = timeout(limit, fut)
                 .await
-                .map_err(|_| anyhow!("request timed out"))??;
+                .map_err(|_| Error::Timeout { limit })?
+                .map_err(Error::from_client)?;
 
             let should_retry =
                 self.handle_request_compression_outcome(attempted_encoding, resp.status());

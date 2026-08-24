@@ -15,26 +15,26 @@ cargo fmt
 # Run linter with strict warnings (mandatory before pushing)
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Run all tests with all features
-cargo test --all-features
+# Run unit tests with nextest (preferred)
+cargo nextest run --all-features --locked --test unit_tests
 
 # Run documentation tests
-cargo test --doc
-
-# Run only unit tests
-cargo test --test unit_tests
+cargo test --doc --all-features
 
 # Run only end-to-end tests
 cargo test --test e2e_tests
 
 # Run a single specific test
-cargo test --test unit_tests test_name
+cargo nextest run --test unit_tests test_name
 
 # Run a single test with more verbose output
-cargo test --test unit_tests test_name -- --nocapture
+cargo nextest run --test unit_tests test_name -- --nocapture
 
 # Run tests in specific module
-cargo test --test unit_tests webdav::client::tests
+cargo nextest run --test unit_tests webdav::client::tests
+
+# Run coverage report
+cargo llvm-cov nextest --test unit_tests --all-features --no-fail-fast --lcov --output-path target/llvm-cov/lcov.info
 ```
 
 ### Shell Scripts
@@ -47,7 +47,14 @@ cargo test --test unit_tests webdav::client::tests
 The project uses GitHub Actions with these key steps:
 1. `cargo fmt --all --check` - Verify formatting
 2. `cargo clippy --all-targets --all-features -- -D warnings` - Lint with strict warnings
-3. `cargo test --all-features --locked --test unit_tests` - Run unit tests
+3. `cargo nextest run --all-features --locked --test unit_tests` - Run unit tests
+4. `cargo build --examples --all-features --locked` - Build examples
+5. `cargo test --doc --all-features --locked` - Run doc tests
+
+### SonarCloud Quality Gates
+All PRs are analyzed by SonarCloud. The following gates must pass:
+1. **Coverage on New Code** ≥ 80% — New lines must be covered by unit tests. Code only reachable via e2e tests (HTTP methods against a live DAV server) is exempt; document exemptions in the PR if a gate fails for this reason.
+2. **Duplications on New Code** ≤ 3% — Avoid copy-paste between `caldav/` and `carddav/`. Share logic via `webdav/` or `common/` instead of duplicating client method bodies.
 
 ## Code Style Guidelines
 
@@ -78,12 +85,12 @@ src/
 ```
 
 ### Imports and Dependencies
-- Use `anyhow::{Result, anyhow}` for error handling throughout the codebase
-- Prefer `use anyhow::Result;` over custom error types unless needed
+- Use `thiserror` for typed error handling via the `Error` enum in `src/error.rs`
 - Standard HTTP and body utilities from `hyper`, `http-body-util`, `bytes`
 - Async runtime: `tokio` with `macros`, `rt-multi-thread`, `time` features
 - Use `futures` and `futures-util` for stream operations
 - XML processing: `quick-xml` with `async-tokio` feature
+- TLS: `rustls` with `rustls-pemfile`, `rustls-native-certs`, `webpki-roots`
 
 ### Type System and Traits
 - Use `#[derive(Debug, Clone)]` for public structs that represent data
@@ -93,11 +100,19 @@ src/
 - Use `tokio::sync::{Mutex, Semaphore}` for async synchronization
 
 ### Error Handling
-- Return `Result<T>` from public functions
-- Use `anyhow::anyhow!()` for creating errors with context
-- Use `map_err()` to add context to external library errors
-- For user-facing errors, provide clear, actionable messages
-- Use `?` operator extensively for error propagation
+- Return `Result<T>` (aliased to `Result<T, Error>`) from public functions
+- Use the `Error` enum from `src/error.rs` for all error creation
+- Use `Error::InvalidEtag` (with `EtagReason`) for ETag validation errors
+- Use `Error::InvalidComponentName` for component name validation errors
+- Use `Error::InvalidDateTime` for date-time validation errors
+- Use `Error::InvalidConfig` for builder configuration errors
+- Use `Error::InvalidInput(String)` only as an external escape-hatch for validation errors not covered by a specific variant
+- Use `Error::UnexpectedStatus { operation, status }` with the `Operation` enum for HTTP status mismatches
+- Use `Error::Timeout { limit }` for timeout errors
+- Use `Error::Tls` for manually-wrapped TLS/certificate/PEM errors; `Error::TlsRustls` is auto-converted via `#[from]`
+- Use `Error::other()` or `Error::with_source()` for catch-all errors (escape-hatch only)
+- Use `?` operator extensively for error propagation — `#[from]` conversions handle most library errors automatically
+- The `Error` enum and all struct variants are `#[non_exhaustive]` — always include a wildcard arm when matching
 
 ### Naming Conventions
 - **Structs**: `PascalCase` (e.g., `CalDavClient`, `WebDavClient`)
@@ -136,6 +151,7 @@ src/
 - Use proper markdown formatting in documentation
 - Document error conditions and edge cases
 - Include performance considerations where relevant
+- **Keep documentation files in sync with code changes** — when adding, removing, or modifying public APIs, error variants, features, or configuration options, always update `README.md`, `AGENTS.md`, and any relevant examples in `examples/`. Stale documentation is a bug.
 
 ### Module Re-exports
 - Each module's `mod.rs` should contain `pub use` re-exports for clean public API
@@ -158,9 +174,11 @@ src/
 Before submitting PRs, ensure:
 1. `cargo fmt` passes without changes
 2. `cargo clippy --all-targets --all-features -- -D warnings` passes
-3. `cargo test --all-features` passes
-4. `cargo test --doc` passes
-5. All new public APIs have documentation
-6. Examples in documentation compile and run
-7. Error handling is consistent and comprehensive
-8. No TODO or FIXME comments left in final code
+3. `cargo nextest run --all-features --locked --test unit_tests` passes
+4. `cargo test --doc --all-features` passes
+5. `cargo build --examples --all-features` passes
+6. All new public APIs have documentation
+7. Examples in documentation compile and run
+8. Error handling is consistent and comprehensive
+9. No TODO or FIXME comments left in final code
+10. No copy-paste duplication between `caldav/` and `carddav/` (share via `webdav/` or `common/`)

@@ -1,4 +1,4 @@
-use fast_dav_rs::client::escape_xml;
+use fast_dav_rs::caldav::client::escape_xml;
 
 #[test]
 fn test_escape_xml_comprehensive() {

@@ -34,8 +34,7 @@
 //! ## Basic Setup and Calendar Discovery
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Depth};
-//! use anyhow::Result;
+//! use fast_dav_rs::{CalDavClient, Depth, Error, Result};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -47,11 +46,11 @@
 //!
 //!     // Discover the current user's principal
 //!     let principal = client.discover_current_user_principal().await?
-//!         .ok_or_else(|| anyhow::anyhow!("No principal found"))?;
+//!         .ok_or_else(|| Error::other("No principal found"))?;
 //!
 //!     // Find calendar home sets
 //!     let homes = client.discover_calendar_home_set(&principal).await?;
-//!     let home = homes.first().ok_or_else(|| anyhow::anyhow!("No calendar home found"))?;
+//!     let home = homes.first().ok_or_else(|| Error::other("No calendar home found"))?;
 //!
 //!     // List all calendars
 //!     let calendars = client.list_calendars(home).await?;
@@ -66,9 +65,8 @@
 //! ## Calendar Operations
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Depth};
+//! use fast_dav_rs::{CalDavClient, Depth, Result};
 //! use bytes::Bytes;
-//! use anyhow::Result;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -104,9 +102,8 @@
 //! ## Event Operations
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Depth};
+//! use fast_dav_rs::{CalDavClient, Depth, Result};
 //! use bytes::Bytes;
-//! use anyhow::Result;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -191,9 +188,8 @@
 //! ## Working with ETags for Safe Operations
 //!
 //! ```no_run
-//! use fast_dav_rs::CalDavClient;
+//! use fast_dav_rs::{CalDavClient, Result};
 //! use bytes::Bytes;
-//! use anyhow::Result;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -238,10 +234,9 @@
 //! For processing large collections without loading everything into memory:
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Depth, detect_encoding};
+//! use fast_dav_rs::{CalDavClient, Depth, Result, detect_encoding};
 //! use fast_dav_rs::caldav::parse_multistatus_stream;
 //! use bytes::Bytes;
-//! use anyhow::Result;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -288,10 +283,9 @@
 //! Execute multiple operations concurrently with controlled parallelism:
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Depth};
+//! use fast_dav_rs::{CalDavClient, Depth, Result};
 //! use bytes::Bytes;
 //! use std::sync::Arc;
-//! use anyhow::Result;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -381,8 +375,7 @@
 //! Discover server capabilities and choose appropriate synchronization methods:
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Depth};
-//! use anyhow::Result;
+//! use fast_dav_rs::{CalDavClient, Depth, Error, Result};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -401,12 +394,12 @@
 //!
 //!     // Discover user principal
 //!     let principal = client.discover_current_user_principal().await?
-//!         .ok_or_else(|| anyhow::anyhow!("No principal found"))?;
+//!         .ok_or_else(|| Error::other("No principal found"))?;
 //!     println!("User principal: {}", principal);
 //!
 //!     // Discover calendar homes
 //!     let homes = client.discover_calendar_home_set(&principal).await?;
-//!     let home = homes.first().ok_or_else(|| anyhow::anyhow!("No calendar home found"))?;
+//!     let home = homes.first().ok_or_else(|| Error::other("No calendar home found"))?;
 //!     println!("Calendar home: {}", home);
 //!
 //!     // List calendars with detailed info
@@ -509,8 +502,7 @@
 //! ## CardDAV Addressbook Discovery
 //!
 //! ```no_run
-//! use fast_dav_rs::CardDavClient;
-//! use anyhow::Result;
+//! use fast_dav_rs::{CardDavClient, Error, Result};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -521,10 +513,10 @@
 //!     )?;
 //!
 //!     let principal = client.discover_current_user_principal().await?
-//!         .ok_or_else(|| anyhow::anyhow!("No principal found"))?;
+//!         .ok_or_else(|| Error::other("No principal found"))?;
 //!
 //!     let homes = client.discover_addressbook_home_set(&principal).await?;
-//!     let home = homes.first().ok_or_else(|| anyhow::anyhow!("No addressbook home found"))?;
+//!     let home = homes.first().ok_or_else(|| Error::other("No addressbook home found"))?;
 //!
 //!     let books = client.list_addressbooks(home).await?;
 //!     for book in &books {
@@ -538,9 +530,8 @@
 //! ## CardDAV Contact Operations
 //!
 //! ```no_run
-//! use fast_dav_rs::CardDavClient;
+//! use fast_dav_rs::{CardDavClient, Result};
 //! use bytes::Bytes;
-//! use anyhow::Result;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -581,8 +572,7 @@
 //! ## CardDAV Queries and Multiget
 //!
 //! ```no_run
-//! use fast_dav_rs::CardDavClient;
-//! use anyhow::Result;
+//! use fast_dav_rs::{CardDavClient, Result};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -614,9 +604,8 @@
 //! ## CardDAV Streaming Large Responses
 //!
 //! ```no_run
-//! use fast_dav_rs::{CardDavClient, Depth, detect_encoding};
+//! use fast_dav_rs::{CardDavClient, Depth, Result, detect_encoding};
 //! use fast_dav_rs::carddav::parse_multistatus_stream;
-//! use anyhow::Result;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -659,8 +648,7 @@
 //! ## CardDAV Sync Collection
 //!
 //! ```no_run
-//! use fast_dav_rs::CardDavClient;
-//! use anyhow::Result;
+//! use fast_dav_rs::{CardDavClient, Result};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -703,12 +691,15 @@
 //!     .user_agent("MyApp/1.0")
 //!     .pool_max_idle_per_host(10)
 //!     .build()?;
-//! # Ok::<(), anyhow::Error>(())
+//! # Ok::<(), fast_dav_rs::Error>(())
 //! ```
 pub mod caldav;
 pub mod carddav;
 pub mod common;
+mod error;
 pub mod webdav;
+
+pub use error::{Error, EtagReason, Operation, Result};
 
 // Backwards-compatible re-exports
 pub use caldav::builder::CalDavClientBuilder;
@@ -732,18 +723,38 @@ pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{RequestCompressionMode, WebDavClient};
 
 // Legacy module paths kept for compatibility with existing imports.
+#[cfg(feature = "legacy")]
+#[deprecated(
+    since = "0.8.0",
+    note = "use `fast_dav_rs::caldav::client` directly instead"
+)]
 pub mod client {
     pub use crate::caldav::client::*;
 }
 
+#[cfg(feature = "legacy")]
+#[deprecated(
+    since = "0.8.0",
+    note = "use `fast_dav_rs::caldav::streaming` directly instead"
+)]
 pub mod streaming {
     pub use crate::caldav::streaming::*;
 }
 
+#[cfg(feature = "legacy")]
+#[deprecated(
+    since = "0.8.0",
+    note = "use `fast_dav_rs::caldav::types` directly instead"
+)]
 pub mod types {
     pub use crate::caldav::types::*;
 }
 
+#[cfg(feature = "legacy")]
+#[deprecated(
+    since = "0.8.0",
+    note = "use `fast_dav_rs::common::compression` directly instead"
+)]
 pub mod compression {
     pub use crate::common::compression::*;
 }

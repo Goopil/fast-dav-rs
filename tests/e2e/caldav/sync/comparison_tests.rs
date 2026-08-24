@@ -27,7 +27,7 @@ fn create_test_client() -> CalDavClient {
 async fn traditional_sync_method(
     client: &CalDavClient,
     calendar_paths: &[String],
-) -> anyhow::Result<HashMap<String, String>> {
+) -> fast_dav_rs::Result<HashMap<String, String>> {
     // Step 1: Fetch ctags for all calendars in parallel
     let mut ctag_futures = Vec::new();
     for calendar_path in calendar_paths {
@@ -107,7 +107,7 @@ async fn webdav_sync_method(
     client: &CalDavClient,
     calendar_path: &str,
     sync_token: Option<&str>,
-) -> anyhow::Result<(Option<String>, Vec<String>)> {
+) -> fast_dav_rs::Result<(Option<String>, Vec<String>)> {
     // Use the sync_collection method implemented in the client
     let sync_response = client
         .sync_collection(calendar_path, sync_token, Some(100), true)
