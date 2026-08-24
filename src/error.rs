@@ -49,6 +49,13 @@ pub enum Error {
     },
 
     /// A caller-provided value failed validation.
+    ///
+    /// This is a **catch-all** variant for caller-side validation errors that
+    /// don't fit a more specific variant. The library itself uses
+    /// [`InvalidEtag`](Self::InvalidEtag), [`InvalidComponentName`](Self::InvalidComponentName),
+    /// [`InvalidDateTime`](Self::InvalidDateTime), and [`InvalidConfig`](Self::InvalidConfig)
+    /// for known validation cases. This variant is kept for external code
+    /// that needs to return a validation error without a dedicated variant.
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
@@ -155,6 +162,12 @@ pub enum Error {
     Utf8(#[from] std::str::Utf8Error),
 
     /// A rustls TLS operation failed.
+    ///
+    /// This variant is used when a `rustls::Error` is propagated via `?`
+    /// (automatic `#[from]` conversion). For manually-wrapped TLS errors
+    /// that carry additional context (e.g. PEM parsing failures), see
+    /// [`Tls`](Self::Tls). Consumers checking for TLS errors should match
+    /// both `TlsRustls(_)` and `Tls { .. }`.
     #[error("rustls error: {0}")]
     TlsRustls(#[from] rustls::Error),
 
@@ -165,18 +178,19 @@ pub enum Error {
     /// where or why the error occurred; the underlying cause is
     /// accessible via `source()`.
     ///
-    /// `source` is `None` when the error has no underlying cause — for
-    /// example, when native certificate loading returns no roots and we
-    /// fall back to the bundled webpki roots without a specific error.
-    /// `source` is `Some` when wrapping a concrete error from rustls,
-    /// `rustls_pemfile`, or `rustls_native_certs`.
+    /// `source` is `Some` for most TLS errors — it wraps the underlying
+    /// error from rustls, `rustls_pemfile`, or `rustls_native_certs`.
+    /// `source` is `None` when the error has no underlying cause (e.g.
+    /// a configuration error that is purely descriptive). The [`tls`](Self::tls)
+    /// constructor always sets `source: Some`; `source: None` is only
+    /// reachable via internal construction for edge cases.
     #[error("TLS error: {context}")]
     #[non_exhaustive]
     Tls {
         /// Human-readable context describing the TLS failure.
         context: String,
-        /// The underlying error, if any. `None` when the error has no
-        /// deeper cause (e.g. "no roots found" without a specific error).
+        /// The underlying error, if any. `Some` for most errors;
+        /// `None` only when there is no deeper cause to chain.
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },

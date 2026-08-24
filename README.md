@@ -210,6 +210,11 @@ The `Operation` enum identifies which DAV operation produced an
 `EtagReason` enum describes why an ETag was rejected (`Empty`,
 `InvalidFormat`, `InvalidCharacters`, `InvalidHeaderValue`).
 
+> **Note:** TLS errors may appear as either `TlsRustls` (automatic
+> `rustls::Error` propagation via `?`) or `Tls` (manually wrapped with
+> context, e.g. PEM parsing). Consumers checking for TLS errors should
+> match both variants.
+
 ### Migrating from `anyhow`
 
 Earlier releases returned `anyhow::Error`. Replace library-facing
@@ -392,6 +397,32 @@ match parse_port("abc") {
     Err(AppError::OutOfRange(p)) => eprintln!("port {p} is reserved"),
 }
 ```
+
+### Migrating module paths
+
+The deprecated top-level modules (`client`, `streaming`, `types`,
+`compression`) are now gated behind the `legacy` Cargo feature
+(default-off). Update your imports to the canonical paths:
+
+```rust
+// Before (deprecated, requires `legacy` feature)
+use fast_dav_rs::client::CalDavClient;
+use fast_dav_rs::streaming::parse_multistatus_stream;
+
+// After (canonical paths)
+use fast_dav_rs::caldav::client::CalDavClient;
+use fast_dav_rs::caldav::streaming::parse_multistatus_stream;
+```
+
+If you need temporary backward compatibility, enable the `legacy`
+feature in your `Cargo.toml`:
+
+```toml
+[dependencies]
+fast-dav-rs = { version = "0.8", features = ["legacy"] }
+```
+
+The `legacy` feature will be removed in a future major release.
 
 ## Configuration
 
