@@ -699,7 +699,7 @@ pub mod common;
 mod error;
 pub mod webdav;
 
-pub use error::{Error, Operation, Result};
+pub use error::{Error, EtagReason, Operation, Result};
 
 // Backwards-compatible re-exports
 pub use caldav::builder::CalDavClientBuilder;

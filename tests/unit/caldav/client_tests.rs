@@ -1,4 +1,4 @@
-use fast_dav_rs::{CalDavClient, Depth};
+use fast_dav_rs::{CalDavClient, Depth, Error};
 use hyper::http::HeaderMap;
 
 #[test]
@@ -307,11 +307,10 @@ async fn test_calendar_query_timerange_rejects_malicious_component() {
         .calendar_query_timerange("calendar/", "VEVENT\"><evil/>", None, None, false)
         .await
         .expect_err("component with XML metacharacters must be rejected before any request");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("invalid calendar-query component"),
-        "unexpected error: {msg}"
-    );
+    assert!(matches!(
+        err,
+        Error::InvalidComponentName { name, .. } if name == "VEVENT\"><evil/>"
+    ));
 }
 
 #[tokio::test]
@@ -323,7 +322,10 @@ async fn test_calendar_query_timerange_rejects_empty_component() {
         .calendar_query_timerange("calendar/", "", None, None, false)
         .await
         .expect_err("empty component must be rejected before any request");
-    assert!(err.to_string().contains("invalid calendar-query component"));
+    assert!(matches!(
+        err,
+        Error::InvalidComponentName { name, .. } if name.is_empty()
+    ));
 }
 
 #[tokio::test]
@@ -341,12 +343,14 @@ async fn test_calendar_query_timerange_rejects_malformed_start() {
         )
         .await
         .expect_err("malformed start must be rejected before any request");
-    let msg = err.to_string();
+    assert!(matches!(
+        err,
+        Error::InvalidDateTime { ref value, .. } if value == "2024-01-01T00:00:00Z"
+    ));
     assert!(
-        msg.contains("invalid calendar-query start"),
-        "unexpected error: {msg}"
+        err.to_string().contains("YYYYMMDDTHHMMSSZ"),
+        "unexpected error: {err}"
     );
-    assert!(msg.contains("YYYYMMDDTHHMMSSZ"), "unexpected error: {msg}");
 }
 
 #[tokio::test]
@@ -364,7 +368,10 @@ async fn test_calendar_query_timerange_rejects_malformed_end() {
         )
         .await
         .expect_err("malformed end must be rejected before any request");
-    assert!(err.to_string().contains("invalid calendar-query end"));
+    assert!(matches!(
+        err,
+        Error::InvalidDateTime { value, .. } if value == "20240101T000000Z\"><inject/>"
+    ));
 }
 
 #[test]

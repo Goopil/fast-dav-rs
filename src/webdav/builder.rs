@@ -252,17 +252,17 @@ impl WebDavClientBuilder {
     /// certificates cannot be parsed.
     pub fn build(mut self) -> Result<WebDavClient> {
         if self.timeout.is_zero() {
-            return Err(Error::InvalidInput("timeout must be > 0".to_owned()));
+            return Err(Error::InvalidConfig("timeout must be > 0".to_owned()));
         }
         if self.pool_max_idle_per_host == 0 {
-            return Err(Error::InvalidInput(
+            return Err(Error::InvalidConfig(
                 "pool_max_idle_per_host must be > 0".to_owned(),
             ));
         }
         if let Some(token) = &self.bearer_token
             && token.is_empty()
         {
-            return Err(Error::InvalidInput(
+            return Err(Error::InvalidConfig(
                 "bearer_token must not be empty".to_owned(),
             ));
         }
@@ -272,7 +272,7 @@ impl WebDavClientBuilder {
                     || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
             })
         {
-            return Err(Error::InvalidInput(
+            return Err(Error::InvalidConfig(
                 "bearer_token contains invalid characters (allowed: A-Z a-z 0-9 - . _ ~ + / =)"
                     .to_owned(),
             ));
@@ -280,28 +280,28 @@ impl WebDavClientBuilder {
         if let (Some(user), Some(pass)) = (&self.basic_user, &self.basic_pass)
             && (user.is_empty() || pass.is_empty())
         {
-            return Err(Error::InvalidInput(
+            return Err(Error::InvalidConfig(
                 "basic_auth requires both user and pass to be non-empty".to_owned(),
             ));
         }
         if self.proxy.is_none()
             && (self.proxy_basic_user.is_some() || self.proxy_basic_pass.is_some())
         {
-            return Err(Error::InvalidInput(
+            return Err(Error::InvalidConfig(
                 "proxy_basic_auth requires a proxy to be set via .proxy()".to_owned(),
             ));
         }
         if let (Some(user), Some(pass)) = (&self.proxy_basic_user, &self.proxy_basic_pass)
             && (user.is_empty() || pass.is_empty())
         {
-            return Err(Error::InvalidInput(
+            return Err(Error::InvalidConfig(
                 "proxy_basic_auth requires both user and pass to be non-empty".to_owned(),
             ));
         }
         if let (Some(user), Some(pass)) = (&self.proxy_basic_user, &self.proxy_basic_pass) {
             for (label, value) in [("user", user.as_str()), ("pass", pass.as_str())] {
                 if value.bytes().any(|b| b <= 0x20 || b == 0x7F) {
-                    return Err(Error::InvalidInput(format!(
+                    return Err(Error::InvalidConfig(format!(
                         "proxy_basic_auth {label} contains control or whitespace characters \
                          which are not allowed in HTTP header values"
                     )));
@@ -826,8 +826,8 @@ mod tests {
             Ok(_) => panic!("expected error"),
         };
         assert!(
-            matches!(err, Error::InvalidInput(ref msg) if msg.contains("proxy_basic_auth")),
-            "should be InvalidInput about proxy_basic_auth, got: {err}"
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("proxy_basic_auth")),
+            "should be InvalidConfig about proxy_basic_auth, got: {err}"
         );
     }
 
@@ -842,8 +842,8 @@ mod tests {
             Ok(_) => panic!("expected error"),
         };
         assert!(
-            matches!(err, Error::InvalidInput(ref msg) if msg.contains("proxy_basic_auth")),
-            "should be InvalidInput about proxy_basic_auth, got: {err}"
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("proxy_basic_auth")),
+            "should be InvalidConfig about proxy_basic_auth, got: {err}"
         );
     }
 
@@ -872,8 +872,8 @@ mod tests {
             Ok(_) => panic!("expected error"),
         };
         assert!(
-            matches!(err, Error::InvalidInput(ref msg) if msg.contains("timeout must be > 0")),
-            "error should be InvalidInput mentioning timeout, got: {err}"
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("timeout must be > 0")),
+            "error should be InvalidConfig mentioning timeout, got: {err}"
         );
     }
 
@@ -887,8 +887,8 @@ mod tests {
             Ok(_) => panic!("expected error"),
         };
         assert!(
-            matches!(err, Error::InvalidInput(ref msg) if msg.contains("pool_max_idle_per_host must be > 0")),
-            "error should be InvalidInput mentioning pool, got: {err}"
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("pool_max_idle_per_host must be > 0")),
+            "error should be InvalidConfig mentioning pool, got: {err}"
         );
     }
 

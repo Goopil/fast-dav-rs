@@ -1,6 +1,32 @@
 use hyper::StatusCode;
 use std::time::Duration;
 
+/// Why an ETag was rejected by validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EtagReason {
+    /// The ETag string was empty or only whitespace.
+    Empty,
+    /// The ETag has an invalid entity-tag format (e.g. unbalanced quotes).
+    InvalidFormat,
+    /// The ETag contains characters not allowed in entity tags.
+    InvalidCharacters,
+    /// The ETag cannot be used as an HTTP header value.
+    InvalidHeaderValue,
+}
+
+impl std::fmt::Display for EtagReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Empty => "ETag cannot be empty",
+            Self::InvalidFormat => "invalid entity-tag format",
+            Self::InvalidCharacters => "contains invalid entity-tag characters",
+            Self::InvalidHeaderValue => "cannot be used as an If-Match header value",
+        };
+        f.write_str(s)
+    }
+}
+
 /// Error returned by `fast-dav-rs` operations.
 ///
 /// The enum is `#[non_exhaustive]` so that new variants can be added
@@ -25,6 +51,42 @@ pub enum Error {
     /// A caller-provided value failed validation.
     #[error("invalid input: {0}")]
     InvalidInput(String),
+
+    /// An ETag value failed validation (empty, malformed, or contains
+    /// invalid characters for use in an `If-Match` / `If-None-Match` header).
+    #[error("invalid ETag: {reason}")]
+    #[non_exhaustive]
+    InvalidEtag {
+        /// Why the ETag was rejected.
+        reason: EtagReason,
+        /// The underlying header parsing error, if applicable.
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+
+    /// A calendar or addressbook component name failed validation.
+    #[error("invalid component name `{name}`: {reason}")]
+    #[non_exhaustive]
+    InvalidComponentName {
+        /// The component name that was rejected.
+        name: String,
+        /// Why it was rejected.
+        reason: &'static str,
+    },
+
+    /// A date-time value did not match the expected iCalendar UTC format.
+    #[error("invalid UTC date-time `{value}`: {reason}")]
+    #[non_exhaustive]
+    InvalidDateTime {
+        /// The value that failed validation.
+        value: String,
+        /// Why it was rejected.
+        reason: &'static str,
+    },
+
+    /// A builder configuration value is invalid (timeout, pool size, auth, etc.).
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(String),
 
     /// An HTTP header value is invalid.
     #[error("invalid HTTP header value: {0}")]

@@ -1,4 +1,4 @@
-use fast_dav_rs::{CalDavClient, Error, Operation, Result, WebDavClient};
+use fast_dav_rs::{CalDavClient, Error, EtagReason, Operation, Result, WebDavClient};
 use hyper::StatusCode;
 use hyper::{HeaderMap, Method};
 use std::error::Error as _;
@@ -26,7 +26,10 @@ async fn invalid_etag_is_a_typed_input_error() {
 
     assert!(matches!(
         error,
-        Error::InvalidInput(message) if message == "ETag cannot be empty"
+        Error::InvalidEtag {
+            reason: EtagReason::Empty,
+            ..
+        }
     ));
 }
 
@@ -40,8 +43,7 @@ async fn invalid_calendar_component_is_a_typed_input_error() {
 
     assert!(matches!(
         error,
-        Error::InvalidInput(message)
-            if message.starts_with("invalid calendar-query component:")
+        Error::InvalidComponentName { name, .. } if name == "VEVENT/INVALID"
     ));
 }
 

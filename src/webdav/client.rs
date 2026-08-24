@@ -12,6 +12,7 @@ use crate::common::compression::{
     detect_encodings, detect_request_compression_preference,
 };
 use crate::common::http::HyperClient;
+use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::types::{BatchItem, Depth};
 use crate::{Error, Result};
@@ -45,40 +46,48 @@ const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
     let etag = etag.trim();
     if etag.is_empty() {
-        return Err(Error::InvalidInput("ETag cannot be empty".to_owned()));
+        return Err(Error::InvalidEtag {
+            reason: EtagReason::Empty,
+            source: None,
+        });
     }
 
     if etag == "*" || is_valid_entity_tag(etag) {
-        return header::HeaderValue::from_str(etag).map_err(|err| {
-            Error::InvalidInput(format!("ETag cannot be used as an If-Match header: {err}"))
+        return header::HeaderValue::from_str(etag).map_err(|err| Error::InvalidEtag {
+            reason: EtagReason::InvalidHeaderValue,
+            source: Some(Box::new(err)),
         });
     }
 
     if let Some(opaque) = etag.strip_prefix("W/") {
         validate_opaque_tag(opaque)?;
         let value = format!("W/\"{opaque}\"");
-        return header::HeaderValue::from_str(&value).map_err(|err| {
-            Error::InvalidInput(format!("ETag cannot be used as an If-Match header: {err}"))
+        return header::HeaderValue::from_str(&value).map_err(|err| Error::InvalidEtag {
+            reason: EtagReason::InvalidHeaderValue,
+            source: Some(Box::new(err)),
         });
     }
 
     validate_opaque_tag(etag)?;
     let value = format!("\"{etag}\"");
-    header::HeaderValue::from_str(&value).map_err(|err| {
-        Error::InvalidInput(format!("ETag cannot be used as an If-Match header: {err}"))
+    header::HeaderValue::from_str(&value).map_err(|err| Error::InvalidEtag {
+        reason: EtagReason::InvalidHeaderValue,
+        source: Some(Box::new(err)),
     })
 }
 
 fn validate_opaque_tag(opaque: &str) -> Result<()> {
     if opaque.is_empty() || opaque.contains('"') {
-        return Err(Error::InvalidInput(
-            "ETag has an invalid entity-tag format".to_owned(),
-        ));
+        return Err(Error::InvalidEtag {
+            reason: EtagReason::InvalidFormat,
+            source: None,
+        });
     }
     if !opaque.bytes().all(is_etag_character) {
-        return Err(Error::InvalidInput(
-            "ETag contains invalid entity-tag characters".to_owned(),
-        ));
+        return Err(Error::InvalidEtag {
+            reason: EtagReason::InvalidCharacters,
+            source: None,
+        });
     }
     Ok(())
 }
