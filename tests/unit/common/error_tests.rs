@@ -364,3 +364,60 @@ fn invalid_input_is_constructible_externally() {
         "invalid input: external validation failure"
     );
 }
+
+#[test]
+fn etag_reason_display_covers_all_variants() {
+    assert_eq!(EtagReason::Empty.to_string(), "ETag cannot be empty");
+    assert_eq!(
+        EtagReason::InvalidFormat.to_string(),
+        "invalid entity-tag format"
+    );
+    assert_eq!(
+        EtagReason::InvalidCharacters.to_string(),
+        "contains invalid entity-tag characters"
+    );
+    assert_eq!(
+        EtagReason::InvalidHeaderValue.to_string(),
+        "cannot be used as an If-Match header value"
+    );
+}
+
+#[test]
+fn operation_display_covers_all_variants() {
+    assert_eq!(
+        Operation::PropfindCurrentUserPrincipal.to_string(),
+        "PROPFIND current-user-principal"
+    );
+    assert_eq!(
+        Operation::PropfindCalendarHomeSet.to_string(),
+        "PROPFIND calendar-home-set"
+    );
+    assert_eq!(
+        Operation::PropfindAddressbookHomeSet.to_string(),
+        "PROPFIND addressbook-home-set"
+    );
+    assert_eq!(
+        Operation::PropfindCollections.to_string(),
+        "PROPFIND collections"
+    );
+    assert_eq!(
+        Operation::ReportCalendarQuery.to_string(),
+        "REPORT calendar-query"
+    );
+    assert_eq!(
+        Operation::ReportCalendarMultiget.to_string(),
+        "REPORT calendar-multiget"
+    );
+    assert_eq!(
+        Operation::ReportAddressbookQuery.to_string(),
+        "REPORT addressbook-query"
+    );
+    assert_eq!(
+        Operation::ReportAddressbookMultiget.to_string(),
+        "REPORT addressbook-multiget"
+    );
+    assert_eq!(
+        Operation::ReportSyncCollection.to_string(),
+        "REPORT sync-collection"
+    );
+}
