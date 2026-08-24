@@ -43,5 +43,16 @@ jobs:
       - name: Cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Cargo test
-        run: cargo test --all-features --locked --test unit_tests
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Cargo nextest
+        run: cargo nextest run --all-features --locked --test unit_tests
+
+      - name: Cargo build examples
+        run: cargo build --examples --all-features
+
+      - name: Cargo doc tests
+        run: cargo test --doc --all-features
