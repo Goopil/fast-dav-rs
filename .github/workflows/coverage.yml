@@ -32,32 +32,48 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: stable-rust
 
-      - name: Install cargo-tarpaulin
+      - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-tarpaulin
+          tool: cargo-llvm-cov
 
-      - name: Generate coverage (unit tests only)
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run tests with coverage and JUnit output
         run: |
-          cargo tarpaulin \
+          mkdir -p target/llvm-cov
+          cargo llvm-cov nextest \
             --test unit_tests \
-            --out lcov \
-            --output-dir target/tarpaulin \
-            --engine llvm \
-            -- --test-threads 4
+            --profile ci \
+            --no-fail-fast \
+            --lcov \
+            --output-path target/llvm-cov/lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: target/tarpaulin/lcov.info
+          files: target/llvm-cov/lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report-type: test_results
+          files: target/nextest/junit.xml
 
       - name: SonarCloud analysis
         uses: SonarSource/sonarqube-scan-action@v8.2.1
