@@ -247,7 +247,11 @@ fn invalid_etag_with_source_preserves_chain() {
 
 #[test]
 fn invalid_component_name_preserves_fields() {
-    let error = Error::invalid_component_name("VEVENT/INVALID", "component name must not be empty");
+    let error = Error::invalid_component_name(
+        "test context",
+        "VEVENT/INVALID",
+        "component name must not be empty",
+    );
     assert!(matches!(
         &error,
         Error::InvalidComponentName { name, reason, bad_char: None, .. }
@@ -262,7 +266,12 @@ fn invalid_component_name_preserves_fields() {
 
 #[test]
 fn invalid_component_name_with_char_preserves_bad_char() {
-    let error = Error::invalid_component_name_with_char("VEVENT/INVALID", "invalid character", '/');
+    let error = Error::invalid_component_name_with_char(
+        "test context",
+        "VEVENT/INVALID",
+        "invalid character",
+        '/',
+    );
     assert!(matches!(
         &error,
         Error::InvalidComponentName { name, reason, bad_char: Some('/'), .. }
@@ -343,5 +352,15 @@ fn from_rustls_error() {
     assert!(
         error.to_string().contains("test TLS failure"),
         "display should contain the rustls message, got: {error}"
+    );
+}
+
+#[test]
+fn invalid_input_is_constructible_externally() {
+    let error = Error::InvalidInput("external validation failure".to_owned());
+    assert!(matches!(error, Error::InvalidInput(ref msg) if msg == "external validation failure"));
+    assert_eq!(
+        error.to_string(),
+        "invalid input: external validation failure"
     );
 }

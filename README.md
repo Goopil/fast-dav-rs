@@ -419,7 +419,7 @@ feature in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fast-dav-rs = { version = "0.8", features = ["legacy"] }
+fast-dav-rs = { version = "0.7", features = ["legacy"] }
 ```
 
 The `legacy` feature will be removed in a future major release.

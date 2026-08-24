@@ -72,9 +72,11 @@ pub enum Error {
     },
 
     /// A calendar or addressbook component name failed validation.
-    #[error("invalid component name `{name}`: {reason}")]
+    #[error("{context}: invalid component name `{name}`: {reason}")]
     #[non_exhaustive]
     InvalidComponentName {
+        /// Where the invalid component name was encountered (e.g. "invalid calendar-query component").
+        context: String,
         /// The component name that was rejected.
         name: String,
         /// Why it was rejected.
@@ -331,8 +333,13 @@ impl Error {
     /// This is the public constructor for the `InvalidComponentName` variant,
     /// which is `#[non_exhaustive]` and therefore cannot be constructed with a
     /// struct expression outside this crate.
-    pub fn invalid_component_name(name: impl Into<String>, reason: &'static str) -> Self {
+    pub fn invalid_component_name(
+        context: impl Into<String>,
+        name: impl Into<String>,
+        reason: &'static str,
+    ) -> Self {
         Self::InvalidComponentName {
+            context: context.into(),
             name: name.into(),
             reason,
             bad_char: None,
@@ -347,11 +354,13 @@ impl Error {
     /// struct expression outside this crate. Use this overload when the
     /// rejection is due to a specific invalid character.
     pub fn invalid_component_name_with_char(
+        context: impl Into<String>,
         name: impl Into<String>,
         reason: &'static str,
         bad_char: char,
     ) -> Self {
         Self::InvalidComponentName {
+            context: context.into(),
             name: name.into(),
             reason,
             bad_char: Some(bad_char),

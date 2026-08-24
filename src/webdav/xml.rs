@@ -26,9 +26,10 @@ pub fn escape_xml(input: &str) -> String {
 ///
 /// Returns an error when `name` is empty or contains a character outside
 /// `[A-Za-z0-9-]`.
-pub(crate) fn validate_component_name(name: &str, _context: &str) -> Result<()> {
+pub(crate) fn validate_component_name(name: &str, context: &str) -> Result<()> {
     if name.is_empty() {
         return Err(Error::InvalidComponentName {
+            context: context.to_owned(),
             name: name.to_owned(),
             reason: "component name must not be empty",
             bad_char: None,
@@ -39,6 +40,7 @@ pub(crate) fn validate_component_name(name: &str, _context: &str) -> Result<()> 
         .find(|c| !(c.is_ascii_alphanumeric() || *c == '-'))
     {
         return Err(Error::InvalidComponentName {
+            context: context.to_owned(),
             name: name.to_owned(),
             reason: "only ASCII letters, digits and '-' are allowed (e.g. VEVENT, X-CUSTOM)",
             bad_char: Some(bad),
