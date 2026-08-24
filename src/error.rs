@@ -154,6 +154,10 @@ pub enum Error {
     #[error("UTF-8 decoding error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
 
+    /// A rustls TLS operation failed.
+    #[error("rustls error: {0}")]
+    TlsRustls(#[from] rustls::Error),
+
     /// A TLS, certificate, or PKI operation failed.
     ///
     /// Covers PEM parsing errors, rustls configuration failures, and
