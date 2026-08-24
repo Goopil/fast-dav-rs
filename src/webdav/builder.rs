@@ -737,7 +737,14 @@ mod tests {
     #[test]
     fn invalid_url_errors() {
         let result = WebDavClient::builder("not a valid url").build();
-        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidUrl { .. }),
+            "should be InvalidUrl, got: {err}"
+        );
     }
 
     #[test]
@@ -784,19 +791,40 @@ mod tests {
     #[test]
     fn empty_basic_user_errors() {
         let result = WebDavClient::builder(BASE).basic_auth("", "pass").build();
-        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("basic_auth requires both user and pass to be non-empty")),
+            "should be InvalidConfig about basic_auth, got: {err}"
+        );
     }
 
     #[test]
     fn empty_basic_pass_errors() {
         let result = WebDavClient::builder(BASE).basic_auth("user", "").build();
-        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("basic_auth requires both user and pass to be non-empty")),
+            "should be InvalidConfig about basic_auth, got: {err}"
+        );
     }
 
     #[test]
     fn empty_bearer_token_errors() {
         let result = WebDavClient::builder(BASE).bearer_token("").build();
-        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("bearer_token must not be empty")),
+            "should be InvalidConfig about bearer_token, got: {err}"
+        );
     }
 
     #[test]
@@ -804,7 +832,14 @@ mod tests {
         let result = WebDavClient::builder(BASE)
             .bearer_token("has space")
             .build();
-        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("bearer_token contains invalid characters")),
+            "should be InvalidConfig about bearer_token chars, got: {err}"
+        );
     }
 
     #[test]
@@ -812,7 +847,14 @@ mod tests {
         let result = WebDavClient::builder(BASE)
             .proxy_basic_auth("user", "pass")
             .build();
-        assert!(result.is_err());
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("proxy_basic_auth requires a proxy")),
+            "should be InvalidConfig about proxy_basic_auth, got: {err}"
+        );
     }
 
     #[test]
@@ -836,6 +878,54 @@ mod tests {
         let result = WebDavClient::builder(BASE)
             .proxy(Uri::from_str("http://127.0.0.1:9090").unwrap())
             .proxy_basic_auth("user", "pass\ninjected")
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("proxy_basic_auth")),
+            "should be InvalidConfig about proxy_basic_auth, got: {err}"
+        );
+    }
+
+    #[test]
+    fn proxy_basic_auth_with_null_byte_user_errors() {
+        let result = WebDavClient::builder(BASE)
+            .proxy(Uri::from_str("http://127.0.0.1:9090").unwrap())
+            .proxy_basic_auth("user\0", "pass")
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("proxy_basic_auth")),
+            "should be InvalidConfig about proxy_basic_auth, got: {err}"
+        );
+    }
+
+    #[test]
+    fn proxy_basic_auth_with_del_char_pass_errors() {
+        let result = WebDavClient::builder(BASE)
+            .proxy(Uri::from_str("http://127.0.0.1:9090").unwrap())
+            .proxy_basic_auth("user", "pass\x7F")
+            .build();
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg) if msg.contains("proxy_basic_auth")),
+            "should be InvalidConfig about proxy_basic_auth, got: {err}"
+        );
+    }
+
+    #[test]
+    fn proxy_basic_auth_with_space_user_errors() {
+        let result = WebDavClient::builder(BASE)
+            .proxy(Uri::from_str("http://127.0.0.1:9090").unwrap())
+            .proxy_basic_auth("user with space", "pass")
             .build();
         let err = match result {
             Err(e) => e,
