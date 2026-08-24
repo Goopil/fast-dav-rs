@@ -279,6 +279,59 @@ impl Error {
         Self::Timeout { limit }
     }
 
+    /// Create an [`InvalidEtag`](Self::InvalidEtag) error.
+    ///
+    /// This is the public constructor for the `InvalidEtag` variant, which is
+    /// `#[non_exhaustive]` and therefore cannot be constructed with a struct
+    /// expression outside this crate.
+    pub fn invalid_etag(reason: EtagReason) -> Self {
+        Self::InvalidEtag {
+            reason,
+            source: None,
+        }
+    }
+
+    /// Create an [`InvalidEtag`](Self::InvalidEtag) error with an underlying source.
+    ///
+    /// This is the public constructor for the `InvalidEtag` variant, which is
+    /// `#[non_exhaustive]` and therefore cannot be constructed with a struct
+    /// expression outside this crate. Use this overload when the ETag
+    /// validation failure wraps an underlying parsing error (e.g. an
+    /// `InvalidHeaderValue`).
+    pub fn invalid_etag_with_source(
+        reason: EtagReason,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::InvalidEtag {
+            reason,
+            source: Some(Box::new(source)),
+        }
+    }
+
+    /// Create an [`InvalidComponentName`](Self::InvalidComponentName) error.
+    ///
+    /// This is the public constructor for the `InvalidComponentName` variant,
+    /// which is `#[non_exhaustive]` and therefore cannot be constructed with a
+    /// struct expression outside this crate.
+    pub fn invalid_component_name(name: impl Into<String>, reason: &'static str) -> Self {
+        Self::InvalidComponentName {
+            name: name.into(),
+            reason,
+        }
+    }
+
+    /// Create an [`InvalidDateTime`](Self::InvalidDateTime) error.
+    ///
+    /// This is the public constructor for the `InvalidDateTime` variant, which
+    /// is `#[non_exhaustive]` and therefore cannot be constructed with a struct
+    /// expression outside this crate.
+    pub fn invalid_datetime(value: impl Into<String>, reason: &'static str) -> Self {
+        Self::InvalidDateTime {
+            value: value.into(),
+            reason,
+        }
+    }
+
     /// Create a [`Tls`](Self::Tls) error with the given context and source.
     ///
     /// This is the public constructor for the `Tls` variant, which is

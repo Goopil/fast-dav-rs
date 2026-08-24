@@ -200,6 +200,85 @@ fn tls_error_display_includes_context() {
     assert!(display.contains("rustls config"), "display: {display}");
 }
 
+#[test]
+fn invalid_etag_preserves_reason_without_source() {
+    let error = Error::invalid_etag(EtagReason::InvalidFormat);
+    assert!(matches!(
+        &error,
+        Error::InvalidEtag {
+            reason: EtagReason::InvalidFormat,
+            source: None,
+            ..
+        }
+    ));
+    assert!(
+        error.to_string().contains("invalid entity-tag format"),
+        "display: {}",
+        error
+    );
+    assert!(error.source().is_none());
+}
+
+#[test]
+fn invalid_etag_with_source_preserves_chain() {
+    let source = std::io::Error::other("bad header value");
+    let error = Error::invalid_etag_with_source(EtagReason::InvalidHeaderValue, source);
+    assert!(matches!(
+        &error,
+        Error::InvalidEtag {
+            reason: EtagReason::InvalidHeaderValue,
+            source: Some(_),
+            ..
+        }
+    ));
+    assert!(
+        error.source().is_some(),
+        "source() must return the inner error"
+    );
+    assert!(
+        error
+            .source()
+            .unwrap()
+            .to_string()
+            .contains("bad header value"),
+        "source chain must preserve the inner message"
+    );
+}
+
+#[test]
+fn invalid_component_name_preserves_fields() {
+    let error = Error::invalid_component_name("VEVENT/INVALID", "component name must not be empty");
+    assert!(matches!(
+        &error,
+        Error::InvalidComponentName { name, reason, .. }
+            if name == "VEVENT/INVALID" && *reason == "component name must not be empty"
+    ));
+    assert!(
+        error.to_string().contains("VEVENT/INVALID"),
+        "display: {}",
+        error
+    );
+}
+
+#[test]
+fn invalid_datetime_preserves_fields() {
+    let error = Error::invalid_datetime(
+        "2024-01-01T00:00:00Z",
+        "expected iCalendar format YYYYMMDDTHHMMSSZ",
+    );
+    assert!(matches!(
+        &error,
+        Error::InvalidDateTime { value, reason, .. }
+            if value == "2024-01-01T00:00:00Z"
+            && *reason == "expected iCalendar format YYYYMMDDTHHMMSSZ"
+    ));
+    assert!(
+        error.to_string().contains("2024-01-01T00:00:00Z"),
+        "display: {}",
+        error
+    );
+}
+
 /// A connection-refused error must be classified as `Error::Connection`.
 ///
 /// `hyper_util::client::legacy::Error`'s `ErrorKind` enum is private, so

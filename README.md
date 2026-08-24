@@ -179,26 +179,36 @@ fn is_retryable(error: &Error) -> bool {
 
 ### Error variants
 
-| Variant              | When it occurs                                              |
-|----------------------|-------------------------------------------------------------|
-| `InvalidUrl`         | A base URL or resolved request URI is invalid               |
-| `InvalidInput`       | A caller-provided value failed validation (ETag, dates, …)  |
-| `InvalidHeader`      | An HTTP header value could not be constructed               |
-| `InvalidMethod`      | An HTTP method was invalid                                  |
-| `Http`               | Building an HTTP request failed                             |
-| `Hyper`              | A low-level Hyper connection or body operation failed       |
-| `Connection`         | The TCP/TLS handshake failed (DNS, refused, TLS)            |
-| `Transport`          | A request was sent but the response stream broke            |
-| `UnexpectedStatus`   | The server returned an unexpected HTTP status code          |
-| `Timeout`            | An operation exceeded its configured time limit            |
-| `Xml`                | Parsing or decoding XML failed                              |
-| `XmlStructure`       | The XML element hierarchy is malformed or incomplete        |
-| `XmlEscape`          | Unescaping XML entity references failed                    |
-| `XmlAttribute`       | Parsing an XML attribute failed                             |
-| `Io`                 | An I/O operation failed                                     |
-| `Utf8`               | Decoding UTF-8 text failed                                   |
-| `Tls`                | TLS, certificate, or PEM parsing failed                     |
-| `Other`              | User callback error or error that doesn't fit another variant |
+| Variant                | When it occurs                                                        |
+|------------------------|-----------------------------------------------------------------------|
+| `InvalidUrl`           | A base URL or resolved request URI is invalid                         |
+| `InvalidInput`         | Catch-all for a caller-provided value that failed validation           |
+| `InvalidEtag`          | An ETag value failed validation                                        |
+| `InvalidComponentName` | A calendar/addressbook component name failed validation               |
+| `InvalidDateTime`      | A date-time value did not match the expected iCalendar UTC format     |
+| `InvalidConfig`        | A builder configuration value is invalid                               |
+| `InvalidHeader`        | An HTTP header value could not be constructed                         |
+| `InvalidMethod`        | An HTTP method was invalid                                            |
+| `Http`                 | Building an HTTP request failed                                       |
+| `Hyper`                | A low-level Hyper connection or body operation failed                 |
+| `Connection`           | The TCP/TLS handshake failed (DNS, refused, TLS)                      |
+| `Transport`            | A request was sent but the response stream broke                      |
+| `UnexpectedStatus`     | The server returned an unexpected HTTP status code                    |
+| `Timeout`              | An operation exceeded its configured time limit                      |
+| `Xml`                  | Parsing or decoding XML failed                                        |
+| `XmlStructure`         | The XML element hierarchy is malformed or incomplete                  |
+| `XmlEscape`            | Unescaping XML entity references failed                              |
+| `XmlAttribute`         | Parsing an XML attribute failed                                       |
+| `Io`                   | An I/O operation failed                                               |
+| `Utf8`                 | Decoding UTF-8 text failed                                             |
+| `TlsRustls`             | A rustls TLS operation failed                                         |
+| `Tls`                  | TLS, certificate, or PEM parsing failed                               |
+| `Other`                | User callback error or error that doesn't fit another variant         |
+
+The `Operation` enum identifies which DAV operation produced an
+`UnexpectedStatus` (e.g. `PropfindCollections`, `ReportCalendarQuery`). The
+`EtagReason` enum describes why an ETag was rejected (`Empty`,
+`InvalidFormat`, `InvalidCharacters`, `InvalidHeaderValue`).
 
 ### Migrating from `anyhow`
 
