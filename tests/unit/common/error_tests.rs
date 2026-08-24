@@ -47,18 +47,13 @@ async fn invalid_calendar_component_is_a_typed_input_error() {
 
 #[test]
 fn public_error_variants_expose_retry_relevant_context() {
-    let status_error = Error::UnexpectedStatus {
-        operation: "PROPFIND calendars".to_owned(),
-        status: StatusCode::FORBIDDEN,
-    };
+    let status_error = Error::unexpected_status("PROPFIND calendars", StatusCode::FORBIDDEN);
     assert_eq!(
         status_error.to_string(),
         "PROPFIND calendars failed with 403 Forbidden"
     );
 
-    let timeout_error = Error::Timeout {
-        limit: Duration::from_secs(20),
-    };
+    let timeout_error = Error::timeout(Duration::from_secs(20));
     assert_eq!(timeout_error.to_string(), "operation timed out after 20s");
 }
 
@@ -144,7 +139,7 @@ fn other_with_source_preserves_chain() {
 
     assert!(matches!(
         &error,
-        Error::Other { context, source: Some(_) } if context == "outer context"
+        Error::Other { context, source: Some(_), .. } if context == "outer context"
     ));
 
     assert!(
@@ -174,14 +169,11 @@ fn other_without_source_has_no_chain() {
 #[test]
 fn tls_error_preserves_source_chain() {
     let source = std::io::Error::other("PEM parse failed");
-    let error = Error::Tls {
-        context: "failed to parse PEM certificate".to_owned(),
-        source: Some(Box::new(source)),
-    };
+    let error = Error::tls("failed to parse PEM certificate", source);
 
     assert!(matches!(
         &error,
-        Error::Tls { context, source: Some(_) } if context == "failed to parse PEM certificate"
+        Error::Tls { context, source: Some(_), .. } if context == "failed to parse PEM certificate"
     ));
     assert!(
         error.source().is_some(),
@@ -200,10 +192,7 @@ fn tls_error_preserves_source_chain() {
 #[test]
 fn tls_error_display_includes_context() {
     let source = std::io::Error::other("bad cert");
-    let error = Error::Tls {
-        context: "rustls config".to_owned(),
-        source: Some(Box::new(source)),
-    };
+    let error = Error::tls("rustls config", source);
     let display = error.to_string();
     assert!(display.contains("rustls config"), "display: {display}");
 }

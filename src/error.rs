@@ -13,6 +13,7 @@ use std::time::Duration;
 pub enum Error {
     /// A base URL or resolved request URI is invalid.
     #[error("invalid URL `{url}`: {source}")]
+    #[non_exhaustive]
     InvalidUrl {
         /// The URL value that failed validation.
         url: String,
@@ -51,6 +52,7 @@ pub enum Error {
 
     /// A DAV operation returned an unexpected HTTP status.
     #[error("{operation} failed with {status}")]
+    #[non_exhaustive]
     UnexpectedStatus {
         /// The operation that failed.
         operation: String,
@@ -60,6 +62,7 @@ pub enum Error {
 
     /// An operation exceeded its configured time limit.
     #[error("operation timed out after {}s", limit.as_secs())]
+    #[non_exhaustive]
     Timeout {
         /// The configured time limit.
         limit: Duration,
@@ -96,6 +99,7 @@ pub enum Error {
     /// where or why the error occurred; the underlying cause is
     /// accessible via `source()`.
     #[error("TLS error: {context}")]
+    #[non_exhaustive]
     Tls {
         /// Human-readable context describing the TLS failure.
         context: String,
@@ -112,6 +116,7 @@ pub enum Error {
     /// avoids leaking the cause into the `Display` output, but consumers that
     /// print errors should walk the source chain to avoid losing information.
     #[error("{context}")]
+    #[non_exhaustive]
     Other {
         /// Human-readable context describing where or why the error occurred.
         context: String,
@@ -132,7 +137,33 @@ impl Error {
         }
     }
 
-    pub(crate) fn tls(
+    /// Create an [`UnexpectedStatus`](Self::UnexpectedStatus) error.
+    ///
+    /// This is the public constructor for the `UnexpectedStatus` variant,
+    /// which is `#[non_exhaustive]` and therefore cannot be constructed with
+    /// a struct expression outside this crate.
+    pub fn unexpected_status(operation: impl Into<String>, status: StatusCode) -> Self {
+        Self::UnexpectedStatus {
+            operation: operation.into(),
+            status,
+        }
+    }
+
+    /// Create a [`Timeout`](Self::Timeout) error.
+    ///
+    /// This is the public constructor for the `Timeout` variant, which is
+    /// `#[non_exhaustive]` and therefore cannot be constructed with a struct
+    /// expression outside this crate.
+    pub fn timeout(limit: Duration) -> Self {
+        Self::Timeout { limit }
+    }
+
+    /// Create a [`Tls`](Self::Tls) error with the given context and source.
+    ///
+    /// This is the public constructor for the `Tls` variant, which is
+    /// `#[non_exhaustive]` and therefore cannot be constructed with a struct
+    /// expression outside this crate.
+    pub fn tls(
         context: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
