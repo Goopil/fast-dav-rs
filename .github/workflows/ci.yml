@@ -52,7 +52,7 @@ jobs:
         run: cargo nextest run --all-features --locked --test unit_tests
 
       - name: Cargo build examples
-        run: cargo build --examples --all-features
+        run: cargo build --examples --all-features --locked
 
       - name: Cargo doc tests
-        run: cargo test --doc --all-features
+        run: cargo test --doc --all-features --locked
