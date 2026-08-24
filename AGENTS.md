@@ -151,6 +151,7 @@ src/
 - Use proper markdown formatting in documentation
 - Document error conditions and edge cases
 - Include performance considerations where relevant
+- **Keep documentation files in sync with code changes** — when adding, removing, or modifying public APIs, error variants, features, or configuration options, always update `README.md`, `AGENTS.md`, and any relevant examples in `examples/`. Stale documentation is a bug.
 
 ### Module Re-exports
 - Each module's `mod.rs` should contain `pub use` re-exports for clean public API
