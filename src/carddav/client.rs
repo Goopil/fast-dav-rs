@@ -197,7 +197,7 @@ impl CardDavClient {
     /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
     ///
     /// Use this when you want to parse the response on the fly, e.g. with
-    /// [`crate::streaming::parse_multistatus_stream`].
+    /// [`crate::carddav::streaming::parse_multistatus_stream`].
     pub async fn send_stream(
         &self,
         method: Method,
@@ -678,7 +678,7 @@ impl CardDavClient {
 
     /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
     ///
-    /// Combine with [`crate::streaming::parse_multistatus_stream`].
+    /// Combine with [`crate::carddav::streaming::parse_multistatus_stream`].
     pub async fn propfind_stream(
         &self,
         path: &str,
@@ -689,7 +689,7 @@ impl CardDavClient {
     }
     /// Streaming variant of `REPORT`, returning the non-aggregated body.
     ///
-    /// Combine with [`crate::streaming::parse_multistatus_stream`].
+    /// Combine with [`crate::carddav::streaming::parse_multistatus_stream`].
     pub async fn report_stream(
         &self,
         path: &str,
