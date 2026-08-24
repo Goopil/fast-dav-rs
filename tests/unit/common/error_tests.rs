@@ -51,7 +51,7 @@ fn public_error_variants_expose_retry_relevant_context() {
         Error::unexpected_status(Operation::PropfindCollections, StatusCode::FORBIDDEN);
     assert_eq!(
         status_error.to_string(),
-        "PROPFIND calendars failed with 403 Forbidden"
+        "PROPFIND collections failed with 403 Forbidden"
     );
 
     let timeout_error = Error::timeout(Duration::from_secs(20));

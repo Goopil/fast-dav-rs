@@ -159,7 +159,7 @@ impl std::fmt::Display for Operation {
             Self::PropfindCurrentUserPrincipal => "PROPFIND current-user-principal",
             Self::PropfindCalendarHomeSet => "PROPFIND calendar-home-set",
             Self::PropfindAddressbookHomeSet => "PROPFIND addressbook-home-set",
-            Self::PropfindCollections => "PROPFIND calendars",
+            Self::PropfindCollections => "PROPFIND collections",
             Self::ReportCalendarQuery => "REPORT calendar-query",
             Self::ReportCalendarMultiget => "REPORT calendar-multiget",
             Self::ReportAddressbookQuery => "REPORT addressbook-query",
