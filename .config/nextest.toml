@@ -1,0 +1,2 @@
+[profile.ci.junit]
+path = "target/nextest/junit.xml"
