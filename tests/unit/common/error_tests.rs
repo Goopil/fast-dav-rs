@@ -43,7 +43,7 @@ async fn invalid_calendar_component_is_a_typed_input_error() {
 
     assert!(matches!(
         error,
-        Error::InvalidComponentName { name, .. } if name == "VEVENT/INVALID"
+        Error::InvalidComponentName { name, bad_char: Some('/'), .. } if name == "VEVENT/INVALID"
     ));
 }
 
@@ -250,8 +250,23 @@ fn invalid_component_name_preserves_fields() {
     let error = Error::invalid_component_name("VEVENT/INVALID", "component name must not be empty");
     assert!(matches!(
         &error,
-        Error::InvalidComponentName { name, reason, .. }
+        Error::InvalidComponentName { name, reason, bad_char: None, .. }
             if name == "VEVENT/INVALID" && *reason == "component name must not be empty"
+    ));
+    assert!(
+        error.to_string().contains("VEVENT/INVALID"),
+        "display: {}",
+        error
+    );
+}
+
+#[test]
+fn invalid_component_name_with_char_preserves_bad_char() {
+    let error = Error::invalid_component_name_with_char("VEVENT/INVALID", "invalid character", '/');
+    assert!(matches!(
+        &error,
+        Error::InvalidComponentName { name, reason, bad_char: Some('/'), .. }
+            if name == "VEVENT/INVALID" && *reason == "invalid character"
     ));
     assert!(
         error.to_string().contains("VEVENT/INVALID"),
@@ -263,18 +278,25 @@ fn invalid_component_name_preserves_fields() {
 #[test]
 fn invalid_datetime_preserves_fields() {
     let error = Error::invalid_datetime(
+        "calendar-query start",
         "2024-01-01T00:00:00Z",
         "expected iCalendar format YYYYMMDDTHHMMSSZ",
     );
     assert!(matches!(
         &error,
-        Error::InvalidDateTime { value, reason, .. }
-            if value == "2024-01-01T00:00:00Z"
+        Error::InvalidDateTime { context, value, reason, .. }
+            if context == "calendar-query start"
+            && value == "2024-01-01T00:00:00Z"
             && *reason == "expected iCalendar format YYYYMMDDTHHMMSSZ"
     ));
     assert!(
         error.to_string().contains("2024-01-01T00:00:00Z"),
         "display: {}",
+        error
+    );
+    assert!(
+        error.to_string().contains("calendar-query start"),
+        "display should include context: {}",
         error
     );
 }

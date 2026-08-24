@@ -309,8 +309,12 @@ async fn test_calendar_query_timerange_rejects_malicious_component() {
         .expect_err("component with XML metacharacters must be rejected before any request");
     assert!(matches!(
         err,
-        Error::InvalidComponentName { name, .. } if name == "VEVENT\"><evil/>"
+        Error::InvalidComponentName { ref name, bad_char: Some('"'), .. } if name == "VEVENT\"><evil/>"
     ));
+    assert!(
+        err.to_string().contains("VEVENT\"><evil/>"),
+        "display should include the offending name: {err}"
+    );
 }
 
 #[tokio::test]
@@ -324,7 +328,7 @@ async fn test_calendar_query_timerange_rejects_empty_component() {
         .expect_err("empty component must be rejected before any request");
     assert!(matches!(
         err,
-        Error::InvalidComponentName { name, .. } if name.is_empty()
+        Error::InvalidComponentName { ref name, bad_char: None, .. } if name.is_empty()
     ));
 }
 
@@ -345,8 +349,13 @@ async fn test_calendar_query_timerange_rejects_malformed_start() {
         .expect_err("malformed start must be rejected before any request");
     assert!(matches!(
         err,
-        Error::InvalidDateTime { ref value, .. } if value == "2024-01-01T00:00:00Z"
+        Error::InvalidDateTime { ref context, ref value, .. }
+            if context == "invalid calendar-query start" && value == "2024-01-01T00:00:00Z"
     ));
+    assert!(
+        err.to_string().contains("invalid calendar-query start"),
+        "error display should include context: {err}"
+    );
     assert!(
         err.to_string().contains("YYYYMMDDTHHMMSSZ"),
         "unexpected error: {err}"
@@ -370,8 +379,14 @@ async fn test_calendar_query_timerange_rejects_malformed_end() {
         .expect_err("malformed end must be rejected before any request");
     assert!(matches!(
         err,
-        Error::InvalidDateTime { value, .. } if value == "20240101T000000Z\"><inject/>"
+        Error::InvalidDateTime { ref context, ref value, .. }
+            if context == "invalid calendar-query end"
+            && value == "20240101T000000Z\"><inject/>"
     ));
+    assert!(
+        err.to_string().contains("invalid calendar-query end"),
+        "error display should include context: {err}"
+    );
 }
 
 #[test]

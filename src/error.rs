@@ -79,12 +79,16 @@ pub enum Error {
         name: String,
         /// Why it was rejected.
         reason: &'static str,
+        /// The invalid character that caused the rejection, if applicable.
+        bad_char: Option<char>,
     },
 
     /// A date-time value did not match the expected iCalendar UTC format.
-    #[error("invalid UTC date-time `{value}`: {reason}")]
+    #[error("{context}: invalid UTC date-time `{value}`: {reason}")]
     #[non_exhaustive]
     InvalidDateTime {
+        /// Where the invalid date-time was encountered (e.g. "calendar-query start").
+        context: String,
         /// The value that failed validation.
         value: String,
         /// Why it was rejected.
@@ -331,6 +335,26 @@ impl Error {
         Self::InvalidComponentName {
             name: name.into(),
             reason,
+            bad_char: None,
+        }
+    }
+
+    /// Create an [`InvalidComponentName`](Self::InvalidComponentName) error
+    /// with a specific invalid character.
+    ///
+    /// This is the public constructor for the `InvalidComponentName` variant,
+    /// which is `#[non_exhaustive]` and therefore cannot be constructed with a
+    /// struct expression outside this crate. Use this overload when the
+    /// rejection is due to a specific invalid character.
+    pub fn invalid_component_name_with_char(
+        name: impl Into<String>,
+        reason: &'static str,
+        bad_char: char,
+    ) -> Self {
+        Self::InvalidComponentName {
+            name: name.into(),
+            reason,
+            bad_char: Some(bad_char),
         }
     }
 
@@ -339,8 +363,13 @@ impl Error {
     /// This is the public constructor for the `InvalidDateTime` variant, which
     /// is `#[non_exhaustive]` and therefore cannot be constructed with a struct
     /// expression outside this crate.
-    pub fn invalid_datetime(value: impl Into<String>, reason: &'static str) -> Self {
+    pub fn invalid_datetime(
+        context: impl Into<String>,
+        value: impl Into<String>,
+        reason: &'static str,
+    ) -> Self {
         Self::InvalidDateTime {
+            context: context.into(),
             value: value.into(),
             reason,
         }

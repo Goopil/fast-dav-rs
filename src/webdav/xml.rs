@@ -31,15 +31,17 @@ pub(crate) fn validate_component_name(name: &str, _context: &str) -> Result<()> 
         return Err(Error::InvalidComponentName {
             name: name.to_owned(),
             reason: "component name must not be empty",
+            bad_char: None,
         });
     }
-    if let Some(_bad) = name
+    if let Some(bad) = name
         .chars()
         .find(|c| !(c.is_ascii_alphanumeric() || *c == '-'))
     {
         return Err(Error::InvalidComponentName {
             name: name.to_owned(),
             reason: "only ASCII letters, digits and '-' are allowed (e.g. VEVENT, X-CUSTOM)",
+            bad_char: Some(bad),
         });
     }
     Ok(())
@@ -56,7 +58,7 @@ pub(crate) fn validate_component_name(name: &str, _context: &str) -> Result<()> 
 /// # Errors
 ///
 /// Returns an error when `value` does not match `YYYYMMDDTHHMMSSZ`.
-pub(crate) fn validate_utc_datetime(value: &str, _context: &str) -> Result<()> {
+pub(crate) fn validate_utc_datetime(value: &str, context: &str) -> Result<()> {
     let bytes = value.as_bytes();
     let structurally_valid = bytes.len() == 16
         && bytes[..8].iter().all(u8::is_ascii_digit)
@@ -65,6 +67,7 @@ pub(crate) fn validate_utc_datetime(value: &str, _context: &str) -> Result<()> {
         && bytes[15] == b'Z';
     if !structurally_valid {
         return Err(Error::InvalidDateTime {
+            context: context.to_owned(),
             value: value.to_owned(),
             reason: "expected iCalendar format YYYYMMDDTHHMMSSZ (e.g. 20240101T000000Z)",
         });
