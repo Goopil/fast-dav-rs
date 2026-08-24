@@ -60,9 +60,24 @@ pub type ConfigResult<T> = std::result::Result<T, ConfigError>;
 // }
 // ```
 
-// AFTER — `#[from]` on `InvalidPort` generates `From<ParseIntError>`, so `?`
-// converts automatically. The caller knows it was a parse error and can match
-// on `ConfigError::InvalidPort`.
+// AFTER — For tuple/newtype variants (no extra fields), `#[from]` generates
+// a `From<E>` impl so `?` converts automatically. But `InvalidPort` has an
+// extra `raw: String` field that `#[from]` cannot populate — so we use
+// `#[source]` and `.map_err()` to construct the variant with the input value.
+//
+// If the variant had NO extra fields, it would look like this:
+//
+// ```ignore
+// #[derive(Debug, thiserror::Error)]
+// pub enum SimpleError {
+//     #[error("parse failed: {0}")]
+//     Parse(#[from] ParseIntError),  // ? works: From<ParseIntError> auto-generated
+// }
+// fn parse(raw: &str) -> Result<u16, SimpleError> {
+//     let port: u16 = raw.parse()?;  // ParseIntError -> SimpleError::Parse via #[from]
+//     Ok(port)
+// }
+// ```
 
 fn parse_port(raw: &str) -> ConfigResult<u16> {
     let port: u16 = raw.parse().map_err(|source| ConfigError::InvalidPort {

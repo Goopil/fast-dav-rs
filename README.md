@@ -361,9 +361,16 @@ cargo run --example migration
 Key patterns at a glance:
 
 ```rust
-// 1. Define typed variants — #[from] generates From impls so `?` works
+// 1. Define typed variants — #[from] for simple variants, #[source] for rich ones
+//
+// #[from] generates a From<E> impl so `?` works automatically — but only
+// for newtype/tuple variants with NO extra fields:
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    #[error("parse failed: {0}")]
+    Parse(#[from] ParseIntError),  // ? converts automatically
+
+    // For struct variants with extra context, use #[source] + .map_err():
     #[error("invalid port `{raw}`: {source}")]
     InvalidPort { raw: String, #[source] source: ParseIntError },
 
@@ -371,7 +378,7 @@ pub enum AppError {
     OutOfRange(u16),
 }
 
-// 2. Use ? — ParseIntError converts via #[from] automatically
+// 2. Use ? for #[from] variants; .map_err() for #[source] variants
 fn parse_port(raw: &str) -> Result<u16, AppError> {
     let port: u16 = raw.parse()
         .map_err(|source| AppError::InvalidPort { raw: raw.to_owned(), source })?;
