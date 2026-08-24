@@ -11,7 +11,7 @@ documentation = "https://docs.rs/fast-dav-rs"
 homepage = "https://github.com/Goopil/fast-dav-rs"
 repository = "https://github.com/Goopil/fast-dav-rs"
 readme = "README.md"
-include = ["Cargo.toml", "LICENSE", "README.md", "src/**/*.rs"]
+include = ["Cargo.toml", "LICENSE", "README.md", "src/**/*.rs", "examples/**/*.rs"]
 
 [dependencies]
 base64 = "0.23"
