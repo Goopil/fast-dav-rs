@@ -1,4 +1,4 @@
-use fast_dav_rs::{CalDavClient, Error, Result, WebDavClient};
+use fast_dav_rs::{CalDavClient, Error, Operation, Result, WebDavClient};
 use hyper::StatusCode;
 use hyper::{HeaderMap, Method};
 use std::error::Error as _;
@@ -47,7 +47,8 @@ async fn invalid_calendar_component_is_a_typed_input_error() {
 
 #[test]
 fn public_error_variants_expose_retry_relevant_context() {
-    let status_error = Error::unexpected_status("PROPFIND calendars", StatusCode::FORBIDDEN);
+    let status_error =
+        Error::unexpected_status(Operation::PropfindCollections, StatusCode::FORBIDDEN);
     assert_eq!(
         status_error.to_string(),
         "PROPFIND calendars failed with 403 Forbidden"

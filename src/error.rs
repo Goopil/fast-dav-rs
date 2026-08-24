@@ -55,7 +55,7 @@ pub enum Error {
     #[non_exhaustive]
     UnexpectedStatus {
         /// The operation that failed.
-        operation: String,
+        operation: Operation,
         /// The status returned by the server.
         status: StatusCode,
     },
@@ -126,6 +126,50 @@ pub enum Error {
     },
 }
 
+/// Identifies which DAV operation produced an [`Error::UnexpectedStatus`].
+///
+/// Using an enum instead of `String` avoids allocation in the error path
+/// and lets callers match on the operation without string comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Operation {
+    /// `PROPFIND` to discover the current-user-principal.
+    PropfindCurrentUserPrincipal,
+    /// `PROPFIND` to discover the calendar-home-set.
+    PropfindCalendarHomeSet,
+    /// `PROPFIND` to discover the addressbook-home-set.
+    PropfindAddressbookHomeSet,
+    /// `PROPFIND` to list calendars or addressbooks.
+    PropfindCollections,
+    /// `REPORT` calendar-query.
+    ReportCalendarQuery,
+    /// `REPORT` calendar-multiget.
+    ReportCalendarMultiget,
+    /// `REPORT` addressbook-query.
+    ReportAddressbookQuery,
+    /// `REPORT` addressbook-multiget.
+    ReportAddressbookMultiget,
+    /// `REPORT` sync-collection.
+    ReportSyncCollection,
+}
+
+impl std::fmt::Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::PropfindCurrentUserPrincipal => "PROPFIND current-user-principal",
+            Self::PropfindCalendarHomeSet => "PROPFIND calendar-home-set",
+            Self::PropfindAddressbookHomeSet => "PROPFIND addressbook-home-set",
+            Self::PropfindCollections => "PROPFIND calendars",
+            Self::ReportCalendarQuery => "REPORT calendar-query",
+            Self::ReportCalendarMultiget => "REPORT calendar-multiget",
+            Self::ReportAddressbookQuery => "REPORT addressbook-query",
+            Self::ReportAddressbookMultiget => "REPORT addressbook-multiget",
+            Self::ReportSyncCollection => "REPORT sync-collection",
+        };
+        f.write_str(s)
+    }
+}
+
 impl Error {
     pub(crate) fn invalid_url(
         url: impl Into<String>,
@@ -142,11 +186,8 @@ impl Error {
     /// This is the public constructor for the `UnexpectedStatus` variant,
     /// which is `#[non_exhaustive]` and therefore cannot be constructed with
     /// a struct expression outside this crate.
-    pub fn unexpected_status(operation: impl Into<String>, status: StatusCode) -> Self {
-        Self::UnexpectedStatus {
-            operation: operation.into(),
-            status,
-        }
+    pub fn unexpected_status(operation: Operation, status: StatusCode) -> Self {
+        Self::UnexpectedStatus { operation, status }
     }
 
     /// Create a [`Timeout`](Self::Timeout) error.

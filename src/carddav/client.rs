@@ -12,7 +12,7 @@ use crate::carddav::types::{
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
 use crate::webdav::types::http_status_code;
-use crate::{Error, Result};
+use crate::{Error, Operation, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
 
@@ -412,7 +412,7 @@ impl CardDavClient {
         let resp = self.propfind("", Depth::Zero, body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
-                operation: "PROPFIND current-user-principal".to_owned(),
+                operation: Operation::PropfindCurrentUserPrincipal,
                 status: resp.status(),
             });
         }
@@ -443,7 +443,7 @@ impl CardDavClient {
         let resp = self.propfind(principal_path, Depth::Zero, body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
-                operation: "PROPFIND addressbook-home-set".to_owned(),
+                operation: Operation::PropfindAddressbookHomeSet,
                 status: resp.status(),
             });
         }
@@ -476,7 +476,7 @@ impl CardDavClient {
         let resp = self.propfind(home_set_path, Depth::One, body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
-                operation: "PROPFIND addressbooks".to_owned(),
+                operation: Operation::PropfindCollections,
                 status: resp.status(),
             });
         }
@@ -496,7 +496,7 @@ impl CardDavClient {
         let resp = self.report(addressbook_path, Depth::One, &xml).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
-                operation: "REPORT addressbook-query".to_owned(),
+                operation: Operation::ReportAddressbookQuery,
                 status: resp.status(),
             });
         }
@@ -558,7 +558,7 @@ impl CardDavClient {
         let resp = self.report(addressbook_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
-                operation: "REPORT addressbook-multiget".to_owned(),
+                operation: Operation::ReportAddressbookMultiget,
                 status: resp.status(),
             });
         }
@@ -579,7 +579,7 @@ impl CardDavClient {
         let resp = self.report(addressbook_path, Depth::One, &body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
-                operation: "REPORT sync-collection".to_owned(),
+                operation: Operation::ReportSyncCollection,
                 status: resp.status(),
             });
         }
