@@ -8,3 +8,10 @@
 .DS_Store
 **/.DS_Store
 .worktrees/
+
+# Coverage output (tarpaulin)
+target/tarpaulin/
+# Coverage output (llvm-cov)
+target/llvm-cov/
+# Nextest output
+target/nextest/
