@@ -108,3 +108,45 @@ pub fn build_sync_collection_body(
     body.push_str("</D:sync-collection>");
     body
 }
+
+pub(crate) fn build_multiget_body<I, S>(
+    hrefs: I,
+    include_data: bool,
+    namespace: &str,
+    root_element: &str,
+    data_element: &str,
+) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut href_xml = String::new();
+    let mut total = 0usize;
+    for href in hrefs {
+        let href = href.as_ref();
+        if href.is_empty() {
+            continue;
+        }
+        total += 1;
+        href_xml.push_str("<D:href>");
+        href_xml.push_str(&escape_xml(href));
+        href_xml.push_str("</D:href>");
+    }
+    if total == 0 {
+        return None;
+    }
+
+    let mut body =
+        format!(r#"<C:{root_element} xmlns:D="DAV:" xmlns:C="{namespace}"><D:prop><D:getetag/>"#);
+    if include_data {
+        body.push_str("<C:");
+        body.push_str(data_element);
+        body.push_str("/>");
+    }
+    body.push_str("</D:prop>");
+    body.push_str(&href_xml);
+    body.push_str("</C:");
+    body.push_str(root_element);
+    body.push('>');
+    Some(body)
+}

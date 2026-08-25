@@ -402,33 +402,7 @@ impl CardDavClient {
     ///
     /// Returns `None` if the server omits the property.
     pub async fn discover_current_user_principal(&self) -> Result<Option<String>> {
-        let body = r#"
-<D:propfind xmlns:D="DAV:">
-  <D:prop>
-    <D:current-user-principal/>
-  </D:prop>
-</D:propfind>
-"#;
-        let resp = self.propfind("", Depth::Zero, body).await?;
-        if !resp.status().is_success() {
-            return Err(Error::UnexpectedStatus {
-                operation: Operation::PropfindCurrentUserPrincipal,
-                status: resp.status(),
-            });
-        }
-        let body = resp.into_body();
-        let mut principal = None;
-        for item in parse_multistatus_bytes(&body)?.items {
-            if let Some(found) = item
-                .current_user_principal
-                .into_iter()
-                .find(|href| !href.is_empty())
-            {
-                principal = Some(found);
-                break;
-            }
-        }
-        Ok(principal)
+        self.webdav.discover_current_user_principal().await
     }
 
     /// Discover the addressbook-home-set collection(s) for the provided principal path.
@@ -792,32 +766,13 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let mut href_xml = String::new();
-    let mut total = 0usize;
-    for href in hrefs {
-        let href = href.as_ref();
-        if href.is_empty() {
-            continue;
-        }
-        total += 1;
-        href_xml.push_str("<D:href>");
-        href_xml.push_str(&escape_xml(href));
-        href_xml.push_str("</D:href>");
-    }
-    if total == 0 {
-        return None;
-    }
-
-    let mut body = String::from(
-        r#"<C:addressbook-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:prop><D:getetag/>"#,
-    );
-    if include_data {
-        body.push_str("<C:address-data/>");
-    }
-    body.push_str("</D:prop>");
-    body.push_str(&href_xml);
-    body.push_str("</C:addressbook-multiget>");
-    Some(body)
+    crate::webdav::xml::build_multiget_body(
+        hrefs,
+        include_data,
+        "urn:ietf:params:xml:ns:carddav",
+        "addressbook-multiget",
+        "address-data",
+    )
 }
 
 pub fn build_sync_collection_body(
