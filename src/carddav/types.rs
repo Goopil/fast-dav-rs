@@ -3,6 +3,7 @@ pub use crate::webdav::types::{BatchItem, Depth};
 
 /// Item extracted from a WebDAV response
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DavItem {
     pub href: String,
     pub status: Option<String>,
@@ -66,6 +67,7 @@ impl DavItem {
 
 /// Summary of an addressbook (collection) returned by a `PROPFIND` depth=1.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AddressBookInfo {
     pub href: String,
     pub displayname: Option<String>,
@@ -78,6 +80,7 @@ pub struct AddressBookInfo {
 
 /// Address object (vCard) returned by a `REPORT`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AddressObject {
     pub href: String,
     pub etag: Option<String>,
@@ -87,6 +90,7 @@ pub struct AddressObject {
 
 /// Detail of an item returned by `sync-collection`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SyncItem {
     pub href: String,
     pub etag: Option<String>,
