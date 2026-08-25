@@ -714,7 +714,10 @@ pub use caldav::{
     map_calendar_list, map_calendar_objects, map_sync_response,
 };
 pub use carddav::builder::CardDavClientBuilder;
-pub use carddav::{AddressBookInfo, AddressObject, CardDavClient};
+pub use carddav::{
+    AddressBookInfo, AddressObject, CardDavClient, CardDavFilter, Collation, MatchType,
+    ParamFilter, TextMatch,
+};
 pub use common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, detect_encoding,
     detect_encodings, detect_request_compression_preference,

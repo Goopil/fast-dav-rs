@@ -7,7 +7,8 @@ pub mod types;
 
 pub use builder::CardDavClientBuilder;
 pub use client::{
-    CardDavClient, build_addressbook_multiget_body, build_addressbook_query_body,
+    CardDavClient, VCARD_CONTENT_TYPE, build_addressbook_multiget_body,
+    build_addressbook_query_body, build_addressbook_query_filter,
     build_addressbook_query_filter_email, build_addressbook_query_filter_fn,
     build_addressbook_query_filter_uid, build_sync_collection_body, map_address_objects,
     map_addressbook_list, map_sync_response,
@@ -18,5 +19,6 @@ pub use streaming::{
     parse_multistatus_stream_with_timeout,
 };
 pub use types::{
-    AddressBookInfo, AddressObject, BatchItem, DavItem, Depth, SyncItem, SyncResponse,
+    AddressBookInfo, AddressObject, BatchItem, CardDavFilter, Collation, DavItem, Depth, MatchType,
+    ParamFilter, SyncItem, SyncResponse, TextMatch,
 };
