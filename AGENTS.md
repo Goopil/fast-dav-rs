@@ -52,9 +52,11 @@ The project uses GitHub Actions with these key steps:
 5. `cargo test --doc --all-features --locked` - Run doc tests
 
 ### SonarCloud Quality Gates
-All PRs are analyzed by SonarCloud. The following gates must pass:
+All PRs are analyzed by SonarCloud. The following gates **must always pass** on every PR:
 1. **Coverage on New Code** ≥ 80% — New lines must be covered by unit tests. Code only reachable via e2e tests (HTTP methods against a live DAV server) is exempt; document exemptions in the PR if a gate fails for this reason.
 2. **Duplications on New Code** ≤ 3% — Avoid copy-paste between `caldav/` and `carddav/`. Share logic via `webdav/` or `common/` instead of duplicating client method bodies.
+
+These gates are mandatory and must not be bypassed. If a gate fails, fix the code before merging.
 
 ## Code Style Guidelines
 
