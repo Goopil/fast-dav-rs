@@ -15,7 +15,7 @@ use crate::common::http::HyperClient;
 use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::types::{BatchItem, Depth};
-use crate::{Error, Result};
+use crate::{Error, Operation, Result};
 
 /// Strategy for compressing outgoing request bodies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1020,6 +1020,28 @@ impl WebDavClient {
             Ok(response) => Ok(response.status().is_success()),
             Err(_) => Ok(false),
         }
+    }
+
+    /// Discover the current user's principal URL via `current-user-principal`.
+    ///
+    /// Returns `None` if the server omits the property.
+    pub async fn discover_current_user_principal(&self) -> Result<Option<String>> {
+        let body = r#"
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:current-user-principal/>
+  </D:prop>
+</D:propfind>
+"#;
+        let resp = self.propfind("", Depth::Zero, body).await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::PropfindCurrentUserPrincipal,
+                status: resp.status(),
+            });
+        }
+        let body = resp.into_body();
+        crate::webdav::streaming::parse_current_user_principal_bytes(&body)
     }
 
     /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
