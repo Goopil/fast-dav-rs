@@ -102,10 +102,10 @@ impl Default for WebDavClientBuilder {
             bearer_token: None,
             timeout: Duration::from_secs(20),
             connect_timeout: None,
-            user_agent: None,
+            user_agent: Some(format!("fast-dav-rs/{}", env!("CARGO_PKG_VERSION"))),
             force_http1: false,
             pool_max_idle_per_host: 32,
-            pool_idle_timeout: None,
+            pool_idle_timeout: Some(Duration::from_secs(90)),
             request_compression: RequestCompressionMode::default(),
             proxy: None,
             proxy_basic_user: None,
@@ -172,7 +172,8 @@ impl WebDavClientBuilder {
         self
     }
 
-    /// Set the `User-Agent` header sent on every request. Default: **none**.
+    /// Set the `User-Agent` header sent on every request. Default:
+    /// **`fast-dav-rs/{version}`**.
     pub fn user_agent(mut self, ua: impl Into<String>) -> Self {
         self.user_agent = Some(ua.into());
         self
@@ -193,7 +194,7 @@ impl WebDavClientBuilder {
         self
     }
 
-    /// Set the idle connection timeout for the pool. Default: **unbounded**.
+    /// Set the idle connection timeout for the pool. Default: **90 seconds**.
     pub fn pool_idle_timeout(mut self, timeout: Duration) -> Self {
         self.pool_idle_timeout = Some(timeout);
         self
