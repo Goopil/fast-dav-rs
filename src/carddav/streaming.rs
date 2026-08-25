@@ -6,7 +6,6 @@ use crate::{Error, Result};
 use futures::TryStreamExt;
 use http_body_util::BodyStream;
 use hyper::body::Incoming;
-use quick_xml::escape::unescape;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Decoder, Reader, XmlVersion};
 use std::io::{BufRead, Cursor};
@@ -502,8 +501,5 @@ where
 }
 
 pub fn decode_text(raw: &[u8]) -> Result<String> {
-    match std::str::from_utf8(raw) {
-        Ok(s) => Ok(unescape(s)?.into_owned()),
-        Err(_) => Ok(String::from_utf8_lossy(raw).into_owned()),
-    }
+    crate::webdav::streaming::decode_text(raw)
 }

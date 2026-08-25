@@ -139,3 +139,98 @@ fn test_parse_multistatus_unexpected_elements() {
     assert_eq!(items[0].href, "/dav/user01/event1.ics");
     assert_eq!(items[0].etag.as_deref(), Some("etag-1"));
 }
+
+#[test]
+fn test_parse_comp_with_unknown_attribute_ignored() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-calendar-component-set>
+          <C:comp name="VEVENT" unknown="ignored"/>
+        </C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].supported_components, vec!["VEVENT".to_string()]);
+}
+
+#[test]
+fn test_parse_comp_empty_name_ignored() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-calendar-component-set>
+          <C:comp name=""/>
+        </C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert!(items[0].supported_components.is_empty());
+}
+
+#[test]
+fn test_parse_comp_duplicate_name_not_duplicated() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:supported-calendar-component-set>
+          <C:comp name="VEVENT"/>
+          <C:comp name="vevent"/>
+        </C:supported-calendar-component-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].supported_components, vec!["VEVENT".to_string()]);
+}
+
+#[test]
+fn test_parse_empty_calendar_data_text() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:calendar-data></C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let items = parse_multistatus_bytes(xml.as_bytes())
+        .expect("Parsing should succeed")
+        .items;
+    assert_eq!(items.len(), 1);
+    assert!(items[0].calendar_data.is_none());
+}

@@ -1,6 +1,7 @@
 use crate::webdav::client::{normalize_etag, normalize_sync_token};
 use crate::webdav::types::DavItemCommon;
 use crate::{Error, Result};
+use quick_xml::escape::unescape;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommonElement {
@@ -200,5 +201,92 @@ impl CommonParser {
 
     fn path_ends_with(&self, needle: &[CommonElement]) -> bool {
         path_ends_with(&self.stack, needle)
+    }
+}
+
+pub(crate) fn decode_text(raw: &[u8]) -> Result<String> {
+    match std::str::from_utf8(raw) {
+        Ok(s) => Ok(unescape(s)?.into_owned()),
+        Err(_) => Ok(String::from_utf8_lossy(raw).into_owned()),
+    }
+}
+
+pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<String>> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+    use std::io::Cursor;
+    let cursor = Cursor::new(body);
+    let mut xml = Reader::from_reader(cursor);
+    xml.config_mut().trim_text(false);
+
+    let mut buf = Vec::with_capacity(8 * 1024);
+    let mut parser = CommonParser::new();
+    let mut principal = None;
+
+    loop {
+        match xml.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => parser.on_start(e.name().as_ref()),
+            Ok(Event::Empty(e)) => {
+                parser.on_start(e.name().as_ref());
+                parser.on_end(e.name().as_ref())?;
+            }
+            Ok(Event::Text(e)) => {
+                let text = decode_text(e.as_ref())?;
+                parser.on_text(&text);
+            }
+            Ok(Event::End(e)) => {
+                parser.on_end(e.name().as_ref())?;
+                let name = e.name();
+                let local = match name.as_ref().iter().position(|b| *b == b':') {
+                    Some(idx) => &name.as_ref()[idx + 1..],
+                    None => name.as_ref(),
+                };
+                if local.eq_ignore_ascii_case(b"response") {
+                    let common = parser.finish_response();
+                    if principal.is_none() {
+                        if let Some(found) = common
+                            .current_user_principal
+                            .into_iter()
+                            .find(|href| !href.is_empty())
+                        {
+                            principal = Some(found);
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => return Err(Error::from_quick_xml(error)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(principal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn on_end_mismatched_closing_tag() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        let err = parser.on_end(b"D:prop").unwrap_err();
+        assert!(
+            err.to_string().contains("does not match"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn on_end_without_opening_tag() {
+        let mut parser = CommonParser::new();
+        let err = parser.on_end(b"D:response").unwrap_err();
+        assert!(
+            err.to_string().contains("without a matching opening tag"),
+            "unexpected error: {err}"
+        );
     }
 }
