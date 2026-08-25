@@ -289,4 +289,269 @@ mod tests {
             "unexpected error: {err}"
         );
     }
+
+    #[test]
+    fn on_text_sets_href() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:href");
+        parser.on_text("/path/to/resource/");
+        let resp = parser.finish_response();
+        assert_eq!(resp.href, "/path/to/resource/");
+    }
+
+    #[test]
+    fn on_text_sets_status_direct() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:status");
+        parser.on_text("HTTP/1.1 200 OK");
+        let resp = parser.finish_response();
+        assert_eq!(resp.status.as_deref(), Some("HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn on_text_sets_status_in_propstat() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:status");
+        parser.on_text("HTTP/1.1 200 OK");
+        let resp = parser.finish_response();
+        assert_eq!(resp.status.as_deref(), Some("HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn on_text_sets_displayname() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:prop");
+        parser.on_start(b"D:displayname");
+        parser.on_text("My Calendar");
+        let resp = parser.finish_response();
+        assert_eq!(resp.displayname.as_deref(), Some("My Calendar"));
+    }
+
+    #[test]
+    fn on_text_sets_etag() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:prop");
+        parser.on_start(b"D:getetag");
+        parser.on_text("\"abc123\"");
+        let resp = parser.finish_response();
+        assert_eq!(resp.etag.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn on_text_sets_sync_token() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:prop");
+        parser.on_start(b"D:sync-token");
+        parser.on_text("http://sync/123");
+        let resp = parser.finish_response();
+        assert_eq!(resp.sync_token.as_deref(), Some("http://sync/123"));
+    }
+
+    #[test]
+    fn on_text_sets_current_user_principal() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:prop");
+        parser.on_start(b"D:current-user-principal");
+        parser.on_start(b"D:href");
+        parser.on_text("/principals/me/");
+        let resp = parser.finish_response();
+        assert_eq!(
+            resp.current_user_principal,
+            vec!["/principals/me/".to_string()]
+        );
+    }
+
+    #[test]
+    fn on_text_sets_owner() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:prop");
+        parser.on_start(b"D:owner");
+        parser.on_start(b"D:href");
+        parser.on_text("/owners/me/");
+        let resp = parser.finish_response();
+        assert_eq!(resp.owner.as_deref(), Some("/owners/me/"));
+    }
+
+    #[test]
+    fn on_text_sets_content_type() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:prop");
+        parser.on_start(b"D:getcontenttype");
+        parser.on_text("text/calendar");
+        let resp = parser.finish_response();
+        assert_eq!(resp.content_type.as_deref(), Some("text/calendar"));
+    }
+
+    #[test]
+    fn on_text_sets_last_modified() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:prop");
+        parser.on_start(b"D:getlastmodified");
+        parser.on_text("Mon, 01 Jan 2024 00:00:00 GMT");
+        let resp = parser.finish_response();
+        assert_eq!(
+            resp.last_modified.as_deref(),
+            Some("Mon, 01 Jan 2024 00:00:00 GMT")
+        );
+    }
+
+    #[test]
+    fn on_text_empty_is_noop() {
+        let mut parser = CommonParser::new();
+        parser.on_text("");
+        let resp = parser.finish_response();
+        assert!(resp.href.is_empty());
+        assert!(resp.status.is_none());
+    }
+
+    #[test]
+    fn on_text_whitespace_only_is_noop() {
+        let mut parser = CommonParser::new();
+        parser.on_text("   \n\t  ");
+        let resp = parser.finish_response();
+        assert!(resp.href.is_empty());
+        assert!(resp.status.is_none());
+    }
+
+    #[test]
+    fn on_text_no_context_is_noop() {
+        let mut parser = CommonParser::new();
+        parser.on_text("orphan text");
+        let resp = parser.finish_response();
+        assert!(resp.href.is_empty());
+        assert!(resp.status.is_none());
+    }
+
+    #[test]
+    fn parse_current_user_principal_bytes_valid() {
+        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal><D:href>/principals/user/</D:href></D:current-user-principal>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+        let result = parse_current_user_principal_bytes(xml).unwrap();
+        assert_eq!(result.as_deref(), Some("/principals/user/"));
+    }
+
+    #[test]
+    fn parse_current_user_principal_bytes_no_principal() {
+        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>My Cal</D:displayname>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+        let result = parse_current_user_principal_bytes(xml).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_current_user_principal_bytes_empty_href_skipped() {
+        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal><D:href></D:href></D:current-user-principal>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+        let result = parse_current_user_principal_bytes(xml).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_current_user_principal_bytes_multi_response_picks_second() {
+        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal><D:href></D:href></D:current-user-principal>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/other/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal><D:href>/principals/second/</D:href></D:current-user-principal>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+        let result = parse_current_user_principal_bytes(xml).unwrap();
+        assert_eq!(result.as_deref(), Some("/principals/second/"));
+    }
+
+    #[test]
+    fn parse_current_user_principal_bytes_malformed_xml() {
+        let xml = b"<D:multistatus><D:response><D:prop";
+        let result = parse_current_user_principal_bytes(xml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_current_user_principal_bytes_first_match_wins() {
+        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal><D:href>/principals/first/</D:href></D:current-user-principal>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/other/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:current-user-principal><D:href>/principals/second/</D:href></D:current-user-principal>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+        let result = parse_current_user_principal_bytes(xml).unwrap();
+        assert_eq!(result.as_deref(), Some("/principals/first/"));
+    }
 }

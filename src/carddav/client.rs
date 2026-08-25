@@ -870,3 +870,114 @@ pub fn map_sync_response(
         items: out,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_prop_inner_d_uppercase() {
+        let xml = "<outer><D:prop>inner content</D:prop></outer>";
+        let result = extract_prop_inner(xml);
+        assert_eq!(result.as_deref(), Some("inner content"));
+    }
+
+    #[test]
+    fn extract_prop_inner_d_lowercase() {
+        let xml = "<outer><d:prop>inner content</d:prop></outer>";
+        let result = extract_prop_inner(xml);
+        assert_eq!(result.as_deref(), Some("inner content"));
+    }
+
+    #[test]
+    fn extract_prop_inner_absent_returns_none() {
+        let xml = "<outer><D:something>content</D:something></outer>";
+        let result = extract_prop_inner(xml);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_prop_inner_no_closing_tag_returns_none() {
+        let xml = "<D:prop>content";
+        let result = extract_prop_inner(xml);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_prop_inner_prefers_d_uppercase_first() {
+        let xml = "<root><D:prop>upper</D:prop><d:prop>lower</d:prop></root>";
+        let result = extract_prop_inner(xml);
+        assert_eq!(result.as_deref(), Some("upper"));
+    }
+
+    #[test]
+    fn extract_prop_inner_empty_inner() {
+        let xml = "<root><D:prop></D:prop></root>";
+        let result = extract_prop_inner(xml);
+        assert_eq!(result.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn build_mkcol_addressbook_body_with_resourcetype_no_duplicate() {
+        let xml = r#"<D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+            <D:set><D:prop>
+                <D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>
+                <D:displayname>My Book</D:displayname>
+            </D:prop></D:set>
+        </D:mkcol>"#;
+        let body = build_mkcol_addressbook_body(xml);
+        let count = body
+            .matches("<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>")
+            .count();
+        assert_eq!(count, 1);
+        assert!(body.contains("<D:displayname>My Book</D:displayname>"));
+    }
+
+    #[test]
+    fn build_mkcol_addressbook_body_with_other_props_adds_resourcetype() {
+        let xml = r#"<D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+            <D:set><D:prop>
+                <D:displayname>My Book</D:displayname>
+            </D:prop></D:set>
+        </D:mkcol>"#;
+        let body = build_mkcol_addressbook_body(xml);
+        assert!(body.contains("<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>"));
+        assert!(body.contains("<D:displayname>My Book</D:displayname>"));
+    }
+
+    #[test]
+    fn build_mkcol_addressbook_body_empty_prop_inner_adds_resourcetype() {
+        let xml = r#"<D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+            <D:set><D:prop></D:prop></D:set>
+        </D:mkcol>"#;
+        let body = build_mkcol_addressbook_body(xml);
+        assert!(body.contains("<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>"));
+    }
+
+    #[test]
+    fn build_mkcol_addressbook_body_no_prop_adds_resourcetype() {
+        let xml = r#"<D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+            <D:set><D:other>value</D:other></D:set>
+        </D:mkcol>"#;
+        let body = build_mkcol_addressbook_body(xml);
+        assert!(body.contains("<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>"));
+    }
+
+    #[test]
+    fn build_mkcol_addressbook_body_contains_mkcol_root() {
+        let xml = "";
+        let body = build_mkcol_addressbook_body(xml);
+        assert!(
+            body.contains("<D:mkcol xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:carddav\">")
+        );
+        assert!(body.contains("<D:set><D:prop>"));
+        assert!(body.contains("</D:prop></D:set></D:mkcol>"));
+    }
+
+    #[test]
+    fn build_mkcol_addressbook_body_whitespace_only_inner_uses_resourcetype() {
+        let xml = r#"<D:mkcol xmlns:D="DAV:"><D:set><D:prop>   </D:prop></D:set></D:mkcol>"#;
+        let body = build_mkcol_addressbook_body(xml);
+        assert!(body.contains("<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>"));
+    }
+}
