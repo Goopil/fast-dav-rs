@@ -1,5 +1,5 @@
 use crate::webdav::client::{normalize_etag, normalize_sync_token};
-use crate::webdav::types::DavItemCommon;
+use crate::webdav::types::{DavItemCommon, PropStat, WebDavError};
 use crate::{Error, Result};
 use quick_xml::escape::unescape;
 
@@ -67,6 +67,9 @@ pub(crate) fn common_element_from_bytes(raw: &[u8]) -> CommonElement {
 pub(crate) struct CommonParser {
     stack: Vec<CommonElement>,
     current: DavItemCommon,
+    current_propstat_status: Option<String>,
+    current_prop_names: Vec<String>,
+    first_200_propstat_applied: bool,
 }
 
 pub(crate) fn path_ends_with<T: PartialEq>(stack: &[T], needle: &[T]) -> bool {
@@ -78,6 +81,9 @@ impl CommonParser {
         Self {
             stack: Vec::with_capacity(16),
             current: DavItemCommon::default(),
+            current_propstat_status: None,
+            current_prop_names: Vec::new(),
+            first_200_propstat_applied: false,
         }
     }
 
@@ -88,6 +94,11 @@ impl CommonParser {
         match element {
             CommonElement::Response => {
                 self.current = DavItemCommon::default();
+                self.first_200_propstat_applied = false;
+            }
+            CommonElement::Propstat => {
+                self.current_propstat_status = None;
+                self.current_prop_names = Vec::new();
             }
             CommonElement::Collection
                 if self.path_ends_with(&[
@@ -102,10 +113,40 @@ impl CommonParser {
             }
             _ => {}
         }
+
+        if self.stack.len() >= 4
+            && self.stack[self.stack.len() - 4] == CommonElement::Response
+            && self.stack[self.stack.len() - 3] == CommonElement::Propstat
+            && self.stack[self.stack.len() - 2] == CommonElement::Prop
+        {
+            let local = match raw.iter().position(|b| *b == b':') {
+                Some(idx) => &raw[idx + 1..],
+                None => raw,
+            };
+            let name = String::from_utf8_lossy(local).to_string();
+            if !self.current_prop_names.contains(&name) {
+                self.current_prop_names.push(name);
+            }
+        }
     }
 
     pub(crate) fn on_end(&mut self, raw: &[u8]) -> Result<()> {
         let element = common_element_from_bytes(raw);
+        if element == CommonElement::Propstat {
+            let status = self.current_propstat_status.take();
+            let prop_names = std::mem::take(&mut self.current_prop_names);
+            let is_200 = status
+                .as_deref()
+                .and_then(crate::webdav::types::http_status_code)
+                .map(|c| c == 200)
+                .unwrap_or(false);
+            if is_200 && !self.first_200_propstat_applied {
+                self.first_200_propstat_applied = true;
+            } else if !is_200 && self.current.status.is_none() {
+                self.current.status = status.clone();
+            }
+            self.current.propstats.push(PropStat { status, prop_names });
+        }
         match self.stack.pop() {
             Some(popped) if popped == element => Ok(()),
             Some(popped) => Err(Error::XmlStructure(format!(
@@ -131,14 +172,23 @@ impl CommonParser {
 
         if self.path_ends_with(&[CommonElement::Response, CommonElement::Href]) {
             self.current.href = trimmed.to_string();
-        } else if self.path_ends_with(&[CommonElement::Response, CommonElement::Status])
-            || self.path_ends_with(&[
-                CommonElement::Response,
-                CommonElement::Propstat,
-                CommonElement::Status,
-            ])
-        {
-            self.current.status = Some(trimmed.to_string());
+        } else if self.path_ends_with(&[CommonElement::Response, CommonElement::Status]) {
+            self.current.response_status = Some(trimmed.to_string());
+            if self.current.status.is_none() {
+                self.current.status = Some(trimmed.to_string());
+            }
+        } else if self.path_ends_with(&[
+            CommonElement::Response,
+            CommonElement::Propstat,
+            CommonElement::Status,
+        ]) {
+            self.current_propstat_status = Some(trimmed.to_string());
+            if !self.first_200_propstat_applied
+                && crate::webdav::types::http_status_code(trimmed) == Some(200)
+            {
+                self.current.status = Some(trimmed.to_string());
+                self.first_200_propstat_applied = true;
+            }
         } else if self.path_ends_with(&[
             CommonElement::Response,
             CommonElement::Propstat,
@@ -278,6 +328,96 @@ pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<S
     }
 
     Ok(principal)
+}
+
+/// Parse a `<D:error>` body (RFC 4918 §14.12) into [`WebDavError`].
+///
+/// Server error responses (4xx/5xx) may include a `<D:error>` body whose
+/// child element identifies the precondition or postcondition that failed.
+/// This function extracts the local name of the first child element as
+/// `precondition_code`. Returns a [`WebDavError`] with `precondition_code:
+/// None` when the body is empty, not valid XML, or has no `<D:error>`
+/// element with a child.
+///
+/// ```
+/// use fast_dav_rs::webdav::parse_error_body;
+///
+/// let xml = br#"<D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+///   <C:no-uid-conflict/>
+/// </D:error>"#;
+/// let err = parse_error_body(xml).unwrap();
+/// assert_eq!(err.precondition_code.as_deref(), Some("no-uid-conflict"));
+/// ```
+pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+    use std::io::Cursor;
+
+    let mut err = WebDavError::default();
+    let trimmed = body.trim_ascii();
+    if trimmed.is_empty() {
+        return Ok(err);
+    }
+    let cursor = Cursor::new(trimmed);
+    let mut xml = Reader::from_reader(cursor);
+    xml.config_mut().trim_text(true);
+
+    let mut buf = Vec::with_capacity(4 * 1024);
+    let mut in_error = false;
+    let mut found = false;
+
+    loop {
+        match xml.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let name = e.name().as_ref().to_vec();
+                let local = local_name(&name);
+                if local.eq_ignore_ascii_case(b"error") {
+                    in_error = true;
+                } else if in_error && !found {
+                    err.precondition_code = Some(String::from_utf8_lossy(local).into_owned());
+                    found = true;
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let name = e.name().as_ref().to_vec();
+                let local = local_name(&name);
+                if local.eq_ignore_ascii_case(b"error") {
+                    in_error = true;
+                } else if in_error && !found {
+                    err.precondition_code = Some(String::from_utf8_lossy(local).into_owned());
+                    found = true;
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = e.name().as_ref().to_vec();
+                let local = local_name(&name);
+                if local.eq_ignore_ascii_case(b"error") {
+                    in_error = false;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => {
+                if matches!(
+                    error,
+                    quick_xml::Error::Syntax(_) | quick_xml::Error::IllFormed(_)
+                ) {
+                    return Ok(WebDavError::default());
+                }
+                return Err(Error::from_quick_xml(error));
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(err)
+}
+
+fn local_name(raw: &[u8]) -> &[u8] {
+    match raw.iter().position(|b| *b == b':') {
+        Some(idx) => &raw[idx + 1..],
+        None => raw,
+    }
 }
 
 #[cfg(test)]

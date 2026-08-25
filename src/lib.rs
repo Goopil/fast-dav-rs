@@ -723,7 +723,7 @@ pub use common::compression::{
     detect_encodings, detect_request_compression_preference,
 };
 pub use webdav::builder::WebDavClientBuilder;
-pub use webdav::{RequestCompressionMode, WebDavClient};
+pub use webdav::{DavCapabilities, PropStat, RequestCompressionMode, WebDavClient, WebDavError};
 
 // Legacy module paths kept for compatibility with existing imports.
 #[cfg(feature = "legacy")]
