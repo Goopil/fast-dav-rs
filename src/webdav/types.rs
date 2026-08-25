@@ -2,6 +2,7 @@ use crate::Result;
 
 /// WebDAV Depth
 #[derive(Copy, Clone)]
+#[non_exhaustive]
 pub enum Depth {
     Zero,
     One,
@@ -18,6 +19,7 @@ impl Depth {
 }
 
 /// Annotated result of a batch operation
+#[non_exhaustive]
 pub struct BatchItem<T> {
     pub pub_path: String,
     pub result: Result<T>,
@@ -40,6 +42,7 @@ pub(crate) fn http_status_code(status_line: &str) -> Option<u16> {
 
 /// Common fields extracted from a WebDAV response.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct DavItemCommon {
     pub href: String,
     pub status: Option<String>,

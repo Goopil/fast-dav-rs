@@ -3,6 +3,7 @@ pub use crate::webdav::types::{BatchItem, Depth};
 
 /// Item extracted from a WebDAV response
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DavItem {
     pub href: String,
     pub status: Option<String>,
@@ -68,6 +69,7 @@ impl DavItem {
 
 /// Summary of a calendar (collection) returned by a `PROPFIND` depth=1.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CalendarInfo {
     pub href: String,
     pub displayname: Option<String>,
@@ -81,6 +83,7 @@ pub struct CalendarInfo {
 
 /// Calendar object (event or task) returned by a `REPORT`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CalendarObject {
     pub href: String,
     pub etag: Option<String>,
@@ -90,6 +93,7 @@ pub struct CalendarObject {
 
 /// Detail of an item returned by `sync-collection`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SyncItem {
     pub href: String,
     pub etag: Option<String>,
