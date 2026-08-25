@@ -1328,4 +1328,176 @@ mod tests {
         assert!(!is_etag_character(0x7F));
         assert!(!is_etag_character(b'\n'));
     }
+
+    fn make_client(base: &str) -> WebDavClient {
+        WebDavClient::new(base, None, None).unwrap()
+    }
+
+    #[test]
+    fn handle_compression_outcome_415_retries_and_disables() {
+        let client = make_client(BASE);
+        let retry = client.handle_request_compression_outcome(
+            Some(ContentEncoding::Gzip),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        );
+        assert!(retry);
+        assert_eq!(client.request_compression(), ContentEncoding::Identity);
+    }
+
+    #[test]
+    fn handle_compression_outcome_501_retries_and_disables() {
+        let client = make_client(BASE);
+        let retry = client.handle_request_compression_outcome(
+            Some(ContentEncoding::Br),
+            StatusCode::NOT_IMPLEMENTED,
+        );
+        assert!(retry);
+        assert_eq!(client.request_compression(), ContentEncoding::Identity);
+    }
+
+    #[test]
+    fn handle_compression_outcome_400_retries_and_disables() {
+        let client = make_client(BASE);
+        let retry = client.handle_request_compression_outcome(
+            Some(ContentEncoding::Zstd),
+            StatusCode::BAD_REQUEST,
+        );
+        assert!(retry);
+        assert_eq!(client.request_compression(), ContentEncoding::Identity);
+    }
+
+    #[test]
+    fn handle_compression_outcome_200_caches_encoding() {
+        let client = make_client(BASE);
+        let retry =
+            client.handle_request_compression_outcome(Some(ContentEncoding::Gzip), StatusCode::OK);
+        assert!(!retry);
+        assert_eq!(client.request_compression(), ContentEncoding::Gzip);
+    }
+
+    #[test]
+    fn handle_compression_outcome_disabled_mode_no_retry() {
+        let client = make_client(BASE);
+        client.set_request_compression_mode(RequestCompressionMode::Disabled);
+        let retry = client.handle_request_compression_outcome(
+            Some(ContentEncoding::Gzip),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        );
+        assert!(!retry);
+    }
+
+    #[test]
+    fn handle_compression_outcome_none_attempted_no_retry() {
+        let client = make_client(BASE);
+        let retry = client.handle_request_compression_outcome(None, StatusCode::OK);
+        assert!(!retry);
+    }
+
+    #[test]
+    fn resolve_request_encoding_with_mode_disabled() {
+        let client = make_client(BASE);
+        let enc = client.resolve_request_encoding_with_mode(&RequestCompressionMode::Disabled);
+        assert_eq!(enc, ContentEncoding::Identity);
+    }
+
+    #[test]
+    fn resolve_request_encoding_with_mode_force() {
+        let client = make_client(BASE);
+        let enc = client.resolve_request_encoding_with_mode(&RequestCompressionMode::Force(
+            ContentEncoding::Br,
+        ));
+        assert_eq!(enc, ContentEncoding::Br);
+    }
+
+    #[test]
+    fn resolve_request_encoding_with_mode_auto_some() {
+        let client = make_client(BASE);
+        client.set_negotiated_encoding(Some(ContentEncoding::Zstd));
+        let enc = client.resolve_request_encoding_with_mode(&RequestCompressionMode::Auto);
+        assert_eq!(enc, ContentEncoding::Zstd);
+    }
+
+    #[test]
+    fn resolve_request_encoding_with_mode_auto_none_uses_default() {
+        let client = make_client(BASE);
+        client.set_negotiated_encoding(None);
+        let enc = client.resolve_request_encoding_with_mode(&RequestCompressionMode::Auto);
+        assert_eq!(enc, ContentEncoding::Gzip);
+    }
+
+    #[test]
+    fn normalize_decompressed_headers_empty_encodings_noop() {
+        let client = make_client(BASE);
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
+        headers.insert(header::CONTENT_LENGTH, "100".parse().unwrap());
+        client.normalize_decompressed_headers(&mut headers, &[], 42);
+        assert_eq!(headers.get(header::CONTENT_ENCODING).unwrap(), "gzip");
+        assert_eq!(headers.get(header::CONTENT_LENGTH).unwrap(), "100");
+    }
+
+    #[test]
+    fn normalize_decompressed_headers_removes_encoding_sets_length() {
+        let client = make_client(BASE);
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
+        client.normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], 42);
+        assert!(headers.get(header::CONTENT_ENCODING).is_none());
+        assert_eq!(headers.get(header::CONTENT_LENGTH).unwrap(), "42");
+    }
+
+    #[test]
+    fn normalize_decompressed_headers_large_body_len_removes_length() {
+        let client = make_client(BASE);
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_LENGTH, "100".parse().unwrap());
+        let huge = usize::MAX;
+        client.normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], huge);
+        assert!(headers.get(header::CONTENT_ENCODING).is_none());
+        assert!(headers.get(header::CONTENT_LENGTH).is_none());
+    }
+
+    #[test]
+    fn build_uri_base_without_trailing_slash_and_relative_path() {
+        let client = make_client("http://127.0.0.1:8080");
+        let uri = client.build_uri("calendars/").unwrap();
+        assert_eq!(uri.path(), "/calendars/");
+    }
+
+    #[test]
+    fn build_uri_empty_combined_uses_base_path() {
+        let client = make_client("http://127.0.0.1:8080/");
+        let uri = client.build_uri("").unwrap();
+        assert_eq!(uri.path(), "/");
+    }
+
+    #[test]
+    fn build_uri_empty_combined_with_query() {
+        let client = make_client("http://127.0.0.1:8080/");
+        let uri = client.build_uri("?query").unwrap();
+        assert_eq!(uri.path(), "/");
+        assert_eq!(uri.query().unwrap(), "query");
+    }
+
+    #[test]
+    fn build_uri_absolute_path_uses_as_is() {
+        let client = make_client("http://127.0.0.1:8080/base/");
+        let uri = client.build_uri("/calendars/").unwrap();
+        assert_eq!(uri.path(), "/calendars/");
+    }
+
+    #[test]
+    fn build_uri_absolute_url_parsed_directly() {
+        let client = make_client("http://127.0.0.1:8080/base/");
+        let uri = client.build_uri("https://other.example.com/foo").unwrap();
+        assert_eq!(uri.path(), "/foo");
+        assert_eq!(uri.host().unwrap(), "other.example.com");
+    }
+
+    #[test]
+    fn build_uri_relative_path_appends_to_base() {
+        let client = make_client("http://127.0.0.1:8080/base/");
+        let uri = client.build_uri("calendars/").unwrap();
+        assert_eq!(uri.path(), "/base/calendars/");
+    }
 }
