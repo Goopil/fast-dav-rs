@@ -58,18 +58,7 @@ impl DavItem {
     }
 
     pub(crate) fn apply_common(&mut self, common: DavItemCommon) {
-        self.href = common.href;
-        self.status = common.status;
-        self.displayname = common.displayname;
-        self.etag = common.etag;
-        self.is_collection = common.is_collection;
-        self.sync_token = common.sync_token;
-        self.current_user_principal = common.current_user_principal;
-        self.owner = common.owner;
-        self.content_type = common.content_type;
-        self.last_modified = common.last_modified;
-        self.propstats = common.propstats;
-        self.response_status = common.response_status;
+        crate::apply_common_fields!(self, common);
     }
 }
 
