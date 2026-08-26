@@ -14,7 +14,7 @@ use crate::common::compression::{
 use crate::common::http::HyperClient;
 use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
-use crate::webdav::types::{BatchItem, Depth};
+use crate::webdav::types::{BatchItem, DavCapabilities, Depth};
 use crate::{Error, Operation, Result};
 
 /// Strategy for compressing outgoing request bodies.
@@ -693,6 +693,41 @@ impl WebDavClient {
     pub async fn options(&self, path: &str) -> Result<Response<Bytes>> {
         self.send(Method::OPTIONS, path, HeaderMap::new(), None, None)
             .await
+    }
+
+    /// Query the server's DAV compliance classes and extensions via an
+    /// `OPTIONS` request, parsing the `DAV` response header (RFC 4918 §10.1).
+    ///
+    /// The `DAV` header is a comma-separated list of compliance class tokens
+    /// (`1`, `2`, `3`) and optional extension tokens (e.g. `calendar-access`,
+    /// `addressbook`). When the server omits the `DAV` header, all flags are
+    /// `false` and `extensions` is empty.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::WebDavClient;
+    ///
+    /// # async fn run() -> fast_dav_rs::Result<()> {
+    /// let client = WebDavClient::new("https://dav.example.com/", None, None)?;
+    /// let caps = client.capabilities("/").await?;
+    /// if caps.class2 {
+    ///     println!("server supports locking");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn capabilities(&self, path: &str) -> Result<DavCapabilities> {
+        let response = self.options(path).await?;
+        match response.headers().get("dav") {
+            Some(value) => {
+                let s = value
+                    .to_str()
+                    .map_err(|e| Error::other(format!("invalid DAV header value: {e}")))?;
+                crate::webdav::types::parse_dav_header(s)
+            }
+            None => Ok(DavCapabilities::default()),
+        }
     }
 
     /// Send a `HEAD` request.

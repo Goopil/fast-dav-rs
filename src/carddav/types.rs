@@ -1,6 +1,6 @@
 use crate::carddav::client::escape_xml;
-use crate::webdav::types::DavItemCommon;
 pub use crate::webdav::types::{BatchItem, Depth};
+use crate::webdav::types::{DavItemCommon, PropStat};
 
 /// Collation algorithm for `text-match` comparisons (RFC 6352 §7.3).
 ///
@@ -253,6 +253,8 @@ pub struct DavItem {
     pub sync_token: Option<String>,
     pub content_type: Option<String>,
     pub last_modified: Option<String>,
+    pub propstats: Vec<PropStat>,
+    pub response_status: Option<String>,
 }
 
 impl Default for DavItem {
@@ -280,20 +282,13 @@ impl DavItem {
             sync_token: None,
             content_type: None,
             last_modified: None,
+            propstats: Vec::new(),
+            response_status: None,
         }
     }
 
     pub(crate) fn apply_common(&mut self, common: DavItemCommon) {
-        self.href = common.href;
-        self.status = common.status;
-        self.displayname = common.displayname;
-        self.etag = common.etag;
-        self.is_collection = common.is_collection;
-        self.sync_token = common.sync_token;
-        self.current_user_principal = common.current_user_principal;
-        self.owner = common.owner;
-        self.content_type = common.content_type;
-        self.last_modified = common.last_modified;
+        crate::apply_common_fields!(self, common);
     }
 }
 
