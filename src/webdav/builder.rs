@@ -102,10 +102,10 @@ impl Default for WebDavClientBuilder {
             bearer_token: None,
             timeout: Duration::from_secs(20),
             connect_timeout: None,
-            user_agent: None,
+            user_agent: Some(format!("fast-dav-rs/{}", env!("CARGO_PKG_VERSION"))),
             force_http1: false,
             pool_max_idle_per_host: 32,
-            pool_idle_timeout: None,
+            pool_idle_timeout: Some(Duration::from_secs(90)),
             request_compression: RequestCompressionMode::default(),
             proxy: None,
             proxy_basic_user: None,
@@ -172,7 +172,8 @@ impl WebDavClientBuilder {
         self
     }
 
-    /// Set the `User-Agent` header sent on every request. Default: **none**.
+    /// Set the `User-Agent` header sent on every request. Default:
+    /// **`fast-dav-rs/{version}`**.
     pub fn user_agent(mut self, ua: impl Into<String>) -> Self {
         self.user_agent = Some(ua.into());
         self
@@ -193,7 +194,7 @@ impl WebDavClientBuilder {
         self
     }
 
-    /// Set the idle connection timeout for the pool. Default: **unbounded**.
+    /// Set the idle connection timeout for the pool. Default: **90 seconds**.
     pub fn pool_idle_timeout(mut self, timeout: Duration) -> Self {
         self.pool_idle_timeout = Some(timeout);
         self
@@ -259,31 +260,23 @@ impl WebDavClientBuilder {
                 "pool_max_idle_per_host must be > 0".to_owned(),
             ));
         }
-        if let Some(token) = &self.bearer_token
-            && token.is_empty()
-        {
-            return Err(Error::InvalidConfig(
-                "bearer_token must not be empty".to_owned(),
-            ));
-        }
-        if let Some(token) = &self.bearer_token
-            && !token.bytes().all(|b| {
+        if let Some(token) = &self.bearer_token {
+            if token.is_empty() {
+                return Err(Error::InvalidConfig(
+                    "bearer_token must not be empty".to_owned(),
+                ));
+            }
+            if !token.bytes().all(|b| {
                 b.is_ascii_alphanumeric()
                     || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
-            })
-        {
-            return Err(Error::InvalidConfig(
-                "bearer_token contains invalid characters (allowed: A-Z a-z 0-9 - . _ ~ + / =)"
-                    .to_owned(),
-            ));
+            }) {
+                return Err(Error::InvalidConfig(
+                    "bearer_token contains invalid characters (allowed: A-Z a-z 0-9 - . _ ~ + / =)"
+                        .to_owned(),
+                ));
+            }
         }
-        if let (Some(user), Some(pass)) = (&self.basic_user, &self.basic_pass)
-            && (user.is_empty() || pass.is_empty())
-        {
-            return Err(Error::InvalidConfig(
-                "basic_auth requires both user and pass to be non-empty".to_owned(),
-            ));
-        }
+        validate_basic_auth(&self.basic_user, &self.basic_pass, "basic_auth")?;
         if self.proxy.is_none()
             && (self.proxy_basic_user.is_some() || self.proxy_basic_pass.is_some())
         {
@@ -291,13 +284,11 @@ impl WebDavClientBuilder {
                 "proxy_basic_auth requires a proxy to be set via .proxy()".to_owned(),
             ));
         }
-        if let (Some(user), Some(pass)) = (&self.proxy_basic_user, &self.proxy_basic_pass)
-            && (user.is_empty() || pass.is_empty())
-        {
-            return Err(Error::InvalidConfig(
-                "proxy_basic_auth requires both user and pass to be non-empty".to_owned(),
-            ));
-        }
+        validate_basic_auth(
+            &self.proxy_basic_user,
+            &self.proxy_basic_pass,
+            "proxy_basic_auth",
+        )?;
         if let (Some(user), Some(pass)) = (&self.proxy_basic_user, &self.proxy_basic_pass) {
             for (label, value) in [("user", user.as_str()), ("pass", pass.as_str())] {
                 if value.bytes().any(|b| b <= 0x20 || b == 0x7F) {
@@ -392,6 +383,17 @@ fn build_basic_auth_header(user: &str, pass: &str) -> Result<header::HeaderValue
     token.zeroize();
     val.zeroize();
     Ok(header_value?)
+}
+
+fn validate_basic_auth(user: &Option<String>, pass: &Option<String>, label: &str) -> Result<()> {
+    if let (Some(u), Some(p)) = (user, pass) {
+        if u.is_empty() || p.is_empty() {
+            return Err(Error::InvalidConfig(format!(
+                "{label} requires both user and pass to be non-empty"
+            )));
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

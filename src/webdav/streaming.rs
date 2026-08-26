@@ -204,6 +204,21 @@ impl CommonParser {
     }
 }
 
+#[macro_export]
+macro_rules! impl_multistatus_on_end {
+    ($self:ident, $name:expr, $elem:ty) => {{
+        $self.common.on_end($name)?;
+        if let Some(popped) = $self.stack.pop() {
+            if popped == <$elem>::Response {
+                let common = $self.common.finish_response();
+                $self.current.apply_common(common);
+                let finished = std::mem::take(&mut $self.current);
+                $self.sink.consume(finished)?;
+            }
+        }
+    }};
+}
+
 pub(crate) fn decode_text(raw: &[u8]) -> Result<String> {
     match std::str::from_utf8(raw) {
         Ok(s) => Ok(unescape(s)?.into_owned()),

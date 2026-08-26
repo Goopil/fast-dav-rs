@@ -105,11 +105,12 @@ pub fn detect_request_compression_preference(headers: &HeaderMap) -> Option<Cont
 
         let mut weight = 1.0_f32;
         for param in segments {
-            if let Some((key, value)) = param.split_once('=')
-                && key.trim().eq_ignore_ascii_case("q")
-                && let Ok(parsed) = value.trim().parse::<f32>()
-            {
-                weight = parsed.clamp(0.0, 1.0);
+            if let Some((key, value)) = param.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("q") {
+                    if let Ok(parsed) = value.trim().parse::<f32>() {
+                        weight = parsed.clamp(0.0, 1.0);
+                    }
+                }
             }
         }
 
@@ -125,8 +126,10 @@ pub fn detect_request_compression_preference(headers: &HeaderMap) -> Option<Cont
         }
     }
 
-    if !identity_explicit && let Some(q) = wildcard_q {
-        identity_q = q;
+    if !identity_explicit {
+        if let Some(q) = wildcard_q {
+            identity_q = q;
+        }
     }
 
     let mut best: Option<(ContentEncoding, f32)> = None;
@@ -312,9 +315,9 @@ pub async fn compress_payload(data: Bytes, encoding: ContentEncoding) -> Result<
 /// assert_eq!(headers.get("Content-Encoding").unwrap(), "gzip");
 /// ```
 pub fn add_content_encoding(headers: &mut HeaderMap, encoding: ContentEncoding) {
-    if encoding != ContentEncoding::Identity
-        && let Ok(value) = http::HeaderValue::from_str(encoding.as_str())
-    {
-        headers.insert("Content-Encoding", value);
+    if encoding != ContentEncoding::Identity {
+        if let Ok(value) = http::HeaderValue::from_str(encoding.as_str()) {
+            headers.insert("Content-Encoding", value);
+        }
     }
 }
