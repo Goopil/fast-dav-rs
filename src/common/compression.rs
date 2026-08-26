@@ -3,8 +3,15 @@
 //! This module provides support for automatic compression and decompression
 //! of HTTP responses using various encoding formats.
 
+use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
 use bytes::Bytes;
+use futures::TryStreamExt;
+use http_body_util::BodyStream;
+use hyper::body::Incoming;
 use hyper::{HeaderMap, header, http};
+use std::io::Cursor;
+use tokio::io::{AsyncBufRead, AsyncReadExt, BufReader};
+use tokio_util::io::StreamReader;
 
 use crate::Result;
 
@@ -177,27 +184,7 @@ pub fn detect_encoding(headers: &HeaderMap) -> ContentEncoding {
 ///
 /// This function takes an aggregated response body and decompresses it according
 /// to the specified encoding.
-#[cfg(any(
-    feature = "compression-gzip",
-    feature = "compression-brotli",
-    feature = "compression-zstd"
-))]
-pub async fn decompress_body(
-    body: hyper::body::Incoming,
-    encodings: &[ContentEncoding],
-) -> Result<Bytes> {
-    use futures::TryStreamExt;
-    use http_body_util::BodyStream;
-    use tokio::io::{AsyncBufRead, AsyncReadExt, BufReader};
-    use tokio_util::io::StreamReader;
-
-    #[cfg(feature = "compression-brotli")]
-    use async_compression::tokio::bufread::BrotliDecoder;
-    #[cfg(feature = "compression-gzip")]
-    use async_compression::tokio::bufread::GzipDecoder;
-    #[cfg(feature = "compression-zstd")]
-    use async_compression::tokio::bufread::ZstdDecoder;
-
+pub async fn decompress_body(body: Incoming, encodings: &[ContentEncoding]) -> Result<Bytes> {
     // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
     let stream = BodyStream::new(body)
         .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
@@ -210,14 +197,9 @@ pub async fn decompress_body(
     for encoding in encodings.iter().rev() {
         current = match encoding {
             ContentEncoding::Identity => current,
-            #[cfg(feature = "compression-brotli")]
             ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(current))),
-            #[cfg(feature = "compression-gzip")]
             ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(current))),
-            #[cfg(feature = "compression-zstd")]
             ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(current))),
-            #[allow(unreachable_patterns)]
-            _ => current,
         };
     }
 
@@ -227,98 +209,32 @@ pub async fn decompress_body(
     Ok(Bytes::from(out))
 }
 
-/// Decompress a response body based on the content encoding.
-///
-/// Fallback when no compression feature is enabled: reads the raw body without decompression.
-#[cfg(not(any(
-    feature = "compression-gzip",
-    feature = "compression-brotli",
-    feature = "compression-zstd"
-)))]
-pub async fn decompress_body(
-    body: hyper::body::Incoming,
-    _encodings: &[ContentEncoding],
-) -> Result<Bytes> {
-    use http_body_util::BodyExt;
-
-    let bytes = body.collect().await?.to_bytes();
-    Ok(bytes)
-}
-
 /// Create a buffered reader with decompression support for streaming.
 ///
 /// This function wraps a stream with the appropriate decompression decoder
 /// based on the content encoding.
-#[cfg(any(
-    feature = "compression-gzip",
-    feature = "compression-brotli",
-    feature = "compression-zstd"
-))]
 pub fn decompress_stream(
-    body: hyper::body::Incoming,
+    body: Incoming,
     encodings: &[ContentEncoding],
-) -> Result<Box<dyn tokio::io::AsyncBufRead + Unpin + Send>> {
-    use futures::TryStreamExt;
-    use http_body_util::BodyStream;
-    use tokio::io::BufReader;
-    use tokio_util::io::StreamReader;
-
-    #[cfg(feature = "compression-brotli")]
-    use async_compression::tokio::bufread::BrotliDecoder;
-    #[cfg(feature = "compression-gzip")]
-    use async_compression::tokio::bufread::GzipDecoder;
-    #[cfg(feature = "compression-zstd")]
-    use async_compression::tokio::bufread::ZstdDecoder;
-
+) -> Result<Box<dyn AsyncBufRead + Unpin + Send>> {
     // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
     let stream = BodyStream::new(body)
         .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
         .map_err(std::io::Error::other);
-    let reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send> =
+    let reader: Box<dyn AsyncBufRead + Unpin + Send> =
         Box::new(BufReader::new(StreamReader::new(stream)));
 
     let mut current = reader;
     for encoding in encodings.iter().rev() {
         current = match encoding {
             ContentEncoding::Identity => current,
-            #[cfg(feature = "compression-brotli")]
             ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(current))),
-            #[cfg(feature = "compression-gzip")]
             ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(current))),
-            #[cfg(feature = "compression-zstd")]
             ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(current))),
-            #[allow(unreachable_patterns)]
-            _ => current,
         };
     }
 
     Ok(current)
-}
-
-/// Create a buffered reader with decompression support for streaming.
-///
-/// Fallback when no compression feature is enabled: reads the raw body without decompression.
-#[cfg(not(any(
-    feature = "compression-gzip",
-    feature = "compression-brotli",
-    feature = "compression-zstd"
-)))]
-pub fn decompress_stream(
-    body: hyper::body::Incoming,
-    _encodings: &[ContentEncoding],
-) -> Result<Box<dyn tokio::io::AsyncBufRead + Unpin + Send>> {
-    use futures::TryStreamExt;
-    use http_body_util::BodyStream;
-    use tokio::io::BufReader;
-    use tokio_util::io::StreamReader;
-
-    let stream = BodyStream::new(body)
-        .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
-        .map_err(std::io::Error::other);
-    let reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send> =
-        Box::new(BufReader::new(StreamReader::new(stream)));
-
-    Ok(reader)
 }
 
 /// Compress a byte payload using the specified encoding.
@@ -351,41 +267,30 @@ pub fn decompress_stream(
 pub async fn compress_payload(data: Bytes, encoding: ContentEncoding) -> Result<Bytes> {
     match encoding {
         ContentEncoding::Identity => Ok(data),
-        #[cfg(feature = "compression-brotli")]
         ContentEncoding::Br => {
             use async_compression::tokio::bufread::BrotliEncoder;
-            use std::io::Cursor;
-            use tokio::io::{AsyncReadExt, BufReader};
 
             let mut encoder = BrotliEncoder::new(BufReader::new(Cursor::new(data)));
             let mut compressed = Vec::new();
             encoder.read_to_end(&mut compressed).await?;
             Ok(Bytes::from(compressed))
         }
-        #[cfg(feature = "compression-gzip")]
         ContentEncoding::Gzip => {
             use async_compression::tokio::bufread::GzipEncoder;
-            use std::io::Cursor;
-            use tokio::io::{AsyncReadExt, BufReader};
 
             let mut encoder = GzipEncoder::new(BufReader::new(Cursor::new(data)));
             let mut compressed = Vec::new();
             encoder.read_to_end(&mut compressed).await?;
             Ok(Bytes::from(compressed))
         }
-        #[cfg(feature = "compression-zstd")]
         ContentEncoding::Zstd => {
             use async_compression::tokio::bufread::ZstdEncoder;
-            use std::io::Cursor;
-            use tokio::io::{AsyncReadExt, BufReader};
 
             let mut encoder = ZstdEncoder::new(BufReader::new(Cursor::new(data)));
             let mut compressed = Vec::new();
             encoder.read_to_end(&mut compressed).await?;
             Ok(Bytes::from(compressed))
         }
-        #[allow(unreachable_patterns)]
-        _ => Ok(data),
     }
 }
 

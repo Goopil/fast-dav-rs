@@ -16,19 +16,19 @@ include = ["Cargo.toml", "LICENSE", "README.md", "src/**/*.rs", "examples/**/*.r
 [dependencies]
 base64 = "0.23"
 rustls = "0.23"
-rustls-pki-types = "1"
-rustls-native-certs = { version = "0.8", optional = true }
+rustls-pemfile = "2"
+rustls-native-certs = "0.8"
 webpki-roots = "1"
 tower-service = "0.3"
 bytes = "1"
 futures = "0.3"
-hyper = { version = "1", features = ["client", "http1"] }
-hyper-rustls = { version = "0.27", features = ["http1", "webpki-roots"] }
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-rustls = { version = "0.27", features = ["http2", "webpki-roots"] }
 quick-xml = { version = "0.41.0", features = ["async-tokio"] }
 tokio = { version = "1", features = ["macros", "sync", "time"] }
-tokio-util = { version = "0.7", features = ["io"] }
-async-compression = { version = "0.4", features = ["tokio"], optional = true }
-hyper-util = { version = "0.1", features = ["client", "http1", "tokio", "client-proxy"] }
+tokio-util = "0.7"
+async-compression = { version = "0.4", features = ["tokio", "brotli", "gzip", "zstd"] }
+hyper-util = { version = "0.1", features = ["client", "http1", "http2", "tokio", "client-proxy"] }
 http-body-util = "0.1"
 zeroize = "1"
 thiserror = { version = "2" }
@@ -48,17 +48,8 @@ name = "e2e_tests"
 path = "tests/e2e/mod.rs"
 
 [features]
-default = ["compression", "http2", "native-certs", "rustls-aws-lc-rs"]
+default = []
 legacy = []
-compression = ["dep:async-compression", "compression-gzip", "compression-brotli", "compression-zstd"]
-compression-gzip = ["dep:async-compression", "async-compression/gzip"]
-compression-brotli = ["dep:async-compression", "async-compression/brotli"]
-compression-zstd = ["dep:async-compression", "async-compression/zstd"]
-http2 = ["hyper/http2", "hyper-util/http2", "hyper-rustls/http2"]
-native-certs = ["rustls-native-certs"]
-rustls-aws-lc-rs = ["hyper-rustls/aws-lc-rs", "rustls/aws-lc-rs"]
-rustls-ring = ["hyper-rustls/ring", "rustls/ring"]
-dangerous = []
 
 [profile.dev.package."*"]
 opt-level = 3

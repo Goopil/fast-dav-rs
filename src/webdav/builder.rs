@@ -10,11 +10,8 @@ use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::connect::proxy::Tunnel;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
-use rustls::pki_types::pem::PemObject;
-#[cfg(feature = "dangerous")]
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, RootCertStore};
-#[cfg(feature = "native-certs")]
 use rustls_native_certs::load_native_certs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,7 +56,6 @@ pub struct WebDavClientBuilder {
     proxy_basic_user: Option<String>,
     proxy_basic_pass: Option<String>,
     extra_root_certs_pem: Vec<Vec<u8>>,
-    #[cfg(feature = "dangerous")]
     danger_accept_invalid_certs: bool,
 }
 
@@ -88,13 +84,12 @@ impl std::fmt::Debug for WebDavClientBuilder {
         d.field(
             "extra_root_certs_pem_count",
             &self.extra_root_certs_pem.len(),
-        );
-        #[cfg(feature = "dangerous")]
-        d.field(
+        )
+        .field(
             "danger_accept_invalid_certs",
             &self.danger_accept_invalid_certs,
-        );
-        d.finish()
+        )
+        .finish()
     }
 }
 
@@ -116,7 +111,6 @@ impl Default for WebDavClientBuilder {
             proxy_basic_user: None,
             proxy_basic_pass: None,
             extra_root_certs_pem: Vec::new(),
-            #[cfg(feature = "dangerous")]
             danger_accept_invalid_certs: false,
         }
     }
@@ -243,9 +237,6 @@ impl WebDavClientBuilder {
     /// self-signed, expired, or mismatched certificates. Use
     /// [`extra_root_certs_pem`](Self::extra_root_certs_pem) instead when
     /// you need to trust a specific custom CA.
-    ///
-    /// This method is only available when the `dangerous` feature is enabled.
-    #[cfg(feature = "dangerous")]
     pub fn danger_accept_invalid_certs(mut self, accept: bool) -> Self {
         self.danger_accept_invalid_certs = accept;
         self
@@ -343,7 +334,6 @@ impl WebDavClientBuilder {
             proxy_basic_user: self.proxy_basic_user.take(),
             proxy_basic_pass: self.proxy_basic_pass.take(),
             extra_root_certs_pem: std::mem::take(&mut self.extra_root_certs_pem),
-            #[cfg(feature = "dangerous")]
             danger_accept_invalid_certs: self.danger_accept_invalid_certs,
         })?;
 
@@ -414,11 +404,9 @@ fn build_basic_auth_header(user: &str, pass: &str) -> Result<header::HeaderValue
 ///
 /// This completely disables TLS certificate verification. Only use in
 /// testing/debug scenarios — never in production.
-#[cfg(feature = "dangerous")]
 #[derive(Debug)]
 struct NoVerify;
 
-#[cfg(feature = "dangerous")]
 impl rustls::client::danger::ServerCertVerifier for NoVerify {
     fn verify_server_cert(
         &self,
@@ -450,7 +438,7 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        default_crypto_provider()
+        rustls::crypto::aws_lc_rs::default_provider()
             .signature_verification_algorithms
             .supported_schemes()
     }
@@ -460,9 +448,8 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
 /// optional extra PEM trust roots, and optional danger mode.
 fn build_rustls_config(
     extra_root_certs_pem: &[Vec<u8>],
-    #[allow(unused_variables)] danger_accept_invalid_certs: bool,
+    danger_accept_invalid_certs: bool,
 ) -> Result<ClientConfig> {
-    #[cfg(feature = "dangerous")]
     if danger_accept_invalid_certs {
         #[cfg(debug_assertions)]
         eprintln!(
@@ -470,8 +457,7 @@ fn build_rustls_config(
              TLS certificate verification is disabled"
         );
 
-        let config = rustls::ClientConfig::builder_with_provider(default_crypto_provider())
-            .with_safe_default_protocol_versions()?
+        let config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerify))
             .with_no_client_auth();
@@ -480,7 +466,6 @@ fn build_rustls_config(
 
     let mut roots = RootCertStore::empty();
 
-    #[cfg(feature = "native-certs")]
     match load_native_certs() {
         result if !result.certs.is_empty() => {
             for cert in result.certs {
@@ -499,31 +484,17 @@ fn build_rustls_config(
         }
     }
 
-    #[cfg(not(feature = "native-certs"))]
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
     for pem in extra_root_certs_pem {
-        for cert in rustls_pki_types::CertificateDer::pem_slice_iter(pem) {
+        for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
             let cert = cert.map_err(|e| Error::tls("failed to parse PEM certificate", e))?;
             let _ = roots.add(cert);
         }
     }
 
-    let config = ClientConfig::builder_with_provider(default_crypto_provider())
-        .with_safe_default_protocol_versions()?
+    let config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
     Ok(config)
-}
-
-#[cfg(feature = "rustls-aws-lc-rs")]
-fn default_crypto_provider() -> Arc<rustls::crypto::CryptoProvider> {
-    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
-}
-
-#[cfg(all(feature = "rustls-ring", not(feature = "rustls-aws-lc-rs")))]
-fn default_crypto_provider() -> Arc<rustls::crypto::CryptoProvider> {
-    Arc::new(rustls::crypto::ring::default_provider())
 }
 
 // ---------------------------------------------------------------------------
@@ -540,7 +511,6 @@ struct HyperClientConfig {
     proxy_basic_user: Option<String>,
     proxy_basic_pass: Option<String>,
     extra_root_certs_pem: Vec<Vec<u8>>,
-    #[cfg(feature = "dangerous")]
     danger_accept_invalid_certs: bool,
 }
 
@@ -568,13 +538,7 @@ fn build_hyper_client(cfg: HyperClientConfig) -> Result<HyperClient> {
         None => MaybeProxied::Direct(http),
     };
 
-    let tls = build_rustls_config(
-        &cfg.extra_root_certs_pem,
-        #[cfg(feature = "dangerous")]
-        cfg.danger_accept_invalid_certs,
-        #[cfg(not(feature = "dangerous"))]
-        false,
-    )?;
+    let tls = build_rustls_config(&cfg.extra_root_certs_pem, cfg.danger_accept_invalid_certs)?;
 
     let https_builder = HttpsConnectorBuilder::new()
         .with_tls_config(tls)
@@ -584,18 +548,10 @@ fn build_hyper_client(cfg: HyperClientConfig) -> Result<HyperClient> {
     let https = if cfg.force_http1 {
         https_builder.wrap_connector(inner)
     } else {
-        #[cfg(feature = "http2")]
-        {
-            https_builder.enable_http2().wrap_connector(inner)
-        }
-        #[cfg(not(feature = "http2"))]
-        {
-            https_builder.wrap_connector(inner)
-        }
+        https_builder.enable_http2().wrap_connector(inner)
     };
 
     let mut builder = Client::builder(TokioExecutor::new());
-    #[cfg(feature = "http2")]
     if !cfg.force_http1 {
         builder.http2_adaptive_window(true);
     }
@@ -700,7 +656,6 @@ macro_rules! impl_dav_builder {
                 self
             }
 
-            #[cfg(feature = "dangerous")]
             pub fn danger_accept_invalid_certs(mut self, accept: bool) -> Self {
                 self.inner = self.inner.danger_accept_invalid_certs(accept);
                 self
@@ -731,7 +686,6 @@ mod tests {
         assert!(builder.basic_pass.is_none());
         assert!(builder.bearer_token.is_none());
         assert!(!builder.force_http1);
-        #[cfg(feature = "dangerous")]
         assert!(!builder.danger_accept_invalid_certs);
     }
 
