@@ -109,6 +109,52 @@ pub fn build_sync_collection_body(
     body
 }
 
+pub(crate) fn text_match_xml(
+    value: &str,
+    collation: &str,
+    match_type: &str,
+    negate: bool,
+) -> String {
+    let mut attrs = String::new();
+    attrs.push_str(&format!(" collation=\"{}\"", escape_xml(collation)));
+    attrs.push_str(&format!(" match-type=\"{}\"", escape_xml(match_type)));
+    if negate {
+        attrs.push_str(" negate-condition=\"yes\"");
+    }
+    format!("<C:text-match{attrs}>{}</C:text-match>", escape_xml(value))
+}
+
+pub(crate) fn param_filter_xml(name: &str, inner: &str) -> String {
+    format!(
+        "<C:param-filter name=\"{}\">{inner}</C:param-filter>",
+        escape_xml(name)
+    )
+}
+
+pub(crate) fn prop_filter_xml(name: &str, inner: &str) -> String {
+    format!(
+        "<C:prop-filter name=\"{}\">{inner}</C:prop-filter>",
+        escape_xml(name)
+    )
+}
+
+pub(crate) fn comp_filter_xml(name: &str, inner: &str) -> String {
+    format!(
+        "<C:comp-filter name=\"{}\">{inner}</C:comp-filter>",
+        escape_xml(name)
+    )
+}
+
+pub(crate) fn time_range_xml(start: &str, end: Option<&str>) -> String {
+    let mut attrs = format!(" start=\"{}\"", escape_xml(start));
+    if let Some(e) = end {
+        attrs.push_str(&format!(" end=\"{}\"", escape_xml(e)));
+    }
+    format!("<C:time-range{attrs}/>")
+}
+
+pub(crate) const IS_NOT_DEFINED_XML: &str = "<C:is-not-defined/>";
+
 pub(crate) fn build_multiget_body<I, S>(
     hrefs: I,
     include_data: bool,
