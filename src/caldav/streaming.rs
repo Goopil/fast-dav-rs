@@ -226,13 +226,13 @@ impl<C: ItemConsumer> MultistatusParser<C> {
 
     fn on_end(&mut self, name: &[u8]) -> Result<()> {
         self.common.on_end(name)?;
-        if let Some(popped) = self.stack.pop()
-            && popped == ElementName::Response
-        {
-            let common = self.common.finish_response();
-            self.current.apply_common(common);
-            let finished = std::mem::take(&mut self.current);
-            self.sink.consume(finished)?;
+        if let Some(popped) = self.stack.pop() {
+            if popped == ElementName::Response {
+                let common = self.common.finish_response();
+                self.current.apply_common(common);
+                let finished = std::mem::take(&mut self.current);
+                self.sink.consume(finished)?;
+            }
         }
         Ok(())
     }

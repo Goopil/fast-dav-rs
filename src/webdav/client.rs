@@ -994,15 +994,12 @@ impl WebDavClient {
   </D:prop>
 </D:propfind>"#;
 
-        if let Ok(response) = self.propfind("", Depth::Zero, supported_report_set).await
-            && response.status().is_success()
-        {
-            // Pragmatic ASCII case-insensitive substring search: within a
-            // supported-report-set response, "sync-collection" can only refer
-            // to the RFC 6578 report.
-            let body = String::from_utf8_lossy(response.body());
-            if body.to_ascii_lowercase().contains("sync-collection") {
-                return Ok(true);
+        if let Ok(response) = self.propfind("", Depth::Zero, supported_report_set).await {
+            if response.status().is_success() {
+                let body = String::from_utf8_lossy(response.body());
+                if body.to_ascii_lowercase().contains("sync-collection") {
+                    return Ok(true);
+                }
             }
         }
 
