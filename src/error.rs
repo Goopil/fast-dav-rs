@@ -185,7 +185,7 @@ pub enum Error {
     /// accessible via `source()`.
     ///
     /// `source` is `Some` for most TLS errors — it wraps the underlying
-    /// error from rustls, `rustls_pemfile`, or `rustls_native_certs`.
+    /// error from rustls, `rustls_pki_types`, or `rustls_native_certs`.
     /// `source` is `None` when the error has no underlying cause (e.g.
     /// a configuration error that is purely descriptive). The [`tls`](Self::tls)
     /// constructor always sets `source: Some`; `source: None` is only

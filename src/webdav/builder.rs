@@ -10,6 +10,7 @@ use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::connect::proxy::Tunnel;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, RootCertStore};
 use rustls_native_certs::load_native_certs;
@@ -485,7 +486,7 @@ fn build_rustls_config(
     }
 
     for pem in extra_root_certs_pem {
-        for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
+        for cert in rustls_pki_types::CertificateDer::pem_slice_iter(pem.as_slice()) {
             let cert = cert.map_err(|e| Error::tls("failed to parse PEM certificate", e))?;
             let _ = roots.add(cert);
         }
