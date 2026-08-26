@@ -172,3 +172,55 @@ fn builder_extra_root_certs_empty() {
         .expect("build succeeds");
     let _ = client;
 }
+
+#[test]
+fn builder_bearer_token_empty_errors() {
+    let result = WebDavClient::builder(BASE).bearer_token("").build();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder_bearer_token_invalid_chars_errors() {
+    let result = WebDavClient::builder(BASE)
+        .bearer_token("token with spaces")
+        .build();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder_basic_auth_empty_user_errors() {
+    let result = WebDavClient::builder(BASE).basic_auth("", "pass").build();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder_basic_auth_empty_pass_errors() {
+    let result = WebDavClient::builder(BASE).basic_auth("user", "").build();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder_proxy_basic_auth_empty_user_errors() {
+    let result = WebDavClient::builder(BASE)
+        .proxy(hyper::Uri::from_str("http://127.0.0.1:9090").unwrap())
+        .proxy_basic_auth("", "pass")
+        .build();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder_proxy_basic_auth_empty_pass_errors() {
+    let result = WebDavClient::builder(BASE)
+        .proxy(hyper::Uri::from_str("http://127.0.0.1:9090").unwrap())
+        .proxy_basic_auth("user", "")
+        .build();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder_proxy_basic_auth_without_proxy_errors() {
+    let result = WebDavClient::builder(BASE)
+        .proxy_basic_auth("user", "pass")
+        .build();
+    assert!(result.is_err());
+}
