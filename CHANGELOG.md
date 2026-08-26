@@ -7,13 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-26
+
 ### Added
+- `#[non_exhaustive]` on all public response types for semver stability
+- `DavCapabilities` struct and `capabilities()` method for parsing the `DAV` response header (RFC 4918 §10.1)
+- `PropStat` struct to distinguish multiple `<D:propstat>` groups per response (RFC 4918 §13.1)
+- `WebDavError` struct for parsing `<D:error>` precondition/postcondition codes (RFC 4918 §14.12)
+- `parse_dav_header()` function for parsing comma-separated DAV header values
+- `parse_error_body()` function for extracting `<D:error>` child element names
+- `Collation` and `MatchType` enums for CardDAV text-match filtering (RFC 6352 §7.3)
+- `TextMatch`, `ParamFilter`, and `CardDavFilter` types for CardDAV addressbook-query filters
+- `is-not-defined` support in CardDAV prop-filter (RFC 6352 §7.1)
+- `negate-condition` attribute on CardDAV text-match
 - MSRV verification job (Rust 1.85) in CI
 - `cargo audit` security scanning job in CI
+- `CHANGELOG.md` (Keep a Changelog format)
 
 ### Changed
 - Default `User-Agent` header is now `fast-dav-rs/{version}` instead of none
 - Default `pool_idle_timeout` is now 90 seconds instead of unbounded
+- CardDAV PUT Content-Type now includes `version=4.0` parameter (RFC 6352 §6.2.1)
+- `build_addressbook_query_filter` now accepts configurable collation, match-type, and negate parameters
+- Streaming parser now tracks multiple propstat groups and response-level status separately
+- `DavItemCommon` gains `propstats` and `response_status` fields
+- CalDAV/CardDAV `DavItem` gains `propstats` and `response_status` fields
+
+### Removed
+- Duplicate `integration_tests.rs` files in caldav and carddav test modules
+
+### Fixed
+- `let_chains` replaced with MSRV 1.85 compatible code
+- Shared `on_end` and `apply_common` logic deduplicated via macros
 
 ## [0.8.0] - 2025-01-01
 
