@@ -13,4 +13,7 @@ pub use streaming::{
     parse_multistatus_stream_visit, parse_multistatus_stream_visit_with_timeout,
     parse_multistatus_stream_with_timeout,
 };
-pub use types::{BatchItem, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse};
+pub use types::{
+    BatchItem, CalendarInfo, CalendarObject, CalendarQueryFilter, Collation, DavItem, Depth,
+    MatchType, ParamFilter, PropFilter, SyncItem, SyncResponse, TextMatch, TimeRange,
+};

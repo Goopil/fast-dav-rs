@@ -7,7 +7,8 @@ use tokio::time::Duration;
 use crate::caldav::builder::CalDavClientBuilder;
 use crate::caldav::streaming::parse_multistatus_bytes;
 use crate::caldav::types::{
-    BatchItem, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse,
+    BatchItem, CalendarInfo, CalendarObject, CalendarQueryFilter, DavItem, Depth, SyncItem,
+    SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
@@ -474,6 +475,64 @@ impl CalDavClient {
         }
 
         let xml = build_calendar_query_body(component, start, end, include_data);
+
+        let resp = self.report(calendar_path, Depth::One, &xml).await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::ReportCalendarQuery,
+                status: resp.status(),
+            });
+        }
+        let body = resp.into_body();
+        Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
+    }
+
+    /// Execute a CalDAV `calendar-query` with a [`CalendarQueryFilter`].
+    ///
+    /// This is the full-featured query API supporting property-level filtering
+    /// (`prop-filter`, `text-match`, `param-filter`, `is-not-defined`) per
+    /// RFC 4791 §8.1-8.5.
+    ///
+    /// The component name in the filter is validated before any request is
+    /// sent. All values are XML-escaped when the request body is built.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error **before any network I/O** if:
+    /// - The component name is empty or contains characters outside ASCII
+    ///   alphanumerics and `-`
+    ///
+    /// Also returns an error if the REPORT request fails or the server
+    /// responds with a non-success status.
+    pub async fn calendar_query(
+        &self,
+        calendar_path: &str,
+        filter: &CalendarQueryFilter,
+        include_data: bool,
+    ) -> Result<Vec<CalendarObject>> {
+        validate_component_name(&filter.component, "invalid calendar-query component")?;
+        if let Some(tr) = &filter.time_range {
+            validate_utc_datetime(&tr.start, "invalid calendar-query time-range start")?;
+            if let Some(end) = &tr.end {
+                validate_utc_datetime(end, "invalid calendar-query time-range end")?;
+            }
+        }
+        for pf in &filter.prop_filters {
+            if let Some(tr) = &pf.time_range {
+                validate_utc_datetime(
+                    &tr.start,
+                    "invalid calendar-query prop-filter time-range start",
+                )?;
+                if let Some(end) = &tr.end {
+                    validate_utc_datetime(
+                        end,
+                        "invalid calendar-query prop-filter time-range end",
+                    )?;
+                }
+            }
+        }
+
+        let xml = filter.to_query_body(include_data);
 
         let resp = self.report(calendar_path, Depth::One, &xml).await?;
         if !resp.status().is_success() {
