@@ -7,7 +7,8 @@ use tokio::time::Duration;
 use crate::carddav::builder::CardDavClientBuilder;
 use crate::carddav::streaming::parse_multistatus_bytes;
 use crate::carddav::types::{
-    AddressBookInfo, AddressObject, BatchItem, DavItem, Depth, SyncItem, SyncResponse,
+    AddressBookInfo, AddressObject, BatchItem, CardDavFilter, Collation, DavItem, Depth, MatchType,
+    SyncItem, SyncResponse,
 };
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
@@ -15,6 +16,10 @@ use crate::webdav::types::http_status_code;
 use crate::{Error, Operation, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
+
+/// Content-Type for vCard PUT bodies, including the `version=4.0` parameter
+/// required by RFC 6352 §6.2.1.
+pub const VCARD_CONTENT_TYPE: &str = "text/vcard; charset=utf-8; version=4.0";
 
 /// High-performance CardDAV client built on **hyper 1.x** + **rustls**.
 ///
@@ -236,7 +241,7 @@ impl CardDavClient {
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/vcard; charset=utf-8"),
+            header::HeaderValue::from_static(VCARD_CONTENT_TYPE),
         );
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
@@ -267,7 +272,7 @@ impl CardDavClient {
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/vcard; charset=utf-8"),
+            header::HeaderValue::from_static(VCARD_CONTENT_TYPE),
         );
         h.insert(header::IF_MATCH, if_match_header_value(etag)?);
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
@@ -284,7 +289,7 @@ impl CardDavClient {
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/vcard; charset=utf-8"),
+            header::HeaderValue::from_static(VCARD_CONTENT_TYPE),
         );
         h.insert(header::IF_NONE_MATCH, header::HeaderValue::from_static("*"));
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
@@ -739,26 +744,52 @@ pub fn build_addressbook_query_body(filter_xml: &str, include_data: bool) -> Str
 }
 
 pub fn build_addressbook_query_filter_uid(uid: &str) -> String {
-    build_addressbook_query_filter("UID", uid)
+    build_addressbook_query_filter(
+        "UID",
+        uid,
+        Collation::default(),
+        MatchType::default(),
+        false,
+    )
 }
 
 pub fn build_addressbook_query_filter_email(email: &str) -> String {
-    build_addressbook_query_filter("EMAIL", email)
+    build_addressbook_query_filter(
+        "EMAIL",
+        email,
+        Collation::default(),
+        MatchType::default(),
+        false,
+    )
 }
 
 pub fn build_addressbook_query_filter_fn(formatted_name: &str) -> String {
-    build_addressbook_query_filter("FN", formatted_name)
+    build_addressbook_query_filter(
+        "FN",
+        formatted_name,
+        Collation::default(),
+        MatchType::default(),
+        false,
+    )
 }
 
-fn build_addressbook_query_filter(prop: &str, value: &str) -> String {
-    let escaped = escape_xml(value);
-    format!(
-        "<C:filter>\
-           <C:prop-filter name=\"{prop}\">\
-             <C:text-match collation=\"i;unicode-casemap\" match-type=\"equals\">{escaped}</C:text-match>\
-           </C:prop-filter>\
-         </C:filter>"
-    )
+pub fn build_addressbook_query_filter(
+    prop: &str,
+    value: &str,
+    collation: Collation,
+    match_type: MatchType,
+    negate: bool,
+) -> String {
+    let filter = CardDavFilter {
+        prop: prop.to_string(),
+        value: value.to_string(),
+        collation,
+        match_type,
+        negate,
+        param_filters: vec![],
+        is_not_defined: false,
+    };
+    filter.to_filter_xml()
 }
 
 pub fn build_addressbook_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
