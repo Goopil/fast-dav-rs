@@ -128,6 +128,7 @@ fn builder_with_proxy_auth() {
     let _ = client;
 }
 
+#[cfg(feature = "dangerous")]
 #[test]
 fn builder_danger_accept_invalid_certs() {
     let client = WebDavClient::builder(BASE)

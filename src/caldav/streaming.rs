@@ -317,29 +317,62 @@ impl<C: ItemConsumer> MultistatusParser<C> {
 
 async fn parse_multistatus_stream_with<C>(
     resp_body: Incoming,
-    encodings: &[ContentEncoding],
+    #[allow(unused_variables)] encodings: &[ContentEncoding],
     sink: C,
     idle_timeout: Duration,
 ) -> Result<ParseResult<C>>
 where
     C: ItemConsumer + Send,
 {
-    use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
+    let reader: Box<dyn AsyncBufRead + Unpin + Send> = {
+        #[cfg(any(
+            feature = "compression-gzip",
+            feature = "compression-brotli",
+            feature = "compression-zstd"
+        ))]
+        {
+            #[cfg(feature = "compression-brotli")]
+            use async_compression::tokio::bufread::BrotliDecoder;
+            #[cfg(feature = "compression-gzip")]
+            use async_compression::tokio::bufread::GzipDecoder;
+            #[cfg(feature = "compression-zstd")]
+            use async_compression::tokio::bufread::ZstdDecoder;
 
-    // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
-    let stream = BodyStream::new(resp_body)
-        .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
-        .map_err(std::io::Error::other);
-    let mut reader: Box<dyn AsyncBufRead + Unpin + Send> =
-        Box::new(BufReader::new(StreamReader::new(stream)));
-    for encoding in encodings.iter().rev() {
-        reader = match encoding {
-            ContentEncoding::Identity => reader,
-            ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(reader))),
-            ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(reader))),
-            ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(reader))),
-        };
-    }
+            // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
+            let stream = BodyStream::new(resp_body)
+                .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
+                .map_err(std::io::Error::other);
+            let mut reader: Box<dyn AsyncBufRead + Unpin + Send> =
+                Box::new(BufReader::new(StreamReader::new(stream)));
+            for encoding in encodings.iter().rev() {
+                reader = match encoding {
+                    ContentEncoding::Identity => reader,
+                    #[cfg(feature = "compression-brotli")]
+                    ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(reader))),
+                    #[cfg(feature = "compression-gzip")]
+                    ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(reader))),
+                    #[cfg(feature = "compression-zstd")]
+                    ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(reader))),
+                    #[allow(unreachable_patterns)]
+                    _ => reader,
+                };
+            }
+            reader
+        }
+        #[cfg(not(any(
+            feature = "compression-gzip",
+            feature = "compression-brotli",
+            feature = "compression-zstd"
+        )))]
+        {
+            let stream = BodyStream::new(resp_body)
+                .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
+                .map_err(std::io::Error::other);
+            let reader: Box<dyn AsyncBufRead + Unpin + Send> =
+                Box::new(BufReader::new(StreamReader::new(stream)));
+            reader
+        }
+    };
 
     let mut xml = Reader::from_reader(reader);
     xml.config_mut().trim_text(false);
