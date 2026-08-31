@@ -26,5 +26,10 @@ updates:
       github-actions:
         patterns:
           - "*"
+    ignore:
+      # MSRV guard: this action ref IS the tested toolchain version
+      # (must match `rust-version` in Cargo.toml). Bumping it silently
+      # disables MSRV verification. Update it manually on MSRV bumps.
+      - dependency-name: "dtolnay/rust-toolchain"
     labels:
       - "dependencies"
