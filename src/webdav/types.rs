@@ -122,6 +122,85 @@ pub fn parse_dav_header(value: &str) -> Result<DavCapabilities> {
     Ok(caps)
 }
 
+/// Item extracted from a WebDAV `207 Multi-Status` response.
+///
+/// Superset of the CalDAV and CardDAV item fields: only the properties the
+/// server actually returned are populated (`is_calendar`/`calendar_data` for
+/// CalDAV, `is_addressbook`/`address_data` for CardDAV).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DavItem {
+    pub href: String,
+    pub status: Option<String>,
+    pub displayname: Option<String>,
+    pub etag: Option<String>,
+    pub is_collection: bool,
+    /// `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>` seen (CalDAV).
+    pub is_calendar: bool,
+    /// `<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>` seen (CardDAV).
+    pub is_addressbook: bool,
+    pub supported_components: Vec<String>,
+    pub supported_address_data: Vec<String>,
+    pub calendar_data: Option<String>,
+    pub address_data: Option<String>,
+    pub calendar_home_set: Vec<String>,
+    pub addressbook_home_set: Vec<String>,
+    pub current_user_principal: Vec<String>,
+    pub owner: Option<String>,
+    pub calendar_description: Option<String>,
+    pub calendar_timezone: Option<String>,
+    pub calendar_color: Option<String>,
+    pub addressbook_description: Option<String>,
+    pub addressbook_color: Option<String>,
+    pub sync_token: Option<String>,
+    pub content_type: Option<String>,
+    pub last_modified: Option<String>,
+    pub propstats: Vec<PropStat>,
+    pub response_status: Option<String>,
+}
+
+impl Default for DavItem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DavItem {
+    pub fn new() -> Self {
+        Self {
+            href: String::new(),
+            status: None,
+            displayname: None,
+            etag: None,
+            is_collection: false,
+            is_calendar: false,
+            is_addressbook: false,
+            supported_components: Vec::new(),
+            supported_address_data: Vec::new(),
+            calendar_data: None,
+            address_data: None,
+            calendar_home_set: Vec::new(),
+            addressbook_home_set: Vec::new(),
+            current_user_principal: Vec::new(),
+            owner: None,
+            calendar_description: None,
+            calendar_timezone: None,
+            calendar_color: None,
+            addressbook_description: None,
+            addressbook_color: None,
+            sync_token: None,
+            content_type: None,
+            last_modified: None,
+            propstats: Vec::new(),
+            response_status: None,
+        }
+    }
+
+    pub(crate) fn apply_common(&mut self, common: DavItemCommon) {
+        crate::apply_common_fields!(self, common);
+    }
+}
+
 /// Common fields extracted from a WebDAV response.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]

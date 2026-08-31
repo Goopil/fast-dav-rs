@@ -1,7 +1,6 @@
 use crate::carddav::client::escape_xml;
-pub use crate::webdav::types::{BatchItem, Depth};
-use crate::webdav::types::{DavItemCommon, PropStat};
 
+pub use crate::webdav::types::{BatchItem, DavItem, Depth};
 /// Collation algorithm for `text-match` comparisons (RFC 6352 §7.3).
 ///
 /// Determines how string comparisons are performed in addressbook-query
@@ -230,65 +229,6 @@ impl CardDavFilter {
             "<C:filter><C:prop-filter name=\"{}\">{prop_inner}</C:prop-filter></C:filter>",
             escape_xml(&self.prop)
         )
-    }
-}
-
-/// Item extracted from a WebDAV response
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct DavItem {
-    pub href: String,
-    pub status: Option<String>,
-    pub displayname: Option<String>,
-    pub etag: Option<String>,
-    pub is_collection: bool,
-    pub is_addressbook: bool,
-    pub supported_address_data: Vec<String>,
-    pub address_data: Option<String>,
-    pub addressbook_home_set: Vec<String>,
-    pub current_user_principal: Vec<String>,
-    pub owner: Option<String>,
-    pub addressbook_description: Option<String>,
-    pub addressbook_color: Option<String>,
-    pub sync_token: Option<String>,
-    pub content_type: Option<String>,
-    pub last_modified: Option<String>,
-    pub propstats: Vec<PropStat>,
-    pub response_status: Option<String>,
-}
-
-impl Default for DavItem {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl DavItem {
-    pub fn new() -> Self {
-        Self {
-            href: String::new(),
-            status: None,
-            displayname: None,
-            etag: None,
-            is_collection: false,
-            is_addressbook: false,
-            supported_address_data: Vec::new(),
-            address_data: None,
-            addressbook_home_set: Vec::new(),
-            current_user_principal: Vec::new(),
-            owner: None,
-            addressbook_description: None,
-            addressbook_color: None,
-            sync_token: None,
-            content_type: None,
-            last_modified: None,
-            propstats: Vec::new(),
-            response_status: None,
-        }
-    }
-
-    pub(crate) fn apply_common(&mut self, common: DavItemCommon) {
-        crate::apply_common_fields!(self, common);
     }
 }
 
