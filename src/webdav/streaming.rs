@@ -254,21 +254,6 @@ impl CommonParser {
     }
 }
 
-#[macro_export]
-macro_rules! impl_multistatus_on_end {
-    ($self:ident, $name:expr, $elem:ty) => {{
-        $self.common.on_end($name)?;
-        if let Some(popped) = $self.stack.pop() {
-            if popped == <$elem>::Response {
-                let common = $self.common.finish_response();
-                $self.current.apply_common(common);
-                let finished = std::mem::take(&mut $self.current);
-                $self.sink.consume(finished)?;
-            }
-        }
-    }};
-}
-
 pub(crate) fn decode_text(raw: &[u8]) -> Result<String> {
     match std::str::from_utf8(raw) {
         Ok(s) => Ok(unescape(s)?.into_owned()),
@@ -277,8 +262,8 @@ pub(crate) fn decode_text(raw: &[u8]) -> Result<String> {
 }
 
 pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<String>> {
-    use quick_xml::Reader;
     use quick_xml::events::Event;
+    use quick_xml::Reader;
     use std::io::Cursor;
     let cursor = Cursor::new(body);
     let mut xml = Reader::from_reader(cursor);
@@ -349,8 +334,8 @@ pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<S
 /// assert_eq!(err.precondition_code.as_deref(), Some("no-uid-conflict"));
 /// ```
 pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
-    use quick_xml::Reader;
     use quick_xml::events::Event;
+    use quick_xml::Reader;
     use std::io::Cursor;
 
     let mut err = WebDavError::default();
