@@ -1,4 +1,156 @@
+use crate::webdav::xml;
 use crate::Result;
+
+/// Collation algorithm for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
+///
+/// Determines how string comparisons are performed in calendar-query and
+/// addressbook-query filters. See RFC 4790 for the collation registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Collation {
+    /// `i;unicode-casemap` — case-insensitive, Unicode-aware (default).
+    #[default]
+    UnicodeCasemap,
+    /// `i;ascii-casemap` — case-insensitive, ASCII only.
+    AsciiCasemap,
+}
+
+impl Collation {
+    /// Returns the collation identifier string used in XML attributes.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::UnicodeCasemap => "i;unicode-casemap",
+            Self::AsciiCasemap => "i;ascii-casemap",
+        }
+    }
+}
+
+/// Match type for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum MatchType {
+    /// Exact match (default).
+    #[default]
+    Equals,
+    /// Substring match.
+    Contains,
+    /// Prefix match.
+    StartsWith,
+    /// Suffix match.
+    EndsWith,
+}
+
+impl MatchType {
+    /// Returns the match-type identifier string used in XML attributes.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Equals => "equals",
+            Self::Contains => "contains",
+            Self::StartsWith => "starts-with",
+            Self::EndsWith => "ends-with",
+        }
+    }
+}
+
+/// Text-match condition for `prop-filter` and `param-filter`
+/// (RFC 4791 §8.4 / RFC 6352 §7.3).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct TextMatch {
+    /// The value to match against.
+    pub value: String,
+    /// Collation algorithm for comparison.
+    pub collation: Collation,
+    /// Match type for comparison.
+    pub match_type: MatchType,
+    /// If `true`, the match condition is negated (`negate-condition="yes"`).
+    pub negate: bool,
+}
+
+impl TextMatch {
+    /// Create a new `TextMatch` with the given value and default collation/match-type.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            collation: Collation::default(),
+            match_type: MatchType::default(),
+            negate: false,
+        }
+    }
+
+    /// Set the collation algorithm.
+    pub fn with_collation(mut self, collation: Collation) -> Self {
+        self.collation = collation;
+        self
+    }
+
+    /// Set the match type.
+    pub fn with_match_type(mut self, match_type: MatchType) -> Self {
+        self.match_type = match_type;
+        self
+    }
+
+    /// Negate the match condition.
+    pub fn with_negate(mut self, negate: bool) -> Self {
+        self.negate = negate;
+        self
+    }
+
+    /// Render this text-match as the `<C:text-match>` element.
+    pub fn to_xml(&self) -> String {
+        xml::text_match_xml(
+            &self.value,
+            self.collation.as_str(),
+            self.match_type.as_str(),
+            self.negate,
+        )
+    }
+}
+
+/// Nested parameter filter inside a `prop-filter` (RFC 4791 §8.3 / RFC 6352 §7.2).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ParamFilter {
+    /// The property parameter name to filter on (e.g. `PARTSTAT`, `TYPE`).
+    pub name: String,
+    /// Optional text-match condition. If `None` and `is_not_defined` is
+    /// `false`, the filter tests for the parameter's existence.
+    pub text_match: Option<TextMatch>,
+    /// If `true`, matches resources where this parameter is **absent**.
+    pub is_not_defined: bool,
+}
+
+impl ParamFilter {
+    /// Create a `ParamFilter` that matches the parameter with a text-match.
+    pub fn new(name: impl Into<String>, text_match: TextMatch) -> Self {
+        Self {
+            name: name.into(),
+            text_match: Some(text_match),
+            is_not_defined: false,
+        }
+    }
+
+    /// Create a `ParamFilter` that matches resources where the parameter is **absent**.
+    pub fn not_defined(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            text_match: None,
+            is_not_defined: true,
+        }
+    }
+
+    /// Render this param-filter as the `<C:param-filter>` element.
+    pub fn to_xml(&self) -> String {
+        let inner = if self.is_not_defined {
+            xml::IS_NOT_DEFINED_XML.to_string()
+        } else if let Some(tm) = &self.text_match {
+            tm.to_xml()
+        } else {
+            String::new()
+        };
+        xml::param_filter_xml(&self.name, &inner)
+    }
+}
 
 /// WebDAV Depth
 #[derive(Copy, Clone)]
