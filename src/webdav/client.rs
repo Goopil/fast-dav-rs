@@ -122,6 +122,23 @@ pub fn normalize_sync_token(token: &str) -> String {
     token.trim().trim_matches('"').to_string()
 }
 
+fn normalize_decompressed_headers(
+    headers: &mut HeaderMap,
+    encodings: &[ContentEncoding],
+    body_len: usize,
+) {
+    if encodings.is_empty() {
+        return;
+    }
+
+    headers.remove(header::CONTENT_ENCODING);
+    if let Ok(value) = header::HeaderValue::from_str(&body_len.to_string()) {
+        headers.insert(header::CONTENT_LENGTH, value);
+    } else {
+        headers.remove(header::CONTENT_LENGTH);
+    }
+}
+
 #[derive(Clone)]
 pub struct WebDavClient {
     base: Uri,
@@ -515,39 +532,23 @@ impl WebDavClient {
         }
     }
 
-    fn normalize_decompressed_headers(
-        &self,
-        headers: &mut HeaderMap,
-        encodings: &[ContentEncoding],
-        body_len: usize,
-    ) {
-        if encodings.is_empty() {
-            return;
-        }
-
-        headers.remove(header::CONTENT_ENCODING);
-        if let Ok(value) = header::HeaderValue::from_str(&body_len.to_string()) {
-            headers.insert(header::CONTENT_LENGTH, value);
-        } else {
-            headers.remove(header::CONTENT_LENGTH);
-        }
-    }
-
     // ----------- Aggregated send (Bytes) with automatic decompression -----------
 
-    /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
-    pub async fn send(
+    /// Shared request pipeline: builds the request (auth, UA, compression),
+    /// sends it with the compression-retry loop, and returns the raw
+    /// (still-encoded) response.
+    async fn build_and_send(
         &self,
         method: Method,
         path: &str,
         headers: HeaderMap,
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
-    ) -> Result<Response<Bytes>> {
+    ) -> Result<Response<Incoming>> {
         let uri = self.build_uri(path)?;
         let auth = self.auth_header.clone();
         let base_headers = headers;
-        let base_body = body_bytes.clone();
+        let base_body = body_bytes;
         let mut attempt = 0;
 
         loop {
@@ -603,14 +604,30 @@ impl WebDavClient {
                 continue;
             }
 
-            let encodings = detect_encodings(resp.headers());
-            let (mut parts, body) = resp.into_parts();
-
-            let decompressed = decompress_body(body, &encodings).await?;
-            self.normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
-
-            break Ok(Response::from_parts(parts, decompressed));
+            return Ok(resp);
         }
+    }
+
+    /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
+    pub async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        headers: HeaderMap,
+        body_bytes: Option<Bytes>,
+        per_req_timeout: Option<Duration>,
+    ) -> Result<Response<Bytes>> {
+        let resp = self
+            .build_and_send(method, path, headers, body_bytes, per_req_timeout)
+            .await?;
+
+        let encodings = detect_encodings(resp.headers());
+        let (mut parts, body) = resp.into_parts();
+
+        let decompressed = decompress_body(body, &encodings).await?;
+        normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
+
+        Ok(Response::from_parts(parts, decompressed))
     }
 
     // ----------- Streaming send (for parsing on the fly) -----------
@@ -624,67 +641,8 @@ impl WebDavClient {
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
     ) -> Result<Response<Incoming>> {
-        let uri = self.build_uri(path)?;
-        let auth = self.auth_header.clone();
-        let base_headers = headers;
-        let base_body = body_bytes.clone();
-        let mut attempt = 0;
-
-        loop {
-            let mut headers = base_headers.clone();
-            add_accept_encoding(&mut headers);
-
-            let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
-
-            if let Some(ref auth_header) = auth {
-                req_builder = req_builder.header(header::AUTHORIZATION, auth_header);
-            }
-
-            if let Some(ua) = &self.user_agent {
-                headers.insert(header::USER_AGENT, ua.clone());
-            }
-
-            let mut final_body: Option<Bytes> = None;
-            let mut attempted_encoding: Option<ContentEncoding> = None;
-
-            if let Some(body) = base_body.clone() {
-                if !headers.contains_key(header::CONTENT_TYPE) {
-                    req_builder = req_builder.header(
-                        header::CONTENT_TYPE,
-                        header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                    );
-                }
-
-                let (payload, encoding) = self.prepare_request_body(body, &mut headers).await;
-                attempted_encoding = encoding;
-                final_body = Some(payload);
-            }
-
-            for (k, v) in headers.iter() {
-                req_builder = req_builder.header(k, v);
-            }
-
-            let req = match final_body {
-                Some(body) => req_builder.body(Full::new(body))?,
-                None => req_builder.body(Full::new(Bytes::new()))?,
-            };
-
-            let limit = per_req_timeout.unwrap_or(self.default_timeout);
-            let fut = self.client.request(req);
-            let resp = timeout(limit, fut)
-                .await
-                .map_err(|_| Error::Timeout { limit })?
-                .map_err(Error::from_client)?;
-
-            let should_retry =
-                self.handle_request_compression_outcome(attempted_encoding, resp.status());
-            if should_retry && attempt == 0 && base_body.is_some() {
-                attempt += 1;
-                continue;
-            }
-
-            break Ok(resp);
-        }
+        self.build_and_send(method, path, headers, body_bytes, per_req_timeout)
+            .await
     }
 
     // ----------- HTTP/WebDAV Verbs -----------
@@ -769,22 +727,24 @@ impl WebDavClient {
         dest_absolute_url: &str,
         overwrite: bool,
     ) -> Result<Response<Bytes>> {
-        let mut h = HeaderMap::new();
-        h.insert(
-            "Destination",
-            header::HeaderValue::from_str(dest_absolute_url)?,
-        );
-        h.insert(
-            "Overwrite",
-            header::HeaderValue::from_static(if overwrite { "T" } else { "F" }),
-        );
-        self.send(Method::from_bytes(b"COPY")?, src_path, h, None, None)
+        self.copy_move(b"COPY", src_path, dest_absolute_url, overwrite)
             .await
     }
 
     /// Send a WebDAV `MOVE` from `src_path` to an absolute `Destination` URL.
     pub async fn r#move(
         &self,
+        src_path: &str,
+        dest_absolute_url: &str,
+        overwrite: bool,
+    ) -> Result<Response<Bytes>> {
+        self.copy_move(b"MOVE", src_path, dest_absolute_url, overwrite)
+            .await
+    }
+
+    async fn copy_move(
+        &self,
+        method: &[u8],
         src_path: &str,
         dest_absolute_url: &str,
         overwrite: bool,
@@ -798,7 +758,7 @@ impl WebDavClient {
             "Overwrite",
             header::HeaderValue::from_static(if overwrite { "T" } else { "F" }),
         );
-        self.send(Method::from_bytes(b"MOVE")?, src_path, h, None, None)
+        self.send(Method::from_bytes(method)?, src_path, h, None, None)
             .await
     }
 
@@ -915,52 +875,25 @@ impl WebDavClient {
         xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
-        let sem = Arc::new(Semaphore::new(max_concurrency.max(1)));
-        let mut tasks = FuturesOrdered::new();
-
-        for path in paths {
-            let sem_clone = sem.clone();
-            let this = self.clone();
-            let body = xml_body.clone();
-            let p = path.clone();
-            tasks.push_back(async move {
-                let _permit: OwnedSemaphorePermit =
-                    sem_clone.acquire_owned().await.expect("semaphore closed");
-                let mut h = HeaderMap::new();
-                h.insert(
-                    "Depth",
-                    header::HeaderValue::from_str(depth.as_str()).unwrap(),
-                );
-                h.insert(
-                    header::CONTENT_TYPE,
-                    header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                );
-                let res = this
-                    .send(
-                        Method::from_bytes(b"PROPFIND").unwrap(),
-                        &p,
-                        h,
-                        Some((*body).clone()),
-                        None,
-                    )
-                    .await;
-                BatchItem {
-                    pub_path: p,
-                    result: res,
-                }
-            });
-        }
-
-        let mut out = Vec::new();
-        while let Some(item) = tasks.next().await {
-            out.push(item);
-        }
-        out
+        self.many(Method::from_bytes(b"PROPFIND").unwrap(), paths, depth, xml_body, max_concurrency)
+            .await
     }
 
     /// Run many `REPORT`s concurrently with a semaphore-bound concurrency limit.
     pub async fn report_many(
         &self,
+        paths: impl IntoIterator<Item = String>,
+        depth: Depth,
+        xml_body: Arc<Bytes>,
+        max_concurrency: usize,
+    ) -> Vec<BatchItem<Response<Bytes>>> {
+        self.many(Method::from_bytes(b"REPORT").unwrap(), paths, depth, xml_body, max_concurrency)
+            .await
+    }
+
+    async fn many(
+        &self,
+        method: Method,
         paths: impl IntoIterator<Item = String>,
         depth: Depth,
         xml_body: Arc<Bytes>,
@@ -974,6 +907,7 @@ impl WebDavClient {
             let this = self.clone();
             let body = xml_body.clone();
             let p = path.clone();
+            let method = method.clone();
             tasks.push_back(async move {
                 let _permit: OwnedSemaphorePermit =
                     sem_clone.acquire_owned().await.expect("semaphore closed");
@@ -987,13 +921,7 @@ impl WebDavClient {
                     header::HeaderValue::from_static("application/xml; charset=utf-8"),
                 );
                 let res = this
-                    .send(
-                        Method::from_bytes(b"REPORT").unwrap(),
-                        &p,
-                        h,
-                        Some((*body).clone()),
-                        None,
-                    )
+                    .send(method, &p, h, Some((*body).clone()), None)
                     .await;
                 BatchItem {
                     pub_path: p,
@@ -1459,32 +1387,29 @@ mod tests {
 
     #[test]
     fn normalize_decompressed_headers_empty_encodings_noop() {
-        let client = make_client(BASE);
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
         headers.insert(header::CONTENT_LENGTH, "100".parse().unwrap());
-        client.normalize_decompressed_headers(&mut headers, &[], 42);
+        normalize_decompressed_headers(&mut headers, &[], 42);
         assert_eq!(headers.get(header::CONTENT_ENCODING).unwrap(), "gzip");
         assert_eq!(headers.get(header::CONTENT_LENGTH).unwrap(), "100");
     }
 
     #[test]
     fn normalize_decompressed_headers_removes_encoding_sets_length() {
-        let client = make_client(BASE);
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
-        client.normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], 42);
+        normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], 42);
         assert!(headers.get(header::CONTENT_ENCODING).is_none());
         assert_eq!(headers.get(header::CONTENT_LENGTH).unwrap(), "42");
     }
 
     #[test]
     fn normalize_decompressed_headers_large_body_len_removes_length() {
-        let client = make_client(BASE);
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_LENGTH, "100".parse().unwrap());
         let huge = usize::MAX;
-        client.normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], huge);
+        normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], huge);
         assert!(headers.get(header::CONTENT_ENCODING).is_none());
         assert!(headers.get(header::CONTENT_LENGTH).is_none());
     }
