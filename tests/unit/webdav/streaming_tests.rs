@@ -8,7 +8,8 @@ use fast_dav_rs::{ContentEncoding, Depth, RequestCompressionMode, WebDavClient, 
 use hyper::{HeaderMap, Method};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::common::http_helpers::{response_head, serve_once};
 
 /// XML containing a self-closing element (Empty event), CDATA text and a sync token.
 const RICH_MULTISTATUS: &str = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -25,36 +26,6 @@ const RICH_MULTISTATUS: &str = r#"<?xml version="1.0" encoding="utf-8"?>
   </D:response>
   <D:sync-token>https://example.com/sync/42</D:sync-token>
 </D:multistatus>"#;
-
-/// Serve exactly one HTTP/1.1 response on an ephemeral local port.
-async fn serve_once(head: String, body: Vec<u8>) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.unwrap();
-        let mut buf = [0u8; 4096];
-        let mut seen = Vec::new();
-        loop {
-            let n = socket.read(&mut buf).await.unwrap();
-            if n == 0 {
-                break;
-            }
-            seen.extend_from_slice(&buf[..n]);
-            if seen.windows(4).any(|w| w == b"\r\n\r\n") {
-                break;
-            }
-        }
-        socket.write_all(head.as_bytes()).await.unwrap();
-        socket.write_all(&body).await.unwrap();
-    });
-    format!("http://127.0.0.1:{port}/")
-}
-
-fn response_head(extra_headers: &str, body_len: usize) -> String {
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Length: {body_len}\r\n{extra_headers}Connection: close\r\n\r\n"
-    )
-}
 
 #[tokio::test]
 async fn visit_parses_stream_with_empty_events_cdata_and_sync_token() {
