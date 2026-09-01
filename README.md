@@ -436,9 +436,17 @@ use fast_dav_rs::webdav::RequestCompressionMode;
 
 let mut client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
 client.set_request_compression_mode(RequestCompressionMode::Force(ContentEncoding::Gzip));
-client.set_request_compression_auto();
-client.disable_request_compression();
+client.set_request_compression_mode(RequestCompressionMode::Auto);
+client.set_request_compression_mode(RequestCompressionMode::Disabled);
 ```
+
+> The `set_request_compression`, `set_request_compression_auto`, and
+> `disable_request_compression` sugar methods, the associated
+> `etag_from_headers` / `normalize_etag` / `normalize_sync_token` helpers,
+> and the `legacy` feature are **deprecated since 0.9** and will be removed
+> in the next breaking release. Use `set_request_compression_mode`, the free
+> functions `fast_dav_rs::webdav::{etag_from_headers, normalize_etag,
+> normalize_sync_token}`, and the canonical module paths instead.
 
 ### Per-request timeouts
 
