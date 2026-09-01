@@ -67,6 +67,47 @@ async fn free_busy_query_sends_report_and_parses_periods() {
 }
 
 #[tokio::test]
+async fn free_busy_query_parses_bare_text_calendar_body() {
+    // Sabre/DAV answers free-busy-query with a bare text/calendar VFREEBUSY
+    // body instead of the RFC 4791 multistatus; the client must not return
+    // an empty result on it.
+    let ical = "BEGIN:VCALENDAR\r\nBEGIN:VFREEBUSY\r\n\
+        FREEBUSY:20260105T100000Z/20260105T110000Z\r\n\
+        FREEBUSY;FBTYPE=BUSY-TENTATIVE:20260106T100000Z/20260106T110000Z\r\n\
+        END:VFREEBUSY\r\nEND:VCALENDAR\r\n";
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head(
+            "Content-Type: text/calendar;charset=UTF-8\r\n",
+            ical.len(),
+        ),
+        ical.as_bytes().to_vec(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let periods = client
+        .free_busy_query("cal/", "20260101T000000Z", "20260110T000000Z")
+        .await
+        .unwrap();
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains("REPORT"),
+        "expected REPORT method in request: {req}"
+    );
+
+    assert_eq!(periods.len(), 2);
+    assert_eq!(periods[0].fb_type, FreeBusyType::Busy);
+    assert_eq!(periods[0].start, "20260105T100000Z");
+    assert_eq!(periods[0].end, "20260105T110000Z");
+    assert_eq!(periods[1].fb_type, FreeBusyType::BusyTentative);
+    assert_eq!(periods[1].start, "20260106T100000Z");
+    assert_eq!(periods[1].end, "20260106T110000Z");
+}
+
+#[tokio::test]
 async fn free_busy_query_rejects_invalid_start() {
     let client = CalDavClient::new("https://example.com/dav/", None, None).unwrap();
     let err = client
