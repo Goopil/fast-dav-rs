@@ -1491,7 +1491,7 @@ macro_rules! impl_dav_client_delegates {
                     .await
             }
 
-    /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
+            /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
             /// The caller must enforce its own read deadline on the returned body; the
             /// per-request timeout covers headers only.
             pub async fn send_stream(
