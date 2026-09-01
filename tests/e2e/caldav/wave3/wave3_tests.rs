@@ -52,7 +52,7 @@ async fn put_event(client: &CalDavClient, calendar_path: &str, uid: &str, ics: S
         .expect("event PUT request");
     assert!(
         resp.status().is_success(),
-        "Expected successful event PUT for {uid}, got {}",
+        "Expected successful event PUT, got {}",
         resp.status()
     );
     event_path

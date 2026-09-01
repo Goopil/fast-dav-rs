@@ -75,12 +75,16 @@ async fn test_parsing_vcard_roundtrip_preserves_fields() {
         .address_data
         .as_deref()
         .expect("query with include_data must return address-data");
-    for expected in ["Zoé Müller", "zoe@example.com", &uid, "Line two"] {
+    for expected in ["Zoé Müller", "zoe@example.com", "Line two"] {
         assert!(
             data.contains(expected),
             "parsed vCard must preserve {expected:?}, got:\n{data}"
         );
     }
+    assert!(
+        data.contains(uid.as_str()),
+        "parsed vCard must preserve the generated UID"
+    );
 
     let _ = client.delete(&contact_path).await;
     let _ = client.delete(&book_path).await;
