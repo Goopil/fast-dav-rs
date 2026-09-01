@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-01
+
+### Added
+- Unified multistatus parser shared by CalDAV and CardDAV, exposed as the new public path
+  `fast_dav_rs::webdav::streaming` (unified `ElementName` marked `#[non_exhaustive]`,
+  `DavItem` field superset, `parse_multistatus_*` family and `parse_error_body`)
+- Free functions `etag_from_headers`, `normalize_etag`, `normalize_sync_token` re-exported
+  at the crate root (canonical replacements for the deprecated associated helpers)
+
+### Deprecated
+- `set_request_compression` / `set_request_compression_auto` / `disable_request_compression`
+  on `WebDavClient`, `CalDavClient`, `CardDavClient` — use the builder `request_compression(...)`
+  or `set_request_compression_mode`
+- Associated helpers `etag_from_headers` / `normalize_etag` / `normalize_sync_token` on all
+  three clients — use the crate-root free functions
+- `caldav::streaming::ElementName` / `element_from_bytes` and their CardDAV counterparts —
+  use `fast_dav_rs::webdav::streaming::{ElementName, element_from_bytes}`
+- `impl_multistatus_on_end!` macro (internal code-generation helper)
+- Legacy root module paths (`fast_dav_rs::{client,streaming,types,compression}`, behind the
+  `legacy` cargo feature) — removal scheduled in 0.10
+
+### Changed
+- ~1,050 lines of duplicated CalDAV/CardDAV client and streaming code unified behind shared
+  `webdav/` helpers (parser, delegate macro, sync mapping, compression stack). Public API
+  verified non-breaking by `cargo-semver-checks`; parser outputs verified byte-identical
+  against 0.9.0 on a differential fixture corpus.
+
 ## [0.9.0] - 2026-08-26
 
 ### Added
