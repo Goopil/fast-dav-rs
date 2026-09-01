@@ -1,5 +1,5 @@
-use crate::webdav::xml;
 use crate::Result;
+use crate::webdav::xml;
 
 /// Collation algorithm for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
 ///
@@ -390,4 +390,61 @@ macro_rules! apply_common_fields {
         $self.propstats = $common.propstats;
         $self.response_status = $common.response_status;
     };
+}
+
+use hyper::HeaderMap;
+
+/// Flattened `sync-collection` item shared by the CalDAV/CardDAV mappers.
+pub(crate) struct SyncRow {
+    pub href: String,
+    pub etag: Option<String>,
+    pub data: Option<String>,
+    pub status: Option<String>,
+    pub is_deleted: bool,
+}
+
+/// Shared `sync-collection` mapping logic (RFC 6578): resolve the sync token
+/// (top-level, then `Sync-Token` header, then first per-item token), skip
+/// collection entries, and flag 404/410 items as deleted.
+pub(crate) fn map_sync_rows(
+    headers: &HeaderMap,
+    items: Vec<DavItem>,
+    top_level_sync_token: Option<String>,
+    data_of: impl FnMut(&mut DavItem) -> Option<String>,
+) -> (Option<String>, Vec<SyncRow>) {
+    let mut data_of = data_of;
+    let mut sync_token = top_level_sync_token.or_else(|| {
+        headers
+            .get("Sync-Token")
+            .and_then(|v| v.to_str().ok())
+            .map(crate::webdav::client::normalize_sync_token)
+    });
+    let mut out = Vec::new();
+
+    for mut item in items {
+        // Per-item tokens are already normalized by the streaming parser.
+        if item.sync_token.is_some() && sync_token.is_none() {
+            sync_token = item.sync_token.clone();
+        }
+
+        let is_collection = item.is_collection
+            || (item.sync_token.is_some() && item.etag.is_none() && data_of(&mut item).is_none());
+        if is_collection {
+            continue;
+        }
+        let status = item.status.clone();
+        let code = status.as_deref().and_then(http_status_code);
+        let is_deleted = matches!(code, Some(404) | Some(410));
+
+        let data = data_of(&mut item);
+        out.push(SyncRow {
+            href: item.href,
+            etag: item.etag,
+            data,
+            status,
+            is_deleted,
+        });
+    }
+
+    (sync_token, out)
 }

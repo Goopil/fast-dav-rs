@@ -1,3 +1,4 @@
+#![allow(deprecated)] // deliberately exercises the deprecated helpers
 use bytes::Bytes;
 use fast_dav_rs::CalDavClient;
 use hyper::http::{HeaderMap, HeaderValue};
@@ -45,14 +46,16 @@ fn test_etag_from_headers_present() {
     let mut headers = HeaderMap::new();
     headers.insert("ETag", HeaderValue::from_static("\"abc123\""));
 
-    let etag = CalDavClient::etag_from_headers(&headers);
+    #[allow(deprecated)]
+    let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, Some("abc123".to_string()));
 }
 
 #[test]
 fn test_etag_from_headers_missing() {
     let headers = HeaderMap::new();
-    let etag = CalDavClient::etag_from_headers(&headers);
+    #[allow(deprecated)]
+    let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, None);
 }
 
@@ -63,7 +66,8 @@ fn test_etag_from_headers_invalid_utf8() {
     let invalid_value = HeaderValue::from_bytes(b"\xFF\xFE").unwrap();
     headers.insert("ETag", invalid_value);
 
-    let etag = CalDavClient::etag_from_headers(&headers);
+    #[allow(deprecated)]
+    let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, None);
 }
 
@@ -73,7 +77,8 @@ fn test_etag_from_headers_multiple_values() {
     headers.insert("ETag", HeaderValue::from_static("\"first\""));
     headers.append("ETag", HeaderValue::from_static("\"second\""));
 
-    let etag = CalDavClient::etag_from_headers(&headers);
+    #[allow(deprecated)]
+    let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     // Should return the first value
     assert_eq!(etag, Some("first".to_string()));
 }
@@ -83,7 +88,8 @@ fn test_etag_from_headers_weak_etag() {
     let mut headers = HeaderMap::new();
     headers.insert("ETag", HeaderValue::from_static("W/\"weak123\""));
 
-    let etag = CalDavClient::etag_from_headers(&headers);
+    #[allow(deprecated)]
+    let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, Some("W/weak123".to_string()));
 }
 
@@ -91,7 +97,8 @@ fn test_etag_from_headers_weak_etag() {
 fn test_etag_from_headers_strips_quotes_and_returns_none_if_empty() {
     let mut headers = HeaderMap::new();
     headers.insert("ETag", HeaderValue::from_static("\"\""));
-    let etag = CalDavClient::etag_from_headers(&headers);
+    #[allow(deprecated)]
+    let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, None);
 }
 
@@ -106,6 +113,7 @@ async fn test_conditional_operations_normalize_if_match() {
     ] {
         let (base_url, request) = capture_request().await;
         let client = CalDavClient::new(&base_url, None, None).unwrap();
+        #[allow(deprecated)]
         client.disable_request_compression();
         client
             .put_if_match("event.ics", Bytes::from_static(b"BEGIN:VCALENDAR"), etag)
@@ -117,6 +125,7 @@ async fn test_conditional_operations_normalize_if_match() {
 
         let (base_url, request) = capture_request().await;
         let client = CalDavClient::new(&base_url, None, None).unwrap();
+        #[allow(deprecated)]
         client.disable_request_compression();
         client.delete_if_match("event.ics", etag).await.unwrap();
         let request = request.await.unwrap();
@@ -156,11 +165,12 @@ async fn test_if_match_rejects_bare_weak_prefix() {
 async fn test_etag_round_trip_from_headers_to_if_match() {
     let (base_url, request) = capture_request().await;
     let client = CalDavClient::new(&base_url, None, None).unwrap();
+    #[allow(deprecated)]
     client.disable_request_compression();
 
     let mut headers = HeaderMap::new();
     headers.insert("ETag", HeaderValue::from_static("\"etag-from-server\""));
-    let etag = CalDavClient::etag_from_headers(&headers).expect("etag present");
+    let etag = fast_dav_rs::webdav::etag_from_headers(&headers).expect("etag present");
     assert_eq!(etag, "etag-from-server");
 
     client

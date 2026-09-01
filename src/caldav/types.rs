@@ -1,4 +1,6 @@
-pub use crate::webdav::types::{BatchItem, Collation, DavItem, Depth, MatchType, ParamFilter, TextMatch};
+pub use crate::webdav::types::{
+    BatchItem, Collation, DavItem, Depth, MatchType, ParamFilter, TextMatch,
+};
 
 use crate::webdav::xml;
 

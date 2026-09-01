@@ -860,8 +860,8 @@ pub fn decode_text(raw: &[u8]) -> Result<String> {
 }
 
 pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<String>> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
     use std::io::Cursor;
     let cursor = Cursor::new(body);
     let mut xml = Reader::from_reader(cursor);
@@ -932,8 +932,8 @@ pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<S
 /// assert_eq!(err.precondition_code.as_deref(), Some("no-uid-conflict"));
 /// ```
 pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
     use std::io::Cursor;
 
     let mut err = WebDavError::default();

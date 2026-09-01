@@ -132,7 +132,7 @@ END:VCALENDAR"#,
     let head_response = client.head(&event_path).await;
     match head_response {
         Ok(resp) => {
-            if let Some(etag) = CalDavClient::etag_from_headers(resp.headers()) {
+            if let Some(etag) = fast_dav_rs::webdav::etag_from_headers(resp.headers()) {
                 let update_response = client
                     .put_if_match(&event_path, updated_event_bytes, &etag)
                     .await;

@@ -5,7 +5,9 @@ pub mod types;
 pub mod xml;
 
 pub use builder::WebDavClientBuilder;
-pub use client::{RequestCompressionMode, WebDavClient};
+pub use client::{
+    RequestCompressionMode, WebDavClient, etag_from_headers, normalize_etag, normalize_sync_token,
+};
 pub use streaming::parse_error_body;
 pub use types::{
     BatchItem, DavCapabilities, DavItem, DavItemCommon, Depth, PropStat, WebDavError,

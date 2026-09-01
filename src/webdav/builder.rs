@@ -1,14 +1,14 @@
 //! Builder for [`WebDavClient`] — configure auth, timeout, connection pool,
 //! TLS, proxy, and request compression before the client is constructed.
 
-use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as B64;
 use bytes::Bytes;
 use http_body_util::Full;
-use hyper::{header, Uri};
+use hyper::{Uri, header};
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::connect::proxy::Tunnel;
-use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
