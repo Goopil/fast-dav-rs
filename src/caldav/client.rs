@@ -35,7 +35,14 @@ pub struct CalDavClient {
     webdav: WebDavClient,
 }
 
-impl_dav_client_delegates!(CalDavClient, "text/calendar; charset=utf-8");
+impl_dav_client_delegates!(
+    CalDavClient,
+    "text/calendar; charset=utf-8",
+    "urn:ietf:params:xml:ns:caldav",
+    "calendar-data",
+    crate::caldav::types::SyncResponse,
+    crate::caldav::client::map_sync_response
+);
 
 impl CalDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
@@ -388,18 +395,11 @@ impl CalDavClient {
 
         let body = build_sync_collection_body(sync_token, limit, include_data, expand.as_ref());
 
-        let resp = self.report(calendar_path, Depth::Zero, &body).await?;
-        if !resp.status().is_success() {
-            return Err(Error::UnexpectedStatus {
-                operation: Operation::ReportSyncCollection,
-                status: resp.status(),
-            });
-        }
-        let headers = resp.headers().clone();
-        let body = resp.into_body();
-
-        let parsed = parse_multistatus_bytes(&body)?;
-        Ok(map_sync_response(&headers, parsed.items, parsed.sync_token))
+        let (headers, items, token) = self
+            .webdav
+            .sync_collection_report(calendar_path, &body)
+            .await?;
+        Ok(map_sync_response(&headers, items, token))
     }
 
     /// Query free/busy information for a calendar via a `free-busy-query`
@@ -613,6 +613,7 @@ pub fn build_sync_collection_body(
         "urn:ietf:params:xml:ns:caldav",
         "calendar-data",
         expand.map(|tr| (tr.start.as_str(), tr.end.as_deref())),
+        crate::webdav::types::SyncLevel::One,
     )
 }
 

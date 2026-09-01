@@ -1,5 +1,5 @@
 use fast_dav_rs::caldav::{FreeBusyType, TimeRange};
-use fast_dav_rs::{CalDavClient, Depth, Error, RequestCompressionMode};
+use fast_dav_rs::{CalDavClient, Depth, Error, RequestCompressionMode, SyncLevel};
 use hyper::http::HeaderMap;
 
 #[tokio::test]
@@ -846,5 +846,96 @@ async fn caldav_follow_redirects_false_propagates() {
     assert!(
         !raw.contains("/never/"),
         "the redirect target must not be requested: {raw}"
+    );
+}
+
+const GONE_410: &str = "HTTP/1.1 410 Gone\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+const INITIAL_SYNC_BODY: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-b"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:sync-token>http://example.com/sync/2</D:sync-token>
+</D:multistatus>"#;
+
+#[tokio::test]
+async fn sync_collection_resilient_recovers_from_gone() {
+    let ok_head = crate::common::http_helpers::response_head("", INITIAL_SYNC_BODY.len());
+    let (base, captured) = crate::common::http_helpers::serve_sequence(vec![
+        (GONE_410.to_string(), Vec::new()),
+        (ok_head, INITIAL_SYNC_BODY.as_bytes().to_vec()),
+    ])
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let sync = client
+        .sync_collection_resilient("cal/", Some("http://example.com/sync/stale"), None, true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        sync.sync_token.as_deref(),
+        Some("http://example.com/sync/2")
+    );
+    assert_eq!(sync.items.len(), 2);
+    assert_eq!(sync.items[0].href, "/cal/a.ics");
+    assert_eq!(sync.items[0].etag.as_deref(), Some("etag-a"));
+    assert!(!sync.items[0].is_deleted);
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(
+        reqs.len(),
+        2,
+        "410 must trigger exactly one retry: {reqs:?}"
+    );
+    let first = String::from_utf8_lossy(&reqs[0]);
+    let second = String::from_utf8_lossy(&reqs[1]);
+    assert!(
+        first.contains("<D:sync-token>http://example.com/sync/stale</D:sync-token>"),
+        "first request must carry the stale token: {first}"
+    );
+    assert!(
+        second.contains("<D:sync-token/>"),
+        "retry must be an initial sync with an empty token: {second}"
+    );
+}
+
+#[tokio::test]
+async fn sync_collection_with_level_sends_infinite() {
+    let head = crate::common::http_helpers::response_head("", INITIAL_SYNC_BODY.len());
+    let (base, captured) =
+        crate::common::http_helpers::serve_capture(head, INITIAL_SYNC_BODY.as_bytes().to_vec())
+            .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let sync = client
+        .sync_collection_with_level("cal/", None, None, false, SyncLevel::Infinite)
+        .await
+        .unwrap();
+    assert_eq!(
+        sync.sync_token.as_deref(),
+        Some("http://example.com/sync/2")
+    );
+    assert_eq!(sync.items.len(), 2);
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains("<D:sync-level>infinite</D:sync-level>"),
+        "expected the configured sync-level on the wire: {req}"
     );
 }

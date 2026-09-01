@@ -1,3 +1,4 @@
+use crate::webdav::types::SyncLevel;
 use crate::{Error, Result};
 
 pub fn escape_xml(input: &str) -> String {
@@ -97,6 +98,29 @@ pub(crate) fn data_element_xml(data_element: &str, expand: Option<(&str, Option<
     out
 }
 
+/// Build a `sync-collection` REPORT body (RFC 6578 §3.3).
+///
+/// `sync_level` controls the `<D:sync-level>` element: [`SyncLevel::One`]
+/// restricts the sync to the collection members, [`SyncLevel::Infinite`]
+/// includes all descendants.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::{SyncLevel, build_sync_collection_body};
+///
+/// let body = build_sync_collection_body(
+///     Some("http://example.com/sync/7"),
+///     None,
+///     true,
+///     "urn:ietf:params:xml:ns:caldav",
+///     "calendar-data",
+///     None,
+///     SyncLevel::Infinite,
+/// );
+/// assert!(body.contains("<D:sync-token>http://example.com/sync/7</D:sync-token>"));
+/// assert!(body.contains("<D:sync-level>infinite</D:sync-level>"));
+/// ```
 pub fn build_sync_collection_body(
     sync_token: Option<&str>,
     limit: Option<u32>,
@@ -104,6 +128,7 @@ pub fn build_sync_collection_body(
     namespace: &str,
     data_element: &str,
     expand: Option<(&str, Option<&str>)>,
+    sync_level: SyncLevel,
 ) -> String {
     let mut body = format!(r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{namespace}">"#);
     if let Some(token) = sync_token {
@@ -113,7 +138,9 @@ pub fn build_sync_collection_body(
     } else {
         body.push_str("<D:sync-token/>");
     }
-    body.push_str("<D:sync-level>1</D:sync-level>");
+    body.push_str("<D:sync-level>");
+    body.push_str(sync_level.as_str());
+    body.push_str("</D:sync-level>");
     body.push_str("<D:prop><D:getetag/>");
     if include_data || expand.is_some() {
         body.push_str(&data_element_xml(data_element, expand));

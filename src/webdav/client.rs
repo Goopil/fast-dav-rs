@@ -16,7 +16,9 @@ use crate::common::compression::{
 use crate::common::http::HyperClient;
 use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
-use crate::webdav::types::{BatchItem, DavCapabilities, Depth, Prefer, SyncCapability};
+use crate::webdav::types::{
+    BatchItem, DavCapabilities, DavItem, Depth, Prefer, SyncCapability, SyncLevel,
+};
 use crate::{Error, Operation, Result};
 
 /// Strategy for compressing outgoing request bodies.
@@ -1251,6 +1253,167 @@ impl WebDavClient {
         }
     }
 
+    /// Send a `sync-collection` REPORT (RFC 6578) with a configurable
+    /// `sync-level`, returning the raw parsed multistatus: the response
+    /// headers, the response items, and the sync token (top-level element,
+    /// then `Sync-Token` header, then the first per-item token).
+    ///
+    /// `namespace` and `data_element` select the CalDAV/CardDAV data
+    /// property requested alongside `getetag` (e.g. `calendar-data`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnexpectedStatus`] (operation
+    /// [`Operation::ReportSyncCollection`](crate::Operation::ReportSyncCollection))
+    /// when the server answers with a non-success status.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::WebDavClient;
+    /// use fast_dav_rs::webdav::SyncLevel;
+    ///
+    /// # async fn run() -> fast_dav_rs::Result<()> {
+    /// let client = WebDavClient::new("https://dav.example.com/cal/", None, None)?;
+    /// let (headers, items, sync_token) = client
+    ///     .sync_collection_with_level(
+    ///         "calendars/user/work/",
+    ///         None,
+    ///         None,
+    ///         true,
+    ///         "urn:ietf:params:xml:ns:caldav",
+    ///         "calendar-data",
+    ///         SyncLevel::Infinite,
+    ///     )
+    ///     .await?;
+    /// println!("token: {sync_token:?}, items: {}", items.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    pub async fn sync_collection_with_level(
+        &self,
+        path: &str,
+        sync_token: Option<&str>,
+        limit: Option<u32>,
+        include_data: bool,
+        namespace: &str,
+        data_element: &str,
+        sync_level: SyncLevel,
+    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
+        let body = crate::webdav::xml::build_sync_collection_body(
+            sync_token,
+            limit,
+            include_data,
+            namespace,
+            data_element,
+            None,
+            sync_level,
+        );
+        self.sync_collection_report(path, &body).await
+    }
+
+    /// 410-Gone-resilient variant of
+    /// [`sync_collection_with_level`](Self::sync_collection_with_level)
+    /// (RFC 6578 §3.11): when the server rejects the incremental request
+    /// with `410 Gone` (stale sync token), the report is re-issued with an
+    /// empty sync token (initial sync) and the full result set with the new
+    /// token is returned. Uses [`SyncLevel::One`].
+    ///
+    /// Any other error propagates unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the underlying report; a `410 Gone` triggers one
+    /// retry as an initial sync, and the second failure is returned as-is.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::WebDavClient;
+    ///
+    /// # async fn run() -> fast_dav_rs::Result<()> {
+    /// let client = WebDavClient::new("https://dav.example.com/cal/", None, None)?;
+    /// let (headers, items, sync_token) = client
+    ///     .sync_collection_resilient(
+    ///         "calendars/user/work/",
+    ///         Some("http://example.com/sync/stale"),
+    ///         None,
+    ///         true,
+    ///         "urn:ietf:params:xml:ns:caldav",
+    ///         "calendar-data",
+    ///     )
+    ///     .await?;
+    /// println!("token: {sync_token:?}, items: {}", items.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn sync_collection_resilient(
+        &self,
+        path: &str,
+        sync_token: Option<&str>,
+        limit: Option<u32>,
+        include_data: bool,
+        namespace: &str,
+        data_element: &str,
+    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
+        self.sync_collection_resilient_report(path, sync_token, |token| {
+            crate::webdav::xml::build_sync_collection_body(
+                token,
+                limit,
+                include_data,
+                namespace,
+                data_element,
+                None,
+                SyncLevel::One,
+            )
+        })
+        .await
+    }
+
+    /// Shared implementation behind the `sync-collection` methods: send the
+    /// report with `Depth: 0`, map a non-success status to
+    /// [`Error::UnexpectedStatus`], parse the multistatus, and return the
+    /// raw parts for domain-specific mapping.
+    pub(crate) async fn sync_collection_report(
+        &self,
+        path: &str,
+        xml_body: &str,
+    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
+        let resp = self.report(path, Depth::Zero, xml_body).await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::ReportSyncCollection,
+                status: resp.status(),
+            });
+        }
+        let headers = resp.headers().clone();
+        let body = resp.into_body();
+        let parsed = crate::webdav::streaming::parse_multistatus_bytes(&body)?;
+        Ok((headers, parsed.items, parsed.sync_token))
+    }
+
+    /// Shared implementation behind `sync_collection_resilient`: issues the
+    /// report built by `build_body(sync_token)`; on `410 Gone` (stale sync
+    /// token, RFC 6578 §3.11) re-issues it once with an empty sync token
+    /// (initial sync). Any other error propagates unchanged.
+    pub(crate) async fn sync_collection_resilient_report(
+        &self,
+        path: &str,
+        sync_token: Option<&str>,
+        build_body: impl Fn(Option<&str>) -> String,
+    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
+        match self
+            .sync_collection_report(path, &build_body(sync_token))
+            .await
+        {
+            Err(Error::UnexpectedStatus { status, .. }) if status == StatusCode::GONE => {
+                self.sync_collection_report(path, &build_body(None)).await
+            }
+            other => other,
+        }
+    }
+
     /// Discover the current user's principal URL via `current-user-principal`.
     ///
     /// Returns `None` if the server omits the property.
@@ -1325,10 +1488,19 @@ impl WebDavClient {
 ///
 /// The wrapper struct must own a `webdav: WebDavClient` field.
 /// `$content_type` is the `Content-Type` used for conditional `PUT` bodies
-/// (iCalendar vs. vCard).
+/// (iCalendar vs. vCard); `$namespace`/`$data_element` select the sync-collection
+/// data property; `$sync_response`/`$map_sync_response` are the domain sync
+/// response type and its mapper (`map_sync_response`).
 #[macro_export]
 macro_rules! impl_dav_client_delegates {
-    ($client:ident, $content_type:expr) => {
+    (
+        $client:ident,
+        $content_type:expr,
+        $namespace:expr,
+        $data_element:expr,
+        $sync_response:ty,
+        $map_sync_response:path
+    ) => {
         impl $client {
             /// Wrap a [`WebDavClient`] into this client type.
             pub(crate) fn from_webdav(webdav: $crate::webdav::WebDavClient) -> Self {
@@ -1658,6 +1830,95 @@ macro_rules! impl_dav_client_delegates {
                 xml_body: &str,
             ) -> $crate::Result<hyper::Response<hyper::body::Incoming>> {
                 self.webdav.report_stream(path, depth, xml_body).await
+            }
+
+            /// Incrementally synchronise a collection using `sync-collection`
+            /// with a configurable `sync-level` (RFC 6578 §3.3).
+            ///
+            /// `sync_level` scopes the report: `SyncLevel::One` restricts the
+            /// sync to the collection members, `SyncLevel::Infinite` includes
+            /// all descendants. The existing `sync_collection` keeps the
+            /// `SyncLevel::One` behavior.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the REPORT request fails or the server
+            /// responds with a non-success status.
+            ///
+            /// # Example
+            ///
+            /// ```no_run
+            /// use fast_dav_rs::{CalDavClient, SyncLevel};
+            ///
+            /// # async fn example(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+            /// let sync = client
+            ///     .sync_collection_with_level("calendars/user/work/", None, None, true, SyncLevel::Infinite)
+            ///     .await?;
+            /// println!("token: {:?}", sync.sync_token);
+            /// # Ok(())
+            /// # }
+            /// ```
+            pub async fn sync_collection_with_level(
+                &self,
+                path: &str,
+                sync_token: Option<&str>,
+                limit: Option<u32>,
+                include_data: bool,
+                sync_level: $crate::webdav::SyncLevel,
+            ) -> $crate::Result<$sync_response> {
+                let (headers, items, token) = self
+                    .webdav
+                    .sync_collection_with_level(
+                        path,
+                        sync_token,
+                        limit,
+                        include_data,
+                        $namespace,
+                        $data_element,
+                        sync_level,
+                    )
+                    .await?;
+                Ok($map_sync_response(&headers, items, token))
+            }
+
+            /// 410-Gone-resilient sync-collection (RFC 6578 §3.11): when the
+            /// server rejects the incremental request with `410 Gone` (stale
+            /// sync token), the report is automatically re-issued with an
+            /// empty sync token (initial sync) and the full result set with
+            /// the new token is returned. Any other error propagates
+            /// unchanged.
+            ///
+            /// # Errors
+            ///
+            /// Returns the error of the underlying report; a `410 Gone`
+            /// triggers one retry as an initial sync, and the second failure
+            /// is returned as-is.
+            ///
+            /// # Example
+            ///
+            /// ```no_run
+            /// use fast_dav_rs::CalDavClient;
+            ///
+            /// # async fn example(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+            /// let sync = client
+            ///     .sync_collection_resilient("calendars/user/work/", Some("stale-token"), None, true)
+            ///     .await?;
+            /// println!("token: {:?}", sync.sync_token);
+            /// # Ok(())
+            /// # }
+            /// ```
+            pub async fn sync_collection_resilient(
+                &self,
+                path: &str,
+                sync_token: Option<&str>,
+                limit: Option<u32>,
+                include_data: bool,
+            ) -> $crate::Result<$sync_response> {
+                let (headers, items, token) = self
+                    .webdav
+                    .sync_collection_resilient(path, sync_token, limit, include_data, $namespace, $data_element)
+                    .await?;
+                Ok($map_sync_response(&headers, items, token))
             }
         }
     };

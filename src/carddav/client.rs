@@ -36,7 +36,14 @@ pub struct CardDavClient {
     webdav: WebDavClient,
 }
 
-impl_dav_client_delegates!(CardDavClient, VCARD_CONTENT_TYPE);
+impl_dav_client_delegates!(
+    CardDavClient,
+    VCARD_CONTENT_TYPE,
+    "urn:ietf:params:xml:ns:carddav",
+    "address-data",
+    crate::carddav::types::SyncResponse,
+    crate::carddav::client::map_sync_response
+);
 
 impl CardDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
@@ -317,18 +324,11 @@ impl CardDavClient {
     ) -> Result<SyncResponse> {
         let body = build_sync_collection_body(sync_token, limit, include_data);
 
-        let resp = self.report(addressbook_path, Depth::Zero, &body).await?;
-        if !resp.status().is_success() {
-            return Err(Error::UnexpectedStatus {
-                operation: Operation::ReportSyncCollection,
-                status: resp.status(),
-            });
-        }
-        let headers = resp.headers().clone();
-        let body = resp.into_body();
-
-        let parsed = parse_multistatus_bytes(&body)?;
-        Ok(map_sync_response(&headers, parsed.items, parsed.sync_token))
+        let (headers, items, token) = self
+            .webdav
+            .sync_collection_report(addressbook_path, &body)
+            .await?;
+        Ok(map_sync_response(&headers, items, token))
     }
 
     // ----------- ETag helpers -----------
@@ -500,6 +500,7 @@ pub fn build_sync_collection_body(
         "urn:ietf:params:xml:ns:carddav",
         "address-data",
         None,
+        crate::webdav::types::SyncLevel::One,
     )
 }
 

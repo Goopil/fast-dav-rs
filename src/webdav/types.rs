@@ -17,6 +17,40 @@ pub enum SyncCapability {
     Unknown,
 }
 
+/// Scope of a `sync-collection` REPORT (RFC 6578 §3.3).
+///
+/// `One` restricts the sync to the members of the collection itself;
+/// `Infinite` includes the collection and all its descendants (only
+/// honored by servers that advertise infinite-depth sync support).
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::SyncLevel;
+///
+/// assert_eq!(SyncLevel::One.as_str(), "1");
+/// assert_eq!(SyncLevel::Infinite.as_str(), "infinite");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SyncLevel {
+    /// `<D:sync-level>1</D:sync-level>` — sync the collection members only.
+    One,
+    /// `<D:sync-level>infinite</D:sync-level>` — sync the collection and
+    /// all its descendants.
+    Infinite,
+}
+
+impl SyncLevel {
+    /// Returns the `<D:sync-level>` element value for this level.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::One => "1",
+            Self::Infinite => "infinite",
+        }
+    }
+}
+
 /// HTTP `Prefer` header preference (RFC 7240) supported by this client.
 ///
 /// v1.0 supports the `return` preference only. Other preferences (`wait`,
