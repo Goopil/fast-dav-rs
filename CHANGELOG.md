@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-01
+
+### Fixed
+- `sync_collection` (CalDAV and CardDAV) now sends `Depth: 0` as mandated by RFC 6578 §3.3 —
+  `Depth: 1` returned 400 on strict servers; the `supports_webdav_sync` probe was fixed the same
+  way (external audit AUDIT-001)
+- The aggregated body read/decompress phase is now bounded by the per-request timeout instead of
+  hanging forever on stalled servers; `Error::Timeout` and `send_stream` docs state the exact
+  phase-scoped semantics (external audit AUDIT-002)
+
+### Security
+- The publish workflow only triggers on version tags and verifies the tag matches the crate
+  version before publishing (external audit AUDIT-005)
+- `.env` / `.env.*` added to `.gitignore` (external audit AUDIT-030)
+
+### Changed
+- Batch helpers keep their infallible `expect`/`unwrap` calls with documented invariants;
+  the audit finding AUDIT-022 is closed as statically infallible (typed-error conversion
+  deferred to the 0.10 breaking window)
+
 ## [0.9.1] - 2026-09-01
 
 ### Added
