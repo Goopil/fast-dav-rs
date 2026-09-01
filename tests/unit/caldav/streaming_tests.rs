@@ -1,6 +1,3 @@
-// Exercises the deprecated 0.9 compat aliases (removed in 0.10).
-#![allow(deprecated)]
-
 use bytes::Bytes;
 use fast_dav_rs::caldav::streaming::*;
 use fast_dav_rs::{Error, Result};

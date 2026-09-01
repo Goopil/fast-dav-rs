@@ -5,25 +5,6 @@ use crate::{Error, Result};
 use quick_xml::escape::unescape;
 use std::time::Duration;
 
-#[macro_export]
-#[deprecated(
-    since = "0.9.0",
-    note = "internal code-generation macro; will be removed in 0.10"
-)]
-macro_rules! impl_multistatus_on_end {
-    ($self:ident, $name:expr, $elem:ty) => {{
-        $self.common.on_end($name)?;
-        if let Some(popped) = $self.stack.pop() {
-            if popped == <$elem>::Response {
-                let common = $self.common.finish_response();
-                $self.current.apply_common(common);
-                let finished = std::mem::take(&mut $self.current);
-                $self.sink.consume(finished)?;
-            }
-        }
-    }};
-}
-
 /// Compact dispatch of a single XML event to a [`MultistatusParser`], shared by
 /// the streaming (async) and aggregated (sync) parse loops.
 ///
