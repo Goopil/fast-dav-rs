@@ -8,6 +8,7 @@ use crate::caldav::types::{
     CalendarInfo, CalendarObject, CalendarQueryFilter, DavItem, FreeBusyPeriod, FreeBusyType,
     SyncItem, SyncResponse, TimeRange,
 };
+use crate::caldav::validation::{ValidationLevel, validate_icalendar_level};
 use crate::impl_dav_client_delegates;
 use crate::webdav::client::WebDavClient;
 use crate::webdav::types::map_sync_rows;
@@ -17,6 +18,10 @@ use crate::webdav::xml::{
 use crate::{Error, Operation, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
+
+/// Content-Type for iCalendar `PUT` bodies, without the `version` parameter
+/// (appended automatically when the body declares a `VERSION`).
+pub const ICAL_CONTENT_TYPE: &str = "text/calendar; charset=utf-8";
 
 /// High-performance CalDAV client built on **hyper 1.x** + **rustls**.
 ///
@@ -33,15 +38,18 @@ pub use crate::webdav::client::RequestCompressionMode;
 #[derive(Clone)]
 pub struct CalDavClient {
     webdav: WebDavClient,
+    validation_level: ValidationLevel,
 }
 
 impl_dav_client_delegates!(
     CalDavClient,
-    "text/calendar; charset=utf-8",
+    ICAL_CONTENT_TYPE,
     "urn:ietf:params:xml:ns:caldav",
     "calendar-data",
     crate::caldav::types::SyncResponse,
-    crate::caldav::client::map_sync_response
+    crate::caldav::client::map_sync_response,
+    validation_level: crate::caldav::validation::ValidationLevel,
+    prepare_ical_put
 );
 
 impl CalDavClient {
@@ -105,35 +113,58 @@ impl CalDavClient {
         CalDavClientBuilder::new(base_url)
     }
 
+    /// Client-side iCalendar gate behind the CalDAV `PUT` methods: validates
+    /// `body` per the configured [`ValidationLevel`] and returns the wire
+    /// `Content-Type` (with the `version` parameter the body declares).
+    ///
+    /// Runs before any network I/O; an invalid body fails with
+    /// [`Error::InvalidICalendar`].
+    fn prepare_ical_put(&self, body: &[u8]) -> Result<header::HeaderValue> {
+        if self.validation_level == ValidationLevel::None {
+            return Ok(header::HeaderValue::from_static(ICAL_CONTENT_TYPE));
+        }
+        let version = validate_icalendar_level(body, self.validation_level)?;
+        Ok(header::HeaderValue::from_str(&format!(
+            "{ICAL_CONTENT_TYPE}; version={version}"
+        ))?)
+    }
+
     /// Send a `PUT` with an iCalendar body (`text/calendar`).
+    ///
+    /// The body is validated client-side per the configured
+    /// [`ValidationLevel`](crate::caldav::ValidationLevel) (default
+    /// `Structural`) **before any network I/O**; invalid bodies fail with
+    /// [`Error::InvalidICalendar`](crate::Error::InvalidICalendar). On a body
+    /// that declares a `VERSION`, the wire `Content-Type` gains a matching
+    /// `version` parameter.
     ///
     /// Use [`put_if_match`] or [`put_if_none_match`] for safer conditional writes.
     pub async fn put(&self, path: &str, ical_bytes: Bytes) -> Result<Response<Bytes>> {
+        let content_type = self.prepare_ical_put(&ical_bytes)?;
         let mut h = HeaderMap::new();
-        h.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/calendar; charset=utf-8"),
-        );
+        h.insert(header::CONTENT_TYPE, content_type);
         self.send(Method::PUT, path, h, Some(ical_bytes), None)
             .await
     }
+
     /// Create-only `PUT` guarded by `If-None-Match: *`.
     ///
-    /// Fails if the resource already exists.
+    /// Fails if the resource already exists. The body is validated client-side
+    /// per the configured [`ValidationLevel`](crate::caldav::ValidationLevel)
+    /// **before any network I/O**, exactly as in [`put`].
     pub async fn put_if_none_match(
         &self,
         path: &str,
         ical_bytes: Bytes,
     ) -> Result<Response<Bytes>> {
+        let content_type = self.prepare_ical_put(&ical_bytes)?;
         let mut h = HeaderMap::new();
-        h.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/calendar; charset=utf-8"),
-        );
+        h.insert(header::CONTENT_TYPE, content_type);
         h.insert(header::IF_NONE_MATCH, header::HeaderValue::from_static("*"));
         self.send(Method::PUT, path, h, Some(ical_bytes), None)
             .await
     }
+
     /// Send a CalDAV `MKCALENDAR` to create a calendar collection.
     ///
     /// Sent with an explicit `Depth: 0` header (the operation applies to the

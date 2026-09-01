@@ -642,23 +642,32 @@ fn build_hyper_client(b: &WebDavClientBuilder) -> Result<HyperClient> {
 
 /// Generates a thin wrapper builder that delegates all setters to
 /// [`WebDavClientBuilder`] and wraps the result via `from_webdav`.
+///
+/// The optional trailing `extra = $field: $ty = $default;` declares a
+/// domain-specific builder field (e.g. the CalDAV iCalendar validation
+/// level) that is not delegated to the shared WebDAV builder; it is passed
+/// to `<$client>::from_webdav` on `build`. Omit it when the domain client
+/// has no extra configuration.
 #[macro_export]
 macro_rules! impl_dav_builder {
     (
         $(#[$meta:meta])*
         $vis:vis struct $builder:ident;
         client = $client:ty;
+        $(extra = $extra_field:ident : $extra_ty:ty = $extra_default:expr;)?
     ) => {
         $(#[$meta])*
         #[derive(Debug)]
         $vis struct $builder {
             inner: $crate::webdav::builder::WebDavClientBuilder,
+            $($extra_field: $extra_ty,)?
         }
 
         impl $builder {
             pub(crate) fn new(base_url: impl Into<String>) -> Self {
                 Self {
                     inner: $crate::webdav::builder::WebDavClientBuilder::new(base_url),
+                    $($extra_field: $extra_default,)?
                 }
             }
 
@@ -763,7 +772,7 @@ macro_rules! impl_dav_builder {
             }
 
             pub fn build(self) -> $crate::Result<$client> {
-                Ok(<$client>::from_webdav(self.inner.build()?))
+                Ok(<$client>::from_webdav(self.inner.build()?, $(self.$extra_field)?))
             }
         }
     };

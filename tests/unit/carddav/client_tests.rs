@@ -585,3 +585,28 @@ async fn sync_collection_with_level_sends_infinite() {
         "expected the configured sync-level on the wire: {req}"
     );
 }
+
+#[tokio::test]
+async fn carddav_put_never_validates_body_as_icalendar() {
+    use bytes::Bytes;
+
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", 0),
+        Vec::new(),
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    // Neither a valid vCard nor a valid iCalendar — CardDAV bodies are never
+    // iCalendar-validated, so the request must go out as-is.
+    let resp = client
+        .put("contact.vcf", Bytes::from_static(b"total garbage \xFF"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(req.starts_with("PUT "), "request must be sent: {req}");
+}

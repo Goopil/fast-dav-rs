@@ -33,6 +33,11 @@ async fn capture_request() -> (String, oneshot::Receiver<String>) {
     (format!("http://{address}/"), receiver)
 }
 
+/// Minimal valid iCalendar body — with the default `Structural` validation
+/// level, CalDAV `PUT` bodies must pass client-side validation first.
+const VALID_ICAL: &[u8] =
+    b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nEND:VCALENDAR\r\n";
+
 fn assert_if_match_header(request: &str, expected: &str) {
     assert!(request.lines().any(|line| {
         line.split_once(':').is_some_and(|(name, value)| {
@@ -116,7 +121,7 @@ async fn test_conditional_operations_normalize_if_match() {
         #[allow(deprecated)]
         client.disable_request_compression();
         client
-            .put_if_match("event.ics", Bytes::from_static(b"BEGIN:VCALENDAR"), etag)
+            .put_if_match("event.ics", Bytes::from_static(VALID_ICAL), etag)
             .await
             .unwrap();
         let request = request.await.unwrap();
@@ -141,7 +146,7 @@ async fn test_conditional_operations_reject_invalid_etags_before_request() {
     for etag in ["", "   ", "\"abc", "abc\ndef"] {
         assert!(
             client
-                .put_if_match("event.ics", Bytes::from_static(b"BEGIN:VCALENDAR"), etag)
+                .put_if_match("event.ics", Bytes::from_static(VALID_ICAL), etag)
                 .await
                 .is_err()
         );
@@ -154,7 +159,7 @@ async fn test_if_match_rejects_bare_weak_prefix() {
     let client = CalDavClient::new("http://127.0.0.1:9/", None, None).unwrap();
     assert!(
         client
-            .put_if_match("event.ics", Bytes::from_static(b"BEGIN:VCALENDAR"), "W/")
+            .put_if_match("event.ics", Bytes::from_static(VALID_ICAL), "W/")
             .await
             .is_err()
     );
@@ -174,7 +179,7 @@ async fn test_etag_round_trip_from_headers_to_if_match() {
     assert_eq!(etag, "etag-from-server");
 
     client
-        .put_if_match("event.ics", Bytes::from_static(b"BEGIN:VCALENDAR"), &etag)
+        .put_if_match("event.ics", Bytes::from_static(VALID_ICAL), &etag)
         .await
         .unwrap();
     let request = request.await.unwrap();

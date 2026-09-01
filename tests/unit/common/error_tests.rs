@@ -19,8 +19,13 @@ fn invalid_url_preserves_the_offending_value() {
 #[tokio::test]
 async fn invalid_etag_is_a_typed_input_error() {
     let client = CalDavClient::new("http://localhost/", None, None).unwrap();
+    // A valid iCalendar body, so iCalendar validation (default `Structural`)
+    // passes and the empty ETag is what gets rejected.
+    let ical = bytes::Bytes::from_static(
+        b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nEND:VCALENDAR\r\n",
+    );
     let error = client
-        .put_if_match("event.ics", bytes::Bytes::new(), "")
+        .put_if_match("event.ics", ical, "")
         .await
         .unwrap_err();
 
