@@ -1,4 +1,4 @@
-use fast_dav_rs::{CalDavClient, Depth, Error};
+use fast_dav_rs::{CalDavClient, Depth, Error, RequestCompressionMode};
 use hyper::http::HeaderMap;
 
 #[test]
@@ -468,5 +468,30 @@ fn sync_token_round_trip_unquoted_in_request_body() {
     assert!(
         !body.contains("<D:sync-token>\""),
         "sync-token should not have extra quotes in request body"
+    );
+}
+
+#[tokio::test]
+async fn sync_collection_sends_depth_zero() {
+    let body = b"<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"><D:sync-token>tok-1</D:sync-token></D:multistatus>".to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let sync = client
+        .sync_collection("cal/", None, None, true)
+        .await
+        .unwrap();
+    assert_eq!(sync.sync_token.as_deref(), Some("tok-1"));
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.to_ascii_lowercase().contains("depth: 0"),
+        "expected 'Depth: 0' in request: {req}"
     );
 }

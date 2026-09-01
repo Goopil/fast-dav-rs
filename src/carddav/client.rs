@@ -346,7 +346,7 @@ impl CardDavClient {
     ) -> Result<SyncResponse> {
         let body = build_sync_collection_body(sync_token, limit, include_data);
 
-        let resp = self.report(addressbook_path, Depth::One, &body).await?;
+        let resp = self.report(addressbook_path, Depth::Zero, &body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
                 operation: Operation::ReportSyncCollection,
