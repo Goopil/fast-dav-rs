@@ -197,6 +197,7 @@ fn is_retryable(error: &Error) -> bool {
 | `Transport`            | A request was sent but the response stream broke                      |
 | `UnexpectedStatus`     | The server returned an unexpected HTTP status code                    |
 | `Timeout`              | An operation exceeded its configured time limit                      |
+| `BodyTooLarge`         | A decompressed response body exceeded the 256 MiB limit              |
 | `Xml`                  | Parsing or decoding XML failed                                        |
 | `XmlStructure`         | The XML element hierarchy is malformed or incomplete                  |
 | `XmlEscape`            | Unescaping XML entity references failed                              |

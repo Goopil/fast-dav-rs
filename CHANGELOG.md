@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Bearer tokens and proxy credentials are zeroized in the intermediate
+  `Authorization` header strings built by the client builder, so plaintext
+  credentials no longer linger in freed heap memory (issue #79)
+- Decompressed response bodies are capped at 256 MiB to prevent decompression
+  bombs: `decompress_body` fails with the new `Error::BodyTooLarge` variant and
+  `decompress_stream` errors once the cap is exceeded (issue #79, AUDIT-003)
+
 ## [0.9.2] - 2026-09-01
 
 ### Fixed
