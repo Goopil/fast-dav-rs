@@ -138,8 +138,9 @@ pub enum Error {
     /// A request phase exceeded its configured time limit.
     ///
     /// Covers receiving response headers and reading/decompressing an aggregated
-    /// body, each bounded by the limit. Streaming responses (`send_stream`) and
-    /// stream parsing enforce their own timeouts (30 s idle by default).
+    /// body, each bounded by the limit. Stream *parsing* enforces its own 30 s
+    /// idle timeout by default; raw `send_stream` body reads are the caller's
+    /// responsibility.
     #[error("operation timed out after {}s", limit.as_secs())]
     #[non_exhaustive]
     Timeout {

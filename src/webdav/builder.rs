@@ -162,6 +162,9 @@ impl WebDavClientBuilder {
     }
 
     /// Set the default per-request timeout. Default: **20 seconds**.
+    ///
+    /// The limit applies to each phase of a request (sending, receiving
+    /// headers, reading/decompressing the body); see `Error::Timeout`.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self

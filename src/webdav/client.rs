@@ -1026,7 +1026,8 @@ impl WebDavClient {
         }
 
         // Fallback: attempt a minimal sync-collection REPORT; only a 2xx
-        // answer proves support.
+        // answer proves support. Depth: 0 per RFC 6578; `<D:sync-level>`
+        // scopes how deep the sync goes.
         let test_sync = r#"<D:sync-collection xmlns:D="DAV:">
             <D:sync-token/>
             <D:sync-level>1</D:sync-level>
@@ -1035,7 +1036,7 @@ impl WebDavClient {
             </D:prop>
         </D:sync-collection>"#;
 
-        match self.report("", Depth::One, test_sync).await {
+        match self.report("", Depth::Zero, test_sync).await {
             Ok(response) => Ok(response.status().is_success()),
             Err(_) => Ok(false),
         }
