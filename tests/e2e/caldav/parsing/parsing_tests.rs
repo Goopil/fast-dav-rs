@@ -301,6 +301,7 @@ END:VCALENDAR"#,
             Some("20231225T000000Z"),
             Some("20240301T000000Z"),
             true,
+            None,
         )
         .await;
 

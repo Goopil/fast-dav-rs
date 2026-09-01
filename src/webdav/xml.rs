@@ -77,12 +77,33 @@ pub(crate) fn validate_utc_datetime(value: &str, context: &str) -> Result<()> {
     Ok(())
 }
 
+/// Render a CalDAV/CardDAV data element (`calendar-data` / `address-data`):
+/// bare when `expand` is `None`, or wrapping an `<C:expand>` element
+/// (RFC 4791 §9.6) when server-side expansion is requested.
+pub(crate) fn data_element_xml(data_element: &str, expand: Option<(&str, Option<&str>)>) -> String {
+    let Some((start, end)) = expand else {
+        return format!("<C:{data_element}/>");
+    };
+    let mut out = format!(
+        "<C:{data_element}><C:expand start=\"{}\"",
+        escape_xml(start)
+    );
+    if let Some(e) = end {
+        out.push_str(&format!(" end=\"{}\"", escape_xml(e)));
+    }
+    out.push_str("/></C:");
+    out.push_str(data_element);
+    out.push('>');
+    out
+}
+
 pub fn build_sync_collection_body(
     sync_token: Option<&str>,
     limit: Option<u32>,
     include_data: bool,
     namespace: &str,
     data_element: &str,
+    expand: Option<(&str, Option<&str>)>,
 ) -> String {
     let mut body = format!(r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{namespace}">"#);
     if let Some(token) = sync_token {
@@ -94,10 +115,8 @@ pub fn build_sync_collection_body(
     }
     body.push_str("<D:sync-level>1</D:sync-level>");
     body.push_str("<D:prop><D:getetag/>");
-    if include_data {
-        body.push_str("<C:");
-        body.push_str(data_element);
-        body.push_str("/>");
+    if include_data || expand.is_some() {
+        body.push_str(&data_element_xml(data_element, expand));
     }
     body.push_str("</D:prop>");
     if let Some(limit) = limit {
@@ -161,6 +180,7 @@ pub(crate) fn build_multiget_body<I, S>(
     namespace: &str,
     root_element: &str,
     data_element: &str,
+    expand: Option<(&str, Option<&str>)>,
 ) -> Option<String>
 where
     I: IntoIterator<Item = S>,
@@ -184,10 +204,8 @@ where
 
     let mut body =
         format!(r#"<C:{root_element} xmlns:D="DAV:" xmlns:C="{namespace}"><D:prop><D:getetag/>"#);
-    if include_data {
-        body.push_str("<C:");
-        body.push_str(data_element);
-        body.push_str("/>");
+    if include_data || expand.is_some() {
+        body.push_str(&data_element_xml(data_element, expand));
     }
     body.push_str("</D:prop>");
     body.push_str(&href_xml);

@@ -122,7 +122,7 @@ END:VCALENDAR"#,
 
     // Perform initial sync with empty sync token
     let sync_response = client
-        .sync_collection(&calendar_path, None, Some(100), true)
+        .sync_collection(&calendar_path, None, Some(100), true, None)
         .await;
 
     match sync_response {
@@ -197,7 +197,7 @@ async fn test_incremental_sync() {
 
     // Perform initial sync to get baseline sync token
     let initial_sync = client
-        .sync_collection(&calendar_path, None, Some(100), true)
+        .sync_collection(&calendar_path, None, Some(100), true, None)
         .await;
     let initial_sync_token = match initial_sync {
         Ok(response) => {
@@ -273,7 +273,7 @@ END:VCALENDAR"#,
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let incremental_sync = client
-        .sync_collection(&calendar_path, Some(&token), Some(100), true)
+        .sync_collection(&calendar_path, Some(&token), Some(100), true, None)
         .await;
 
     let incremental_sync_token = match incremental_sync {
@@ -333,7 +333,7 @@ END:VCALENDAR"#,
     // Perform sync after deletion using the incremental sync token
     if let Some(ref_token) = incremental_sync_token {
         let deletion_sync = client
-            .sync_collection(&calendar_path, Some(&ref_token), Some(100), true)
+            .sync_collection(&calendar_path, Some(&ref_token), Some(100), true, None)
             .await;
 
         match deletion_sync {
@@ -448,7 +448,7 @@ END:VCALENDAR"#,
 
     // Test sync with limit = 3 (should return only 3 items)
     let limited_sync = client
-        .sync_collection(&calendar_path, None, Some(3), true)
+        .sync_collection(&calendar_path, None, Some(3), true, None)
         .await;
     match limited_sync {
         Ok(response) => {
@@ -478,7 +478,7 @@ END:VCALENDAR"#,
 
     // Test sync with limit = 10 (should return all 5 items)
     let unlimited_sync = client
-        .sync_collection(&calendar_path, None, Some(10), true)
+        .sync_collection(&calendar_path, None, Some(10), true, None)
         .await;
     match unlimited_sync {
         Ok(response) => {
@@ -594,7 +594,7 @@ END:VCALENDAR"#,
 
     // Perform initial sync to establish baseline
     let initial_sync = client
-        .sync_collection(&calendar_path, None, Some(100), true)
+        .sync_collection(&calendar_path, None, Some(100), true, None)
         .await;
     let initial_sync_token = match initial_sync {
         Ok(response) => {
@@ -635,7 +635,7 @@ END:VCALENDAR"#,
     // Perform sync after deletion to check deletion tracking
     if let Some(token) = initial_sync_token {
         let deletion_sync = client
-            .sync_collection(&calendar_path, Some(&token), Some(100), true)
+            .sync_collection(&calendar_path, Some(&token), Some(100), true, None)
             .await;
         match deletion_sync {
             Ok(response) => {

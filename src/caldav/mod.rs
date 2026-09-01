@@ -15,5 +15,6 @@ pub use streaming::{
 };
 pub use types::{
     BatchItem, CalendarInfo, CalendarObject, CalendarQueryFilter, Collation, DavItem, Depth,
-    MatchType, ParamFilter, PropFilter, SyncItem, SyncResponse, TextMatch, TimeRange,
+    FreeBusyPeriod, FreeBusyType, MatchType, ParamFilter, PropFilter, SyncItem, SyncResponse,
+    TextMatch, TimeRange,
 };

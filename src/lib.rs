@@ -139,7 +139,8 @@
 //!         "VEVENT",
 //!         Some("20231201T000000Z"),  // Start date
 //!         Some("20231231T235959Z"),  // End date
-//!         true  // Include event data
+//!         true,  // Include event data
+//!         None,  // No server-side expansion
 //!     ).await?;
 //!
 //!     for event in &events {
@@ -434,7 +435,8 @@
 //!             &calendar.href,
 //!             sync_token.as_deref(),
 //!             Some(100), // Limit results
-//!             true // Include data
+//!             true, // Include data
+//!             None, // No server-side expansion
 //!         ).await?;
 //!
 //!         println!("Received {} updates", sync_response.items.len());
@@ -482,7 +484,8 @@
 //!             "VEVENT",
 //!             Some(&start),
 //!             Some(&end),
-//!             true // Include data
+//!             true, // Include data
+//!             None, // No server-side expansion
 //!         ).await?;
 //!
 //!         println!("Found {} events in {}", events.len(), calendar.displayname.unwrap_or_default());

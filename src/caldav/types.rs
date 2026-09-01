@@ -46,6 +46,35 @@ pub struct SyncResponse {
     pub items: Vec<SyncItem>,
 }
 
+/// One free/busy period reported by a `free-busy-query` REPORT (RFC 4791 §9.7).
+///
+/// Extracted from the `FREEBUSY` properties of the `VFREEBUSY` component the
+/// server returns in `calendar-data`. Values are opaque server-provided strings
+/// (typically iCalendar UTC date-times).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FreeBusyPeriod {
+    /// Inclusive start of the period (opaque server-provided iCalendar date-time).
+    pub start: String,
+    /// End of the period (opaque server-provided string; may be a duration in rare servers).
+    pub end: String,
+    pub fb_type: FreeBusyType,
+}
+
+/// The `FBTYPE` classification of a [`FreeBusyPeriod`] (RFC 4791 §9.7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FreeBusyType {
+    /// `FBTYPE=FREE` (or an unmapped-but-known value): the interval is free.
+    Free,
+    /// `FBTYPE=BUSY` — also the default when the parameter is absent.
+    Busy,
+    /// `FBTYPE=BUSY-TENTATIVE`.
+    BusyTentative,
+    /// `FBTYPE=BUSY-UNAVAILABLE`.
+    BusyUnavailable,
+}
+
 /// A time-range filter for `comp-filter` and `prop-filter` (RFC 4791 §8.5).
 #[derive(Debug, Clone)]
 #[non_exhaustive]

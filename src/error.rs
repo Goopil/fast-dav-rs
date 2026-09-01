@@ -250,6 +250,8 @@ pub enum Operation {
     ReportCalendarQuery,
     /// `REPORT` calendar-multiget.
     ReportCalendarMultiget,
+    /// `REPORT` free-busy-query.
+    ReportFreeBusyQuery,
     /// `REPORT` addressbook-query.
     ReportAddressbookQuery,
     /// `REPORT` addressbook-multiget.
@@ -267,6 +269,7 @@ impl std::fmt::Display for Operation {
             Self::PropfindCollections => "PROPFIND collections",
             Self::ReportCalendarQuery => "REPORT calendar-query",
             Self::ReportCalendarMultiget => "REPORT calendar-multiget",
+            Self::ReportFreeBusyQuery => "REPORT free-busy-query",
             Self::ReportAddressbookQuery => "REPORT addressbook-query",
             Self::ReportAddressbookMultiget => "REPORT addressbook-multiget",
             Self::ReportSyncCollection => "REPORT sync-collection",

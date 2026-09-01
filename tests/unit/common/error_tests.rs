@@ -37,7 +37,7 @@ async fn invalid_etag_is_a_typed_input_error() {
 async fn invalid_calendar_component_is_a_typed_input_error() {
     let client = CalDavClient::new("http://localhost/", None, None).unwrap();
     let error = client
-        .calendar_query_timerange("calendar/", "VEVENT/INVALID", None, None, false)
+        .calendar_query_timerange("calendar/", "VEVENT/INVALID", None, None, false, None)
         .await
         .unwrap_err();
 
@@ -56,8 +56,44 @@ fn public_error_variants_expose_retry_relevant_context() {
         "PROPFIND collections failed with 403 Forbidden"
     );
 
+    let free_busy_error =
+        Error::unexpected_status(Operation::ReportFreeBusyQuery, StatusCode::FORBIDDEN);
+    assert_eq!(
+        free_busy_error.to_string(),
+        "REPORT free-busy-query failed with 403 Forbidden"
+    );
+
     let timeout_error = Error::timeout(Duration::from_secs(20));
     assert_eq!(timeout_error.to_string(), "operation timed out after 20s");
+}
+
+#[tokio::test]
+async fn expand_with_invalid_datetime_is_rejected_before_any_io() {
+    use fast_dav_rs::caldav::TimeRange;
+
+    let client = CalDavClient::new("http://localhost/", None, None).unwrap();
+    let expand = TimeRange::new("oops").with_end("20240201T000000Z");
+
+    let err = client
+        .calendar_query_timerange("cal/", "VEVENT", None, None, true, Some(expand.clone()))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidDateTime { ref context, .. }
+        if context == "invalid calendar-query expand start"));
+
+    let err = client
+        .calendar_multiget("cal/", ["/cal/a.ics"], true, Some(expand.clone()))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidDateTime { ref context, .. }
+        if context == "invalid calendar-multiget expand start"));
+
+    let err = client
+        .sync_collection("cal/", None, None, true, Some(expand))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidDateTime { ref context, .. }
+        if context == "invalid sync-collection expand start"));
 }
 
 #[test]
