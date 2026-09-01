@@ -908,6 +908,7 @@ impl WebDavClient {
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         self.many(
+            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"PROPFIND").unwrap(),
             paths,
             depth,
@@ -926,6 +927,7 @@ impl WebDavClient {
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         self.many(
+            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"REPORT").unwrap(),
             paths,
             depth,
@@ -953,13 +955,23 @@ impl WebDavClient {
             let p = path.clone();
             let method = method.clone();
             tasks.push_back(async move {
-                let _permit: OwnedSemaphorePermit =
-                    sem_clone.acquire_owned().await.expect("semaphore closed");
+                let _permit: OwnedSemaphorePermit = match sem_clone.acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        return BatchItem {
+                            pub_path: p,
+                            result: Err(Error::other("semaphore closed")),
+                        };
+                    }
+                };
+                let Ok(depth_value) = header::HeaderValue::from_str(depth.as_str()) else {
+                    return BatchItem {
+                        pub_path: p,
+                        result: Err(Error::other("invalid depth value")),
+                    };
+                };
                 let mut h = HeaderMap::new();
-                h.insert(
-                    "Depth",
-                    header::HeaderValue::from_str(depth.as_str()).unwrap(),
-                );
+                h.insert("Depth", depth_value);
                 h.insert(
                     header::CONTENT_TYPE,
                     header::HeaderValue::from_static("application/xml; charset=utf-8"),
