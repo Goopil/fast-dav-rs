@@ -151,8 +151,12 @@ impl CalDavClient {
             .await
     }
     /// Send a CalDAV `MKCALENDAR` to create a calendar collection.
+    ///
+    /// Sent with an explicit `Depth: 0` header (the operation applies to the
+    /// collection being created only).
     pub async fn mkcalendar(&self, path: &str, xml_body: &str) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
+        h.insert("Depth", header::HeaderValue::from_static("0"));
         h.insert(
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/xml; charset=utf-8"),
@@ -201,7 +205,6 @@ impl CalDavClient {
     <D:displayname/>
     <C:calendar-description/>
     <C:calendar-timezone/>
-    <C:calendar-color/>
     <A:calendar-color/>
     <C:supported-calendar-component-set/>
     <D:getetag/>

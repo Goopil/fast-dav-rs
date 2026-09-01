@@ -511,6 +511,21 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .build()?;
 ```
 
+### Redirect following
+
+HTTP redirects (301/302/303/307/308) are followed automatically in `send`/`send_stream`,
+up to a configurable limit. On 303 the request is re-sent as `GET` without a body, and
+when a redirect crosses origins (scheme, host, or port change) the `Authorization` and
+`Cookie` headers are stripped for the remainder of the chain. Exceeding the limit fails
+with `Error::TooManyRedirects`:
+
+```rust
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .follow_redirects(true) // default
+    .max_redirects(5)       // default
+    .build()?;
+```
+
 ## Security
 
 Basic credentials are sent as an `Authorization: Basic` header on every request. Base64 is an

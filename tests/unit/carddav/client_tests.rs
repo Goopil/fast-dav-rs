@@ -397,3 +397,94 @@ async fn sync_collection_sends_depth_zero() {
         "expected 'Depth: 0' in request: {req}"
     );
 }
+
+#[tokio::test]
+async fn mkaddressbook_sends_depth_zero() {
+    let body = b"<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"></D:multistatus>".to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let resp = client
+        .mkaddressbook(
+            "newab/",
+            r#"<C:mkaddressbook xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:set><D:prop><D:displayname>New</D:displayname></D:prop></D:set></C:mkaddressbook>"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains("MKADDRESSBOOK"),
+        "expected MKADDRESSBOOK method in request: {req}"
+    );
+    assert!(
+        req.to_ascii_lowercase().contains("depth: 0"),
+        "expected explicit 'Depth: 0' on MKADDRESSBOOK: {req}"
+    );
+}
+
+#[tokio::test]
+async fn list_addressbooks_requests_apple_color_not_carddav_color() {
+    let body = b"<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"></D:multistatus>".to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let addressbooks = client.list_addressbooks("home/").await.unwrap();
+    assert!(addressbooks.is_empty());
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains("<A:addressbook-color/>"),
+        "the Apple addressbook-color property must be requested: {req}"
+    );
+    assert!(
+        !req.contains("<C:addressbook-color/>"),
+        "the non-existent CardDAV addressbook-color property must not be requested: {req}"
+    );
+}
+
+#[tokio::test]
+async fn carddav_follow_redirects_false_propagates() {
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/never/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_owned(),
+        Vec::new(),
+    )
+    .await;
+
+    let client = CardDavClient::builder(&base)
+        .follow_redirects(false)
+        .build()
+        .unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let resp = client
+        .send(hyper::Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        302,
+        "redirects must not be followed when disabled"
+    );
+
+    let guard = captured.lock().unwrap();
+    let raw = String::from_utf8_lossy(&guard);
+    assert!(
+        !raw.contains("/never/"),
+        "the redirect target must not be requested: {raw}"
+    );
+}

@@ -4,6 +4,7 @@ use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
 use parking_lot::RwLock;
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
@@ -135,6 +136,113 @@ pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Bytes percent-encoded in each URI path segment. RFC 3986 reserves `/`
+/// (segment separator, preserved by encoding per segment) and rejects
+/// controls, space, and the "unsafe" punctuation; existing valid `%XX`
+/// escapes are preserved before this set is applied.
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}')
+    .add(b'\\')
+    .add(b'^')
+    .add(b'|')
+    .add(b'[')
+    .add(b']');
+
+/// Percent-encode every path segment of `path` individually.
+///
+/// `/` separators are preserved, already-valid `%XX` sequences are kept
+/// verbatim, bare `%` becomes `%25`, and everything in
+/// [`PATH_SEGMENT_ENCODE_SET`] (plus non-ASCII bytes) is percent-encoded.
+#[doc(hidden)]
+pub fn encode_path_segments(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let mut rest = path;
+    while let Some(pos) = rest.find('%') {
+        let (head, tail) = rest.split_at(pos);
+        out.push_str(&utf8_percent_encode(head, PATH_SEGMENT_ENCODE_SET).to_string());
+        if tail.len() >= 3 && tail.as_bytes()[1..3].iter().all(u8::is_ascii_hexdigit) {
+            out.push_str(&tail[..3]);
+            rest = &tail[3..];
+        } else {
+            out.push_str("%25");
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(&utf8_percent_encode(rest, PATH_SEGMENT_ENCODE_SET).to_string());
+    out
+}
+
+/// True for the HTTP statuses whose `Location` must be followed
+/// (301, 302, 303, 307, 308).
+fn is_redirect_status(status: StatusCode) -> bool {
+    matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
+}
+
+/// Compare the origins (scheme + host + effective port) of two URIs.
+#[doc(hidden)]
+pub fn same_origin(a: &Uri, b: &Uri) -> bool {
+    let effective_port = |u: &Uri| {
+        u.port_u16().unwrap_or(match u.scheme_str() {
+            Some("https") => 443,
+            Some("http") => 80,
+            _ => 0,
+        })
+    };
+    a.scheme_str() == b.scheme_str()
+        && a.host() == b.host()
+        && effective_port(a) == effective_port(b)
+}
+
+/// Resolve a `Location` header value against the URI that produced it.
+///
+/// Supports absolute URLs, root-relative paths, bare query references, and
+/// relative segment references (merged against the current directory, RFC
+/// 3986 §5). Returns `None` when the reference cannot be resolved.
+#[doc(hidden)]
+pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
+    if location.starts_with("http://") || location.starts_with("https://") {
+        return location.parse().ok();
+    }
+
+    let scheme = current.scheme_str()?;
+    let authority = current.authority()?;
+
+    let (path_q, _) = location.split_once('#').unwrap_or((location, ""));
+    let (path, query) = match path_q.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (path_q, None),
+    };
+
+    let resolved = if path.is_empty() {
+        current.path().to_owned()
+    } else if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        let dir = current.path().rsplit_once('/').map_or("", |(d, _)| d);
+        format!("{dir}/{path}")
+    };
+
+    let path_and_query = match query {
+        Some(q) => format!("{resolved}?{q}"),
+        None => resolved,
+    };
+
+    Uri::builder()
+        .scheme(scheme)
+        .authority(authority.clone())
+        .path_and_query(path_and_query)
+        .build()
+        .ok()
+}
+
 fn normalize_decompressed_headers(
     headers: &mut HeaderMap,
     encodings: &[ContentEncoding],
@@ -172,6 +280,11 @@ pub struct WebDavClient {
     user_agent: Option<header::HeaderValue>,
     negotiated_request_compression: Arc<RwLock<Option<ContentEncoding>>>,
     request_compression_probe: Arc<Mutex<()>>,
+    /// Whether HTTP redirects (301/302/303/307/308) are followed.
+    follow_redirects: bool,
+    /// Maximum number of redirects to follow before failing with
+    /// [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
+    max_redirects: u8,
 }
 
 impl WebDavClient {
@@ -219,6 +332,7 @@ impl WebDavClient {
     ///
     /// This is the internal constructor used by [`WebDavClient::new`] and
     /// [`WebDavClientBuilder::build`].
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_parts(
         base: Uri,
         client: HyperClient,
@@ -226,6 +340,8 @@ impl WebDavClient {
         user_agent: Option<header::HeaderValue>,
         default_timeout: Duration,
         request_compression_mode: RequestCompressionMode,
+        follow_redirects: bool,
+        max_redirects: u8,
     ) -> Self {
         Self {
             base,
@@ -236,6 +352,8 @@ impl WebDavClient {
             request_compression_mode: Arc::new(RwLock::new(request_compression_mode)),
             negotiated_request_compression: Arc::new(RwLock::new(None)),
             request_compression_probe: Arc::new(Mutex::new(())),
+            follow_redirects,
+            max_redirects,
         }
     }
 
@@ -334,12 +452,16 @@ impl WebDavClient {
             combined.push('/');
         }
 
+        // Percent-encode the path (per segment, preserving valid `%XX`);
+        // the query string is forwarded untouched.
+        let encoded = encode_path_segments(&combined);
+
         let path_and_query = if let Some(q) = query {
-            format!("{}?{}", combined, q)
+            format!("{}?{}", encoded, q)
                 .parse()
                 .map_err(|source| Error::invalid_url(path, source))?
         } else {
-            combined
+            encoded
                 .parse()
                 .map_err(|source| Error::invalid_url(path, source))?
         };
@@ -516,8 +638,14 @@ impl WebDavClient {
     // ----------- Aggregated send (Bytes) with automatic decompression -----------
 
     /// Shared request pipeline: builds the request (auth, UA, compression),
-    /// sends it with the compression-retry loop, and returns the raw
-    /// (still-encoded) response.
+    /// sends it with the compression-retry loop, follows HTTP redirects, and
+    /// returns the raw (still-encoded) response.
+    ///
+    /// Redirect handling (301/302/303/307/308): the request is re-sent to the
+    /// `Location` target up to `max_redirects` times. On 303 the method
+    /// switches to `GET` and the body is dropped. When a hop crosses origins
+    /// (scheme, host, or port change), `Authorization` and `Cookie` headers
+    /// are stripped for the remainder of the chain.
     async fn build_and_send(
         &self,
         method: Method,
@@ -526,10 +654,12 @@ impl WebDavClient {
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
     ) -> Result<Response<Incoming>> {
-        let uri = self.build_uri(path)?;
-        let auth = self.auth_header.clone();
-        let base_headers = headers;
-        let base_body = body_bytes;
+        let mut method = method;
+        let mut body = body_bytes;
+        let mut base_headers = headers;
+        let mut uri = self.build_uri(path)?;
+        let mut redirects: u8 = 0;
+        let mut strip_credentials = false;
         let mut attempt = 0;
 
         loop {
@@ -538,8 +668,10 @@ impl WebDavClient {
 
             let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
 
-            if let Some(ref auth_header) = auth {
-                req_builder = req_builder.header(header::AUTHORIZATION, auth_header);
+            if !strip_credentials {
+                if let Some(auth) = &self.auth_header {
+                    req_builder = req_builder.header(header::AUTHORIZATION, auth);
+                }
             }
 
             if let Some(ua) = &self.user_agent {
@@ -549,7 +681,7 @@ impl WebDavClient {
             let mut final_body: Option<Bytes> = None;
             let mut attempted_encoding: Option<ContentEncoding> = None;
 
-            if let Some(body) = base_body.clone() {
+            if let Some(body) = body.clone() {
                 if !headers.contains_key(header::CONTENT_TYPE) {
                     req_builder = req_builder.header(
                         header::CONTENT_TYPE,
@@ -580,16 +712,55 @@ impl WebDavClient {
 
             let should_retry =
                 self.handle_request_compression_outcome(attempted_encoding, resp.status());
-            if should_retry && attempt == 0 && base_body.is_some() {
+            if should_retry && attempt == 0 && body.is_some() {
                 attempt += 1;
                 continue;
             }
 
-            return Ok(resp);
+            if !self.follow_redirects || !is_redirect_status(resp.status()) {
+                return Ok(resp);
+            }
+
+            if redirects >= self.max_redirects {
+                return Err(Error::TooManyRedirects {
+                    limit: self.max_redirects,
+                });
+            }
+
+            let next = resp
+                .headers()
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|loc| resolve_location(&uri, loc));
+            let Some(next) = next else {
+                return Ok(resp);
+            };
+
+            if !strip_credentials && !same_origin(&uri, &next) {
+                strip_credentials = true;
+                base_headers.remove(header::AUTHORIZATION);
+                base_headers.remove(header::COOKIE);
+            }
+            if resp.status() == StatusCode::SEE_OTHER {
+                method = Method::GET;
+                body = None;
+                base_headers.remove(header::CONTENT_TYPE);
+                base_headers.remove(header::CONTENT_LENGTH);
+                base_headers.remove(header::CONTENT_ENCODING);
+            }
+
+            uri = next;
+            redirects += 1;
         }
     }
 
     /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
+    ///
+    /// Follows HTTP redirects (301/302/303/307/308) up to the configured
+    /// `max_redirects` when `follow_redirects` is enabled; on 303 the request
+    /// is re-sent as `GET` without a body, and `Authorization`/`Cookie`
+    /// headers are stripped when a hop crosses origins. Exceeding the limit
+    /// fails with [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
     pub async fn send(
         &self,
         method: Method,
@@ -619,6 +790,9 @@ impl WebDavClient {
     /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
     /// The caller must enforce its own read deadline on the returned body; the
     /// per-request timeout covers headers only.
+    ///
+    /// Redirects are followed exactly as in [`send`](Self::send) before the
+    /// final response is returned.
     pub async fn send_stream(
         &self,
         method: Method,
@@ -772,8 +946,12 @@ impl WebDavClient {
     }
 
     /// Send a WebDAV `PROPPATCH` with a custom XML body.
+    ///
+    /// Sent with an explicit `Depth: 0` (RFC 4918 §9.2: PROPPATCH applies to
+    /// the resource only).
     pub async fn proppatch(&self, path: &str, xml_body: &str) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
+        h.insert("Depth", header::HeaderValue::from_static("0"));
         h.insert(
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/xml; charset=utf-8"),
