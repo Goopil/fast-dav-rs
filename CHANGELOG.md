@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `SyncLevel` enum (`One` / `Infinite`, RFC 6578 §3.3), re-exported from `fast_dav_rs::webdav`
+  and the crate root, and `sync_collection_with_level` on `WebDavClient`, `CalDavClient`, and
+  `CardDavClient` — a `sync-collection` REPORT with a configurable `sync-level` (the existing
+  `sync_collection` keeps the `SyncLevel::One` behavior) (issue #88)
+- `sync_collection_resilient` on `WebDavClient`, `CalDavClient`, and `CardDavClient` (issue #88):
+  410-Gone recovery per RFC 6578 §3.11 — when the server rejects the incremental request with
+  `410 Gone` (stale sync token), the report is automatically re-issued with an empty sync token
+  (initial sync) and the full result set with the new token is returned; any other error
+  propagates unchanged
 - `Prefer` header support (RFC 7240, issue #87): new `Prefer` enum (`Minimal` /
   `Representation`, re-exported from `fast_dav_rs::webdav` and the crate root), a
   `prefer(Option<Prefer>)` builder option on `WebDavClientBuilder`, `CalDavClientBuilder`,
@@ -57,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `decompress_stream` errors once the cap is exceeded (issue #79, AUDIT-003)
 
 ### Changed
+- **Breaking:** `fast_dav_rs::webdav::build_sync_collection_body` gained a trailing
+  `sync_level: SyncLevel` parameter, replacing the hardcoded `<D:sync-level>1</D:sync-level>`
+  (pass `SyncLevel::One` to keep the previous behavior; scheduled for the 0.10 breaking window)
 - **Breaking:** `supports_webdav_sync` (and its CalDAV/CardDAV delegates) now returns
   `Result<SyncCapability>` instead of `Result<bool>`, with `SyncCapability` being
   `Supported`, `Unsupported` or `Unknown`: a transport or timeout error is reported as

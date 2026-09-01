@@ -622,6 +622,35 @@ async fn main() -> Result<()> {
 - Use `caldav::parse_multistatus_stream` for CalDAV responses and `carddav::parse_multistatus_stream`
   for CardDAV responses.
 - `supports_webdav_sync` and `sync_collection` work for both calendars and addressbooks.
+- `sync_collection_with_level` (all clients) sends a configurable `sync-level` (RFC 6578 §3.3):
+  `SyncLevel::One` restricts the sync to the collection members, `SyncLevel::Infinite` includes
+  all descendants.
+- `sync_collection_resilient` (all clients) recovers automatically from `410 Gone` (stale sync
+  token, RFC 6578 §3.11) by re-issuing the report as an initial sync and returning the full
+  result set with the new token; any other error propagates unchanged.
+
+### Resilient sync example
+
+```rust
+use fast_dav_rs::{CalDavClient, Result, SyncLevel};
+
+async fn sync(client: &CalDavClient) -> Result<()> {
+    // Incremental sync; on 410 Gone the report is re-issued as an initial sync
+    // and the full result set with the new token is returned.
+    let sync = client
+        .sync_collection_resilient("calendars/alice/work/", Some("stale-token"), None, true)
+        .await?;
+    println!("new token: {:?}", sync.sync_token);
+
+    // Custom sync-level (RFC 6578 §3.3).
+    let full = client
+        .sync_collection_with_level("calendars/alice/work/", None, None, false, SyncLevel::Infinite)
+        .await?;
+    println!("items: {}", full.items.len());
+
+    Ok(())
+}
+```
 
 ### CalDAV streaming example
 
