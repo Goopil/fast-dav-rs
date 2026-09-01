@@ -376,7 +376,7 @@
 //! Discover server capabilities and choose appropriate synchronization methods:
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Depth, Error, Result};
+//! use fast_dav_rs::{CalDavClient, Depth, Error, Result, SyncCapability};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
@@ -390,8 +390,8 @@
 //!     println!("Detecting server capabilities...");
 //!
 //!     // Check if server supports WebDAV-Sync (RFC 6578)
-//!     let has_sync_support = client.supports_webdav_sync().await?;
-//!     println!("WebDAV-Sync support: {}", has_sync_support);
+//!     let sync_capability = client.supports_webdav_sync().await?;
+//!     println!("WebDAV-Sync support: {sync_capability:?}");
 //!
 //!     // Discover user principal
 //!     let principal = client.discover_current_user_principal().await?
@@ -411,8 +411,10 @@
 //!                  calendar.sync_token.as_ref().map(|s| &s[..20]));
 //!     }
 //!
-//!     // Choose synchronization strategy based on capabilities
-//!     if has_sync_support && !calendars.is_empty() {
+//!     // Choose synchronization strategy based on capabilities; treat
+//!     // `SyncCapability::Unknown` (network failure) as not supported so the
+//!     // fallback polling path still makes progress.
+//!     if sync_capability == SyncCapability::Supported && !calendars.is_empty() {
 //!         println!("Using efficient WebDAV-Sync for synchronization");
 //!         sync_with_webdav_sync(&client, &calendars[0]).await?;
 //!     } else {
@@ -726,7 +728,9 @@ pub use common::compression::{
     detect_encodings, detect_request_compression_preference,
 };
 pub use webdav::builder::WebDavClientBuilder;
-pub use webdav::{DavCapabilities, PropStat, RequestCompressionMode, WebDavClient, WebDavError};
+pub use webdav::{
+    DavCapabilities, PropStat, RequestCompressionMode, SyncCapability, WebDavClient, WebDavError,
+};
 
 // Legacy module paths kept for compatibility with existing imports.
 // Deprecated since 0.8; scheduled for removal in the next breaking release

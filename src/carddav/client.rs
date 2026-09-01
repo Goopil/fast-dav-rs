@@ -397,26 +397,48 @@ fn build_mkcol_addressbook_body(xml_body: &str) -> String {
     )
 }
 
-fn extract_prop_inner(xml_body: &str) -> Option<String> {
-    let mut start = None;
-    for open in ["<D:prop>", "<d:prop>"] {
-        if let Some(idx) = xml_body.find(open) {
-            start = Some(idx + open.len());
-            break;
-        }
-    }
-    let start = start?;
-    let remaining = &xml_body[start..];
+/// Test seam: covered by `tests/unit/carddav`.
+#[doc(hidden)]
+pub fn extract_prop_inner(xml_body: &str) -> Option<String> {
+    use quick_xml::NsReader;
+    use quick_xml::events::Event;
+    use quick_xml::name::ResolveResult;
 
-    let mut end = None;
-    for close in ["</D:prop>", "</d:prop>"] {
-        if let Some(idx) = remaining.find(close) {
-            end = Some(idx);
-            break;
+    let mut reader = NsReader::from_str(xml_body);
+    let mut inner_start: Option<usize> = None;
+    let mut depth = 0usize;
+    loop {
+        let tag_start = reader.buffer_position() as usize;
+        let (ns, event) = reader.read_resolved_event().ok()?;
+        let is_prop = matches!(ns, ResolveResult::Bound(n) if n.into_inner() == b"DAV:".as_slice());
+        match event {
+            Event::Start(e) => {
+                if inner_start.is_some() {
+                    depth += 1;
+                } else if is_prop && e.local_name().into_inner() == b"prop".as_slice() {
+                    inner_start = Some(reader.buffer_position() as usize);
+                }
+            }
+            Event::Empty(e) => {
+                if inner_start.is_none()
+                    && is_prop
+                    && e.local_name().into_inner() == b"prop".as_slice()
+                {
+                    return Some(String::new());
+                }
+            }
+            Event::End(_) => {
+                if let Some(start) = inner_start {
+                    if depth == 0 {
+                        return Some(xml_body[start..tag_start].to_string());
+                    }
+                    depth -= 1;
+                }
+            }
+            Event::Eof => return None,
+            _ => {}
         }
     }
-    let end = end?;
-    Some(remaining[..end].to_string())
 }
 
 pub fn build_addressbook_query_body(filter_xml: &str, include_data: bool) -> String {
@@ -573,48 +595,6 @@ pub fn map_sync_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn extract_prop_inner_d_uppercase() {
-        let xml = "<outer><D:prop>inner content</D:prop></outer>";
-        let result = extract_prop_inner(xml);
-        assert_eq!(result.as_deref(), Some("inner content"));
-    }
-
-    #[test]
-    fn extract_prop_inner_d_lowercase() {
-        let xml = "<outer><d:prop>inner content</d:prop></outer>";
-        let result = extract_prop_inner(xml);
-        assert_eq!(result.as_deref(), Some("inner content"));
-    }
-
-    #[test]
-    fn extract_prop_inner_absent_returns_none() {
-        let xml = "<outer><D:something>content</D:something></outer>";
-        let result = extract_prop_inner(xml);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn extract_prop_inner_no_closing_tag_returns_none() {
-        let xml = "<D:prop>content";
-        let result = extract_prop_inner(xml);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn extract_prop_inner_prefers_d_uppercase_first() {
-        let xml = "<root><D:prop>upper</D:prop><d:prop>lower</d:prop></root>";
-        let result = extract_prop_inner(xml);
-        assert_eq!(result.as_deref(), Some("upper"));
-    }
-
-    #[test]
-    fn extract_prop_inner_empty_inner() {
-        let xml = "<root><D:prop></D:prop></root>";
-        let result = extract_prop_inner(xml);
-        assert_eq!(result.as_deref(), Some(""));
-    }
 
     #[test]
     fn build_mkcol_addressbook_body_with_resourcetype_no_duplicate() {

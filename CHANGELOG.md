@@ -16,7 +16,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `expand` is `Some`, `include_data` is implied `true`. New types `FreeBusyPeriod` and
   `FreeBusyType`, re-exported from `fast_dav_rs::caldav`
 
+### Security
+- Bearer tokens and proxy credentials are zeroized in the intermediate
+  `Authorization` header strings built by the client builder, so plaintext
+  credentials no longer linger in freed heap memory (issue #79)
+- Decompressed response bodies are capped at 256 MiB to prevent decompression
+  bombs: `decompress_body` fails with the new `Error::BodyTooLarge` variant and
+  `decompress_stream` errors once the cap is exceeded (issue #79, AUDIT-003)
+
 ### Changed
+- **Breaking:** `supports_webdav_sync` (and its CalDAV/CardDAV delegates) now returns
+  `Result<SyncCapability>` instead of `Result<bool>`, with `SyncCapability` being
+  `Supported`, `Unsupported` or `Unknown`: a transport or timeout error is reported as
+  `SyncCapability::Unknown` instead of being silently swallowed as "unsupported"
+  (issue #80, audit AUDIT-013)
+- The request-compression caches (`request_compression_mode`,
+  `negotiated_request_compression`) migrated from `std::sync::RwLock` to
+  `parking_lot::RwLock` (new dependency), removing the `PoisonError` recovery shims
+  (issue #80)
+- The CardDAV `mkcol` body builder now extracts the `D:prop` element with `quick-xml`
+  instead of a string search: any namespace prefix (including a default-namespace-bound
+  unprefixed `prop`) and any attributes on the element are handled, nested elements are
+  captured correctly, and self-closing elements yield an empty inner body (issue #80)
 - **Breaking:** `calendar_query_timerange`, `calendar_multiget`, and CalDAV `sync_collection`
   gained a trailing `expand` parameter, and the free builders `build_calendar_query_body`,
   `build_calendar_multiget_body`, and the CalDAV `build_sync_collection_body` gained a trailing

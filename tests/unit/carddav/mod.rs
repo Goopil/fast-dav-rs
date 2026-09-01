@@ -4,5 +4,6 @@ pub mod etag_tests;
 pub mod filter_tests;
 pub mod parser_edge_cases;
 pub mod parser_tests;
+pub mod prop_extraction_tests;
 pub mod streaming_tests;
 pub mod xml_helper_tests;

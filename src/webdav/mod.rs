@@ -10,7 +10,7 @@ pub use client::{
 };
 pub use streaming::parse_error_body;
 pub use types::{
-    BatchItem, DavCapabilities, DavItem, DavItemCommon, Depth, PropStat, WebDavError,
-    parse_dav_header,
+    BatchItem, DavCapabilities, DavItem, DavItemCommon, Depth, PropStat, SyncCapability,
+    WebDavError, parse_dav_header,
 };
 pub use xml::{build_sync_collection_body, escape_xml};
