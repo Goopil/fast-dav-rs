@@ -17,6 +17,40 @@ pub enum SyncCapability {
     Unknown,
 }
 
+/// HTTP `Prefer` header preference (RFC 7240) supported by this client.
+///
+/// v1.0 supports the `return` preference only. Other preferences (`wait`,
+/// `handling`, …) can still be sent manually through the `HeaderMap`
+/// accepted by the low-level `send`/`send_stream` methods.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::Prefer;
+///
+/// assert_eq!(Prefer::Minimal.as_str(), "return=minimal");
+/// assert_eq!(Prefer::Representation.as_str(), "return=representation");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Prefer {
+    /// `return=minimal` — the server should keep the response body minimal.
+    Minimal,
+    /// `return=representation` — the server should return the full resource
+    /// representation (e.g. the stored body and new `ETag` of a `PUT`).
+    Representation,
+}
+
+impl Prefer {
+    /// Returns the `Prefer` header value for this preference.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Minimal => "return=minimal",
+            Self::Representation => "return=representation",
+        }
+    }
+}
+
 /// Collation algorithm for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
 ///
 /// Determines how string comparisons are performed in calendar-query and

@@ -16,7 +16,7 @@ use crate::common::compression::{
 use crate::common::http::HyperClient;
 use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
-use crate::webdav::types::{BatchItem, DavCapabilities, Depth, SyncCapability};
+use crate::webdav::types::{BatchItem, DavCapabilities, Depth, Prefer, SyncCapability};
 use crate::{Error, Operation, Result};
 
 /// Strategy for compressing outgoing request bodies.
@@ -134,6 +134,45 @@ pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
         .and_then(|v| v.to_str().ok())
         .map(normalize_etag)
         .filter(|s| !s.is_empty())
+}
+
+/// Extract the `Preference-Applied` response header (RFC 7240 §3) and map it
+/// to a [`Prefer`] preference the client supports.
+///
+/// Parsing is **lenient**: an absent, malformed, or unrecognized value
+/// yields `None` — never an error. Pair with
+/// `put_if_match_prefer` to check whether the server actually honored
+/// `Prefer: return=representation`; servers are free to ignore preferences.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::{Prefer, preference_applied_from_headers};
+/// use hyper::HeaderMap;
+///
+/// let mut headers = HeaderMap::new();
+/// headers.insert("Preference-Applied", "return=representation".parse().unwrap());
+/// assert_eq!(
+///     preference_applied_from_headers(&headers),
+///     Some(Prefer::Representation)
+/// );
+///
+/// assert_eq!(preference_applied_from_headers(&HeaderMap::new()), None);
+/// ```
+pub fn preference_applied_from_headers(headers: &HeaderMap) -> Option<Prefer> {
+    headers
+        .get("Preference-Applied")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .and_then(|v| {
+            if v.eq_ignore_ascii_case("return=minimal") {
+                Some(Prefer::Minimal)
+            } else if v.eq_ignore_ascii_case("return=representation") {
+                Some(Prefer::Representation)
+            } else {
+                None
+            }
+        })
 }
 
 /// Bytes percent-encoded in each URI path segment. RFC 3986 reserves `/`
@@ -285,6 +324,9 @@ pub struct WebDavClient {
     /// Maximum number of redirects to follow before failing with
     /// [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
     max_redirects: u8,
+    /// Client-wide `Prefer` header (RFC 7240) injected on every request
+    /// unless the request already carries one, if set via the builder.
+    prefer: Option<Prefer>,
 }
 
 impl WebDavClient {
@@ -342,6 +384,7 @@ impl WebDavClient {
         request_compression_mode: RequestCompressionMode,
         follow_redirects: bool,
         max_redirects: u8,
+        prefer: Option<Prefer>,
     ) -> Self {
         Self {
             base,
@@ -354,6 +397,7 @@ impl WebDavClient {
             request_compression_probe: Arc::new(Mutex::new(())),
             follow_redirects,
             max_redirects,
+            prefer,
         }
     }
 
@@ -657,6 +701,14 @@ impl WebDavClient {
         let mut method = method;
         let mut body = body_bytes;
         let mut base_headers = headers;
+        // RFC 7240: inject the client-wide preference unless the caller
+        // already supplied a `Prefer` header for this request (per-request
+        // headers win over the builder default).
+        if let Some(prefer) = self.prefer {
+            if !base_headers.contains_key("Prefer") {
+                base_headers.insert("Prefer", header::HeaderValue::from_static(prefer.as_str()));
+            }
+        }
         let mut uri = self.build_uri(path)?;
         let mut redirects: u8 = 0;
         let mut strip_credentials = false;
@@ -878,6 +930,29 @@ impl WebDavClient {
         let mut h = HeaderMap::new();
         h.insert(header::IF_MATCH, if_match_header_value(etag)?);
         self.send(Method::DELETE, path, h, None, None).await
+    }
+
+    /// Shared implementation behind the domain clients' `put_if_match` /
+    /// `put_if_match_prefer`: a conditional `PUT` guarded by `If-Match` with
+    /// an optional `Prefer` preference (RFC 7240).
+    pub(crate) async fn put_if_match_with(
+        &self,
+        path: &str,
+        body: Bytes,
+        content_type: &'static str,
+        etag: &str,
+        prefer: Option<Prefer>,
+    ) -> Result<Response<Bytes>> {
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static(content_type),
+        );
+        h.insert(header::IF_MATCH, if_match_header_value(etag)?);
+        if let Some(prefer) = prefer {
+            h.insert("Prefer", header::HeaderValue::from_static(prefer.as_str()));
+        }
+        self.send(Method::PUT, path, h, Some(body), None).await
     }
 
     /// Send a WebDAV `COPY` from `src_path` to an absolute `Destination` URL.
@@ -1249,9 +1324,11 @@ impl WebDavClient {
 /// wrappers over [`WebDavClient`].
 ///
 /// The wrapper struct must own a `webdav: WebDavClient` field.
+/// `$content_type` is the `Content-Type` used for conditional `PUT` bodies
+/// (iCalendar vs. vCard).
 #[macro_export]
 macro_rules! impl_dav_client_delegates {
-    ($client:ident) => {
+    ($client:ident, $content_type:expr) => {
         impl $client {
             /// Wrap a [`WebDavClient`] into this client type.
             pub(crate) fn from_webdav(webdav: $crate::webdav::WebDavClient) -> Self {
@@ -1367,6 +1444,75 @@ macro_rules! impl_dav_client_delegates {
                 etag: &str,
             ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
                 self.webdav.delete_if_match(path, etag).await
+            }
+
+            /// Conditional `PUT` guarded by `If-Match`.
+            ///
+            /// The write only succeeds if the current resource ETag matches.
+            /// Quoted strong and weak ETags are accepted; bare ETags returned
+            /// by some servers are quoted automatically.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the path cannot be resolved to a valid
+            /// URI, the ETag is empty or malformed, or a network/server error
+            /// occurs.
+            pub async fn put_if_match(
+                &self,
+                path: &str,
+                body: bytes::Bytes,
+                etag: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav
+                    .put_if_match_with(path, body, $content_type, etag, None)
+                    .await
+            }
+
+            /// Conditional `PUT` guarded by `If-Match`, additionally sending
+            /// `Prefer: return=representation` (RFC 7240) so servers that
+            /// honor it include the stored representation (typically with the
+            /// new `ETag`) in the response.
+            ///
+            /// Check whether the server actually applied the preference with
+            /// [`preference_applied_from_headers`](crate::webdav::preference_applied_from_headers)
+            /// — servers may silently ignore it.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the path cannot be resolved to a valid
+            /// URI, the ETag is empty or malformed, or a network/server error
+            /// occurs.
+            ///
+            /// # Example
+            ///
+            /// ```no_run
+            /// use bytes::Bytes;
+            /// use fast_dav_rs::CalDavClient;
+            ///
+            /// # async fn example(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+            /// let body = Bytes::from_static(b"BEGIN:VCALENDAR\nEND:VCALENDAR\n");
+            /// let resp = client
+            ///     .put_if_match_prefer("event.ics", body, "\"etag-1\"")
+            ///     .await?;
+            /// let honored = fast_dav_rs::preference_applied_from_headers(resp.headers());
+            /// # Ok(())
+            /// # }
+            /// ```
+            pub async fn put_if_match_prefer(
+                &self,
+                path: &str,
+                body: bytes::Bytes,
+                etag: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav
+                    .put_if_match_with(
+                        path,
+                        body,
+                        $content_type,
+                        etag,
+                        Some($crate::webdav::Prefer::Representation),
+                    )
+                    .await
             }
 
             /// Send a WebDAV `COPY` from `src_path` to an absolute `Destination` URL.

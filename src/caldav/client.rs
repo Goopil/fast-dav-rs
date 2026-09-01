@@ -9,7 +9,7 @@ use crate::caldav::types::{
     SyncItem, SyncResponse, TimeRange,
 };
 use crate::impl_dav_client_delegates;
-use crate::webdav::client::{WebDavClient, if_match_header_value};
+use crate::webdav::client::WebDavClient;
 use crate::webdav::types::map_sync_rows;
 use crate::webdav::xml::{
     data_element_xml, time_range_xml, validate_component_name, validate_utc_datetime,
@@ -35,7 +35,7 @@ pub struct CalDavClient {
     webdav: WebDavClient,
 }
 
-impl_dav_client_delegates!(CalDavClient);
+impl_dav_client_delegates!(CalDavClient, "text/calendar; charset=utf-8");
 
 impl CalDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
@@ -107,29 +107,6 @@ impl CalDavClient {
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("text/calendar; charset=utf-8"),
         );
-        self.send(Method::PUT, path, h, Some(ical_bytes), None)
-            .await
-    }
-    /// Conditional `PUT` guarded by `If-Match`.
-    ///
-    /// The write only succeeds if the current resource ETag matches.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the path cannot be resolved to a valid URI, the
-    /// ETag is empty or malformed, or a network/server error occurs.
-    pub async fn put_if_match(
-        &self,
-        path: &str,
-        ical_bytes: Bytes,
-        etag: &str,
-    ) -> Result<Response<Bytes>> {
-        let mut h = HeaderMap::new();
-        h.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("text/calendar; charset=utf-8"),
-        );
-        h.insert(header::IF_MATCH, if_match_header_value(etag)?);
         self.send(Method::PUT, path, h, Some(ical_bytes), None)
             .await
     }

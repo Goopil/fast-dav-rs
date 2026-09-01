@@ -729,7 +729,8 @@ pub use common::compression::{
 };
 pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
-    DavCapabilities, PropStat, RequestCompressionMode, SyncCapability, WebDavClient, WebDavError,
+    DavCapabilities, Prefer, PropStat, RequestCompressionMode, SyncCapability, WebDavClient,
+    WebDavError, preference_applied_from_headers,
 };
 
 // Legacy module paths kept for compatibility with existing imports.

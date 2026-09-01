@@ -20,6 +20,7 @@ use zeroize::Zeroize;
 
 use crate::common::http::{HyperClient, MaybeProxied};
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
+use crate::webdav::types::Prefer;
 use crate::{Error, Result};
 
 /// Builder for [`WebDavClient`].
@@ -60,6 +61,7 @@ pub struct WebDavClientBuilder {
     danger_accept_invalid_certs: bool,
     follow_redirects: bool,
     max_redirects: u8,
+    prefer: Option<Prefer>,
 }
 
 /// Manual implementation so held Basic/Bearer credentials are never printed.
@@ -94,6 +96,7 @@ impl std::fmt::Debug for WebDavClientBuilder {
         )
         .field("follow_redirects", &self.follow_redirects)
         .field("max_redirects", &self.max_redirects)
+        .field("prefer", &self.prefer)
         .finish()
     }
 }
@@ -119,6 +122,7 @@ impl Default for WebDavClientBuilder {
             danger_accept_invalid_certs: false,
             follow_redirects: true,
             max_redirects: 5,
+            prefer: None,
         }
     }
 }
@@ -299,6 +303,30 @@ impl WebDavClientBuilder {
         self
     }
 
+    /// Set the HTTP `Prefer` header (RFC 7240) sent on **every** request.
+    /// Default: **none**.
+    ///
+    /// The header is injected in the shared request pipeline, so every
+    /// client method (including the CalDAV/CardDAV delegates) inherits it.
+    /// A `Prefer` header passed explicitly per request to the low-level
+    /// `send`/`send_stream` methods (which accept a `HeaderMap`) wins over
+    /// this default.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::webdav::{Prefer, WebDavClient};
+    ///
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .prefer(Some(Prefer::Minimal))
+    ///     .build()?;
+    /// # Ok::<(), fast_dav_rs::Error>(())
+    /// ```
+    pub fn prefer(mut self, prefer: Option<Prefer>) -> Self {
+        self.prefer = prefer;
+        self
+    }
+
     /// Validate the configuration and construct the [`WebDavClient`].
     ///
     /// # Errors
@@ -393,6 +421,7 @@ impl WebDavClientBuilder {
             self.request_compression,
             self.follow_redirects,
             self.max_redirects,
+            self.prefer,
         ))
     }
 }
@@ -722,6 +751,14 @@ macro_rules! impl_dav_builder {
             /// Default: **5**.
             pub fn max_redirects(mut self, max: u8) -> Self {
                 self.inner = self.inner.max_redirects(max);
+                self
+            }
+
+            /// Set the HTTP `Prefer` header (RFC 7240) sent on **every**
+            /// request. Default: **none**. An explicit `Prefer` header passed
+            /// per request to `send`/`send_stream` wins over this default.
+            pub fn prefer(mut self, prefer: Option<$crate::webdav::Prefer>) -> Self {
+                self.inner = self.inner.prefer(prefer);
                 self
             }
 

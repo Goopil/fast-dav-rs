@@ -9,7 +9,7 @@ use crate::carddav::types::{
     SyncResponse,
 };
 use crate::impl_dav_client_delegates;
-use crate::webdav::client::{WebDavClient, if_match_header_value};
+use crate::webdav::client::WebDavClient;
 use crate::webdav::types::map_sync_rows;
 use crate::{Error, Operation, Result};
 
@@ -36,7 +36,7 @@ pub struct CardDavClient {
     webdav: WebDavClient,
 }
 
-impl_dav_client_delegates!(CardDavClient);
+impl_dav_client_delegates!(CardDavClient, VCARD_CONTENT_TYPE);
 
 impl CardDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
@@ -108,38 +108,6 @@ impl CardDavClient {
             header::CONTENT_TYPE,
             header::HeaderValue::from_static(VCARD_CONTENT_TYPE),
         );
-        self.send(Method::PUT, path, h, Some(vcard_bytes), None)
-            .await
-    }
-    /// Conditional `PUT` guarded by `If-Match`.
-    ///
-    /// The write only succeeds if the current resource ETag matches.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Resource path relative to the base URL
-    /// * `vcard_bytes` - The vCard data to upload
-    /// * `etag` - The ETag to match; quoted strong and weak ETags are accepted, and bare ETags
-    ///   returned by some servers are quoted automatically
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The path cannot be resolved to a valid URI
-    /// - The ETag is empty or cannot form a valid HTTP entity-tag
-    /// - Network or server errors occur
-    pub async fn put_if_match(
-        &self,
-        path: &str,
-        vcard_bytes: Bytes,
-        etag: &str,
-    ) -> Result<Response<Bytes>> {
-        let mut h = HeaderMap::new();
-        h.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static(VCARD_CONTENT_TYPE),
-        );
-        h.insert(header::IF_MATCH, if_match_header_value(etag)?);
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
     }

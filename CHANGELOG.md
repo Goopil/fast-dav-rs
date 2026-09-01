@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Prefer` header support (RFC 7240, issue #87): new `Prefer` enum (`Minimal` /
+  `Representation`, re-exported from `fast_dav_rs::webdav` and the crate root), a
+  `prefer(Option<Prefer>)` builder option on `WebDavClientBuilder`, `CalDavClientBuilder`,
+  and `CardDavClientBuilder` that injects the header on every request, lenient
+  `Preference-Applied` response parsing via `preference_applied_from_headers` (absent,
+  malformed, or unknown values yield `None`, never an error), and `put_if_match_prefer` on
+  `CalDavClient`/`CardDavClient` — a conditional `PUT` with `Prefer: return=representation`
 - `follow_redirects` (default `true`) and `max_redirects` (default `5`) builder options on
   `WebDavClientBuilder`, `CalDavClientBuilder`, and `CardDavClientBuilder`: HTTP redirects
   (301/302/303/307/308) are now followed in `send`/`send_stream`. On 303 the request is re-sent

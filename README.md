@@ -526,6 +526,26 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .build()?;
 ```
 
+### Prefer header
+
+The `Prefer` header (RFC 7240) can be set client-wide and is then sent on **every**
+request. `put_if_match_prefer` sends a conditional `PUT` with
+`Prefer: return=representation` so servers that honor it include the stored
+representation (typically with the new `ETag`) in the response. Servers may ignore
+preferences — check the `Preference-Applied` response header with
+`preference_applied_from_headers` to see whether one was actually applied. Other
+preferences (`wait`, `handling`, …) and per-request overrides can be sent manually via
+the `HeaderMap` accepted by `send`/`send_stream` (an explicit per-request `Prefer`
+header wins over the builder default):
+
+```rust
+use fast_dav_rs::webdav::Prefer;
+
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .prefer(Some(Prefer::Minimal)) // default: none
+    .build()?;
+```
+
 ## Security
 
 Basic credentials are sent as an `Authorization: Basic` header on every request. Base64 is an
