@@ -38,6 +38,26 @@ This directory contains E2E tests for the fast-dav-rs CardDAV client.
 - **Initial/Delta Sync** - Sync token based updates
 - Located in: `sync/sync_tests.rs`
 
+### 🔐 Security Tests
+- **Basic Auth On Wire** - 401 with bad/missing credentials → typed error; success with valid credentials
+- Located in: `security/auth_tests.rs`
+
+### 🛡️ Resilience Tests
+- **Missing Collections** - 404s with typed errors for nonexistent addressbooks
+- **Missing Contacts** - 404 responses for GET/DELETE of nonexistent cards
+- **Partially Missing Multiget** - Multiget behavior when an href does not exist
+- Located in: `resilience/resilience_tests.rs`
+
+### 📝 Parsing Tests
+- **vCard Round-Trip** - UTF-8/structured vCard fields survive server storage and parsing
+- **Malformed vCard Rejection** - Non-vCard payloads are rejected by the server (415)
+- Located in: `parsing/parsing_tests.rs`
+
+### ⚡ Parallel Operations
+- **Batch PROPFIND** - Concurrent property queries across collections
+- **Batch REPORT** - Addressbook-multiget REPORTs with bounded concurrency
+- Located in: `parallel/parallel_tests.rs`
+
 ## Running Tests
 
 ### Prerequisites
