@@ -161,6 +161,16 @@ fn param_filter_to_xml_is_not_defined() {
 }
 
 #[test]
+fn param_filter_to_xml_empty_inner_when_unset() {
+    let mut pf = ParamFilter::new("PARTSTAT", TextMatch::new("x"));
+    pf.text_match = None;
+    let xml = pf.to_xml();
+    assert!(xml.contains("param-filter name=\"PARTSTAT\""));
+    assert!(!xml.contains("text-match"));
+    assert!(!xml.contains("is-not-defined"));
+}
+
+#[test]
 fn param_filter_to_xml_escapes_name() {
     let pf = ParamFilter::new("PARTSTAT&X", TextMatch::new("ACCEPTED"));
     let xml = pf.to_xml();

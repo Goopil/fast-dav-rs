@@ -5,69 +5,35 @@ use crate::{Error, Result};
 use quick_xml::escape::unescape;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CommonElement {
-    Multistatus,
-    Response,
-    Propstat,
-    Prop,
-    Href,
-    Status,
-    Displayname,
-    Getetag,
-    Resourcetype,
-    Collection,
-    SyncToken,
-    CurrentUserPrincipal,
-    Owner,
-    Getcontenttype,
-    Getlastmodified,
-    Other,
-}
-
-pub(crate) fn common_element_from_bytes(raw: &[u8]) -> CommonElement {
-    let local = match raw.iter().position(|b| *b == b':') {
-        Some(idx) => &raw[idx + 1..],
-        None => raw,
-    };
-
-    if local.eq_ignore_ascii_case(b"multistatus") {
-        CommonElement::Multistatus
-    } else if local.eq_ignore_ascii_case(b"response") {
-        CommonElement::Response
-    } else if local.eq_ignore_ascii_case(b"propstat") {
-        CommonElement::Propstat
-    } else if local.eq_ignore_ascii_case(b"prop") {
-        CommonElement::Prop
-    } else if local.eq_ignore_ascii_case(b"href") {
-        CommonElement::Href
-    } else if local.eq_ignore_ascii_case(b"status") {
-        CommonElement::Status
-    } else if local.eq_ignore_ascii_case(b"displayname") {
-        CommonElement::Displayname
-    } else if local.eq_ignore_ascii_case(b"getetag") {
-        CommonElement::Getetag
-    } else if local.eq_ignore_ascii_case(b"resourcetype") {
-        CommonElement::Resourcetype
-    } else if local.eq_ignore_ascii_case(b"collection") {
-        CommonElement::Collection
-    } else if local.eq_ignore_ascii_case(b"sync-token") {
-        CommonElement::SyncToken
-    } else if local.eq_ignore_ascii_case(b"current-user-principal") {
-        CommonElement::CurrentUserPrincipal
-    } else if local.eq_ignore_ascii_case(b"owner") {
-        CommonElement::Owner
-    } else if local.eq_ignore_ascii_case(b"getcontenttype") {
-        CommonElement::Getcontenttype
-    } else if local.eq_ignore_ascii_case(b"getlastmodified") {
-        CommonElement::Getlastmodified
-    } else {
-        CommonElement::Other
+/// Compact dispatch of a single XML event to a [`MultistatusParser`], shared by
+/// the streaming (async) and aggregated (sync) parse loops.
+///
+/// Returns `true` when `EOF` was reached.
+fn dispatch_event<C: ItemConsumer>(
+    parser: &mut MultistatusParser<C>,
+    decoder: Decoder,
+    event: quick_xml::Result<Event<'_>>,
+) -> Result<bool> {
+    match event {
+        Ok(Event::Start(e)) => parser.on_start(&e, decoder)?,
+        Ok(Event::Empty(e)) => {
+            parser.on_start(&e, decoder)?;
+            parser.on_end(e.name().as_ref())?;
+        }
+        Ok(Event::Text(e)) => parser.on_text(decode_text(e.as_ref())?),
+        Ok(Event::CData(e)) => {
+            parser.on_cdata(String::from_utf8_lossy(e.as_ref()).into_owned());
+        }
+        Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
+        Ok(Event::Eof) => return Ok(true),
+        Err(error) => return Err(Error::from_quick_xml(error)),
+        _ => {}
     }
+    Ok(false)
 }
 
 pub(crate) struct CommonParser {
-    stack: Vec<CommonElement>,
+    stack: Vec<ElementName>,
     current: DavItemCommon,
     current_propstat_status: Option<String>,
     current_prop_names: Vec<String>,
@@ -90,25 +56,25 @@ impl CommonParser {
     }
 
     pub(crate) fn on_start(&mut self, raw: &[u8]) {
-        let element = common_element_from_bytes(raw);
+        let element = element_from_bytes(raw);
         self.stack.push(element);
 
         match element {
-            CommonElement::Response => {
+            ElementName::Response => {
                 self.current = DavItemCommon::default();
                 self.first_200_propstat_applied = false;
             }
-            CommonElement::Propstat => {
+            ElementName::Propstat => {
                 self.current_propstat_status = None;
                 self.current_prop_names = Vec::new();
             }
-            CommonElement::Collection
+            ElementName::Collection
                 if self.path_ends_with(&[
-                    CommonElement::Response,
-                    CommonElement::Propstat,
-                    CommonElement::Prop,
-                    CommonElement::Resourcetype,
-                    CommonElement::Collection,
+                    ElementName::Response,
+                    ElementName::Propstat,
+                    ElementName::Prop,
+                    ElementName::Resourcetype,
+                    ElementName::Collection,
                 ]) =>
             {
                 self.current.is_collection = true;
@@ -117,15 +83,11 @@ impl CommonParser {
         }
 
         if self.stack.len() >= 4
-            && self.stack[self.stack.len() - 4] == CommonElement::Response
-            && self.stack[self.stack.len() - 3] == CommonElement::Propstat
-            && self.stack[self.stack.len() - 2] == CommonElement::Prop
+            && self.stack[self.stack.len() - 4] == ElementName::Response
+            && self.stack[self.stack.len() - 3] == ElementName::Propstat
+            && self.stack[self.stack.len() - 2] == ElementName::Prop
         {
-            let local = match raw.iter().position(|b| *b == b':') {
-                Some(idx) => &raw[idx + 1..],
-                None => raw,
-            };
-            let name = String::from_utf8_lossy(local).to_string();
+            let name = String::from_utf8_lossy(local_name(raw)).to_string();
             if !self.current_prop_names.contains(&name) {
                 self.current_prop_names.push(name);
             }
@@ -133,8 +95,8 @@ impl CommonParser {
     }
 
     pub(crate) fn on_end(&mut self, raw: &[u8]) -> Result<()> {
-        let element = common_element_from_bytes(raw);
-        if element == CommonElement::Propstat {
+        let element = element_from_bytes(raw);
+        if element == ElementName::Propstat {
             let status = self.current_propstat_status.take();
             let prop_names = std::mem::take(&mut self.current_prop_names);
             let is_200 = status
@@ -172,17 +134,17 @@ impl CommonParser {
             return;
         }
 
-        if self.path_ends_with(&[CommonElement::Response, CommonElement::Href]) {
+        if self.path_ends_with(&[ElementName::Response, ElementName::Href]) {
             self.current.href = trimmed.to_string();
-        } else if self.path_ends_with(&[CommonElement::Response, CommonElement::Status]) {
+        } else if self.path_ends_with(&[ElementName::Response, ElementName::Status]) {
             self.current.response_status = Some(trimmed.to_string());
             if self.current.status.is_none() {
                 self.current.status = Some(trimmed.to_string());
             }
         } else if self.path_ends_with(&[
-            CommonElement::Response,
-            CommonElement::Propstat,
-            CommonElement::Status,
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Status,
         ]) {
             self.current_propstat_status = Some(trimmed.to_string());
             if !self.first_200_propstat_applied
@@ -192,56 +154,56 @@ impl CommonParser {
                 self.first_200_propstat_applied = true;
             }
         } else if self.path_ends_with(&[
-            CommonElement::Response,
-            CommonElement::Propstat,
-            CommonElement::Prop,
-            CommonElement::Displayname,
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::Displayname,
         ]) {
             self.current.displayname = Some(trimmed.to_string());
         } else if self.path_ends_with(&[
-            CommonElement::Response,
-            CommonElement::Propstat,
-            CommonElement::Prop,
-            CommonElement::Getetag,
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::Getetag,
         ]) {
             self.current.etag = Some(normalize_etag(trimmed));
         } else if self.path_ends_with(&[
-            CommonElement::Response,
-            CommonElement::Propstat,
-            CommonElement::Prop,
-            CommonElement::SyncToken,
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::SyncToken,
         ]) {
             self.current.sync_token = Some(normalize_sync_token(trimmed));
         } else if self.path_ends_with(&[
-            CommonElement::Response,
-            CommonElement::Propstat,
-            CommonElement::Prop,
-            CommonElement::CurrentUserPrincipal,
-            CommonElement::Href,
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::CurrentUserPrincipal,
+            ElementName::Href,
         ]) {
             self.current
                 .current_user_principal
                 .push(trimmed.to_string());
         } else if self.path_ends_with(&[
-            CommonElement::Response,
-            CommonElement::Propstat,
-            CommonElement::Prop,
-            CommonElement::Owner,
-            CommonElement::Href,
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::Owner,
+            ElementName::Href,
         ]) {
             self.current.owner = Some(trimmed.to_string());
         } else if self.path_ends_with(&[
-            CommonElement::Response,
-            CommonElement::Propstat,
-            CommonElement::Prop,
-            CommonElement::Getcontenttype,
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::Getcontenttype,
         ]) {
             self.current.content_type = Some(trimmed.to_string());
         } else if self.path_ends_with(&[
-            CommonElement::Response,
-            CommonElement::Propstat,
-            CommonElement::Prop,
-            CommonElement::Getlastmodified,
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::Getlastmodified,
         ]) {
             self.current.last_modified = Some(trimmed.to_string());
         }
@@ -251,7 +213,7 @@ impl CommonParser {
         std::mem::take(&mut self.current)
     }
 
-    fn path_ends_with(&self, needle: &[CommonElement]) -> bool {
+    fn path_ends_with(&self, needle: &[ElementName]) -> bool {
         path_ends_with(&self.stack, needle)
     }
 }
@@ -699,31 +661,15 @@ where
     let mut buf = Vec::with_capacity(8 * 1024);
     let mut parser = MultistatusParser::new(sink);
 
-    loop {
-        let event = tokio::time::timeout(idle_timeout, xml.read_event_into_async(&mut buf))
+    while !dispatch_event(
+        &mut parser,
+        xml.decoder(),
+        tokio::time::timeout(idle_timeout, xml.read_event_into_async(&mut buf))
             .await
             .map_err(|_| Error::Timeout {
                 limit: idle_timeout,
-            })?;
-        match event {
-            Ok(Event::Start(e)) => parser.on_start(&e, xml.decoder())?,
-            Ok(Event::Empty(e)) => {
-                parser.on_start(&e, xml.decoder())?;
-                parser.on_end(e.name().as_ref())?;
-            }
-            Ok(Event::Text(e)) => {
-                let text = decode_text(e.as_ref())?;
-                parser.on_text(text);
-            }
-            Ok(Event::CData(e)) => {
-                let text = String::from_utf8_lossy(e.as_ref()).into_owned();
-                parser.on_cdata(text);
-            }
-            Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
-            Ok(Event::Eof) => break,
-            Err(error) => return Err(Error::from_quick_xml(error)),
-            _ => {}
-        }
+            })?,
+    )? {
         buf.clear();
     }
 
@@ -741,26 +687,7 @@ where
     let mut buf = Vec::with_capacity(8 * 1024);
     let mut parser = MultistatusParser::new(sink);
 
-    loop {
-        match xml.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => parser.on_start(&e, xml.decoder())?,
-            Ok(Event::Empty(e)) => {
-                parser.on_start(&e, xml.decoder())?;
-                parser.on_end(e.name().as_ref())?;
-            }
-            Ok(Event::Text(e)) => {
-                let text = decode_text(e.as_ref())?;
-                parser.on_text(text);
-            }
-            Ok(Event::CData(e)) => {
-                let text = String::from_utf8_lossy(e.as_ref()).into_owned();
-                parser.on_cdata(text);
-            }
-            Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
-            Ok(Event::Eof) => break,
-            Err(error) => return Err(Error::from_quick_xml(error)),
-            _ => {}
-        }
+    while !dispatch_event(&mut parser, xml.decoder(), xml.read_event_into(&mut buf))? {
         buf.clear();
     }
 
@@ -885,11 +812,7 @@ pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<S
             Ok(Event::End(e)) => {
                 parser.on_end(e.name().as_ref())?;
                 let name = e.name();
-                let local = match name.as_ref().iter().position(|b| *b == b':') {
-                    Some(idx) => &name.as_ref()[idx + 1..],
-                    None => name.as_ref(),
-                };
-                if local.eq_ignore_ascii_case(b"response") {
+                if local_name(name.as_ref()).eq_ignore_ascii_case(b"response") {
                     let common = parser.finish_response();
                     if principal.is_none() {
                         if let Some(found) = common
@@ -951,17 +874,7 @@ pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
 
     loop {
         match xml.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => {
-                let name = e.name().as_ref().to_vec();
-                let local = local_name(&name);
-                if local.eq_ignore_ascii_case(b"error") {
-                    in_error = true;
-                } else if in_error && !found {
-                    err.precondition_code = Some(String::from_utf8_lossy(local).into_owned());
-                    found = true;
-                }
-            }
-            Ok(Event::Empty(e)) => {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let name = e.name().as_ref().to_vec();
                 let local = local_name(&name);
                 if local.eq_ignore_ascii_case(b"error") {
@@ -1178,84 +1091,54 @@ mod tests {
         assert!(resp.status.is_none());
     }
 
+    fn cup_principal(href: &str) -> String {
+        format!("<D:current-user-principal><D:href>{href}</D:href></D:current-user-principal>")
+    }
+
+    fn cup_response(prop: &str) -> String {
+        format!(
+            "<D:response><D:href>/</D:href><D:propstat><D:prop>{prop}</D:prop>\
+             <D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
+        )
+    }
+
+    fn cup_doc(responses: &str) -> Vec<u8> {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\
+             <D:multistatus xmlns:D=\"DAV:\">{responses}</D:multistatus>"
+        )
+        .into_bytes()
+    }
+
     #[test]
     fn parse_current_user_principal_bytes_valid() {
-        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">
-  <D:response>
-    <D:href>/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:current-user-principal><D:href>/principals/user/</D:href></D:current-user-principal>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-</D:multistatus>"#;
-        let result = parse_current_user_principal_bytes(xml).unwrap();
+        let xml = cup_doc(&cup_response(&cup_principal("/principals/user/")));
+        let result = parse_current_user_principal_bytes(&xml).unwrap();
         assert_eq!(result.as_deref(), Some("/principals/user/"));
     }
 
     #[test]
     fn parse_current_user_principal_bytes_no_principal() {
-        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">
-  <D:response>
-    <D:href>/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:displayname>My Cal</D:displayname>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-</D:multistatus>"#;
-        let result = parse_current_user_principal_bytes(xml).unwrap();
+        let xml = cup_doc(&cup_response("<D:displayname>My Cal</D:displayname>"));
+        let result = parse_current_user_principal_bytes(&xml).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn parse_current_user_principal_bytes_empty_href_skipped() {
-        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">
-  <D:response>
-    <D:href>/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:current-user-principal><D:href></D:href></D:current-user-principal>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-</D:multistatus>"#;
-        let result = parse_current_user_principal_bytes(xml).unwrap();
+        let xml = cup_doc(&cup_response(&cup_principal("")));
+        let result = parse_current_user_principal_bytes(&xml).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn parse_current_user_principal_bytes_multi_response_picks_second() {
-        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">
-  <D:response>
-    <D:href>/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:current-user-principal><D:href></D:href></D:current-user-principal>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-  <D:response>
-    <D:href>/other/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:current-user-principal><D:href>/principals/second/</D:href></D:current-user-principal>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-</D:multistatus>"#;
-        let result = parse_current_user_principal_bytes(xml).unwrap();
+        let xml = cup_doc(&format!(
+            "{}{}",
+            cup_response(&cup_principal("")),
+            cup_response(&cup_principal("/principals/second/"))
+        ));
+        let result = parse_current_user_principal_bytes(&xml).unwrap();
         assert_eq!(result.as_deref(), Some("/principals/second/"));
     }
 
@@ -1268,28 +1151,12 @@ mod tests {
 
     #[test]
     fn parse_current_user_principal_bytes_first_match_wins() {
-        let xml = br#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:">
-  <D:response>
-    <D:href>/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:current-user-principal><D:href>/principals/first/</D:href></D:current-user-principal>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-  <D:response>
-    <D:href>/other/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:current-user-principal><D:href>/principals/second/</D:href></D:current-user-principal>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-</D:multistatus>"#;
-        let result = parse_current_user_principal_bytes(xml).unwrap();
+        let xml = cup_doc(&format!(
+            "{}{}",
+            cup_response(&cup_principal("/principals/first/")),
+            cup_response(&cup_principal("/principals/second/"))
+        ));
+        let result = parse_current_user_principal_bytes(&xml).unwrap();
         assert_eq!(result.as_deref(), Some("/principals/first/"));
     }
 }
