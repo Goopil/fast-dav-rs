@@ -9,3 +9,6 @@
 **/.DS_Store
 .worktrees/
 .superpowers/
+
+.env
+.env.*
