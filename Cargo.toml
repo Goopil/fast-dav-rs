@@ -33,6 +33,7 @@ hyper-util = { version = "0.1", features = ["client", "http1", "http2", "tokio",
 http-body-util = "0.1"
 zeroize = "1"
 thiserror = { version = "2" }
+percent-encoding = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

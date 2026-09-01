@@ -32,6 +32,37 @@ pub async fn serve_once(head: String, body: Vec<u8>) -> String {
     format!("http://127.0.0.1:{port}/")
 }
 
+/// Read a full HTTP/1.1 request (headers + `Content-Length` body) from `socket`.
+async fn read_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+    let mut buf = [0u8; 4096];
+    let mut seen = Vec::new();
+    let mut content_len = 0usize;
+    loop {
+        let n = socket.read(&mut buf).await.unwrap();
+        if n == 0 {
+            break;
+        }
+        seen.extend_from_slice(&buf[..n]);
+        if let Some(pos) = seen.windows(4).position(|w| w == b"\r\n\r\n") {
+            if content_len == 0 {
+                let headers = String::from_utf8_lossy(&seen[..pos]);
+                content_len = headers
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|v| v.trim().parse().ok())
+                    })
+                    .unwrap_or(0);
+            }
+            if seen.len() >= pos + 4 + content_len {
+                break;
+            }
+        }
+    }
+    seen
+}
+
 /// Serve exactly one HTTP/1.1 exchange on an ephemeral port: read the full
 /// request (headers + `Content-Length` body), capture it, respond, close.
 pub async fn serve_capture(head: String, body: Vec<u8>) -> (String, Arc<Mutex<Vec<u8>>>) {
@@ -41,35 +72,35 @@ pub async fn serve_capture(head: String, body: Vec<u8>) -> (String, Arc<Mutex<Ve
     let cap = captured.clone();
     tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let mut buf = [0u8; 4096];
-        let mut seen = Vec::new();
-        let mut content_len = 0usize;
-        loop {
-            let n = socket.read(&mut buf).await.unwrap();
-            if n == 0 {
-                break;
-            }
-            seen.extend_from_slice(&buf[..n]);
-            if let Some(pos) = seen.windows(4).position(|w| w == b"\r\n\r\n") {
-                if content_len == 0 {
-                    let headers = String::from_utf8_lossy(&seen[..pos]);
-                    content_len = headers
-                        .lines()
-                        .find_map(|l| {
-                            l.to_ascii_lowercase()
-                                .strip_prefix("content-length:")
-                                .and_then(|v| v.trim().parse().ok())
-                        })
-                        .unwrap_or(0);
-                }
-                if seen.len() >= pos + 4 + content_len {
-                    break;
-                }
-            }
-        }
+        let seen = read_request(&mut socket).await;
         *cap.lock().unwrap() = seen;
         socket.write_all(head.as_bytes()).await.unwrap();
         socket.write_all(&body).await.unwrap();
+    });
+    (format!("http://127.0.0.1:{port}/"), captured)
+}
+
+/// Serve `responses` sequentially on one ephemeral port: connection *n*
+/// receives response *n* (head + body). Every request (headers +
+/// `Content-Length` body) is captured in order. Used for redirect tests that
+/// need multiple responses from the same origin.
+pub async fn serve_sequence(
+    responses: Vec<(String, Vec<u8>)>,
+) -> (String, Arc<Mutex<Vec<Vec<u8>>>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+    let cap = captured.clone();
+    tokio::spawn(async move {
+        for (head, body) in responses {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            let seen = read_request(&mut socket).await;
+            cap.lock().unwrap().push(seen);
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.write_all(&body).await;
+        }
     });
     (format!("http://127.0.0.1:{port}/"), captured)
 }

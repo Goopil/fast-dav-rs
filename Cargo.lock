@@ -252,6 +252,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "parking_lot",
+ "percent-encoding",
  "quick-xml",
  "rustls",
  "rustls-native-certs",

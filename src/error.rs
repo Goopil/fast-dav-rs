@@ -156,6 +156,17 @@ pub enum Error {
         limit: usize,
     },
 
+    /// The HTTP redirect limit was exhausted while following redirects.
+    ///
+    /// Returned when the server kept redirecting (301/302/303/307/308) beyond
+    /// the limit configured with `max_redirects` on the client builder.
+    #[error("exceeded the maximum of {limit} redirects")]
+    #[non_exhaustive]
+    TooManyRedirects {
+        /// The configured maximum number of redirects to follow.
+        limit: u8,
+    },
+
     /// Parsing or decoding XML failed.
     #[error("XML error: {0}")]
     Xml(#[from] quick_xml::Error),

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `follow_redirects` (default `true`) and `max_redirects` (default `5`) builder options on
+  `WebDavClientBuilder`, `CalDavClientBuilder`, and `CardDavClientBuilder`: HTTP redirects
+  (301/302/303/307/308) are now followed in `send`/`send_stream`. On 303 the request is re-sent
+  as `GET` without a body; when a redirect crosses origins the `Authorization` and `Cookie`
+  headers are stripped for the remainder of the chain. Exceeding the limit fails with the new
+  `Error::TooManyRedirects` variant
 - `CalDavClient::free_busy_query` — `free-busy-query` REPORT (RFC 4791 §9.7, sent with `Depth: 1`)
   returning parsed `FreeBusyPeriod`s; the `FBTYPE` parameter maps to `FreeBusyType` (default
   `BUSY` when absent), unrecognized values and `start/duration` periods are skipped
@@ -15,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the CalDAV `sync_collection` for server-side recurrence expansion (RFC 4791 §9.6); when
   `expand` is `Some`, `include_data` is implied `true`. New types `FreeBusyPeriod` and
   `FreeBusyType`, re-exported from `fast_dav_rs::caldav`
+
+### Fixed
+- `send`/`send_stream` now follow HTTP redirects (301/302/303/307/308) per the
+  `follow_redirects`/`max_redirects` options added above, re-sending 303s as bodyless `GET`s,
+  stripping `Authorization`/`Cookie` on cross-origin hops, and failing with
+  `Error::TooManyRedirects` beyond the limit (issue #77)
+- `build_uri` percent-encodes each path segment (spaces, non-ASCII, control and reserved
+  characters) while preserving `/` separators, existing valid `%XX` escapes, and any `?query`
+  verbatim, so paths with unencoded characters no longer produce invalid request URIs (issue #77)
+- `mkcalendar`, `mkaddressbook`, and `proppatch` now send an explicit `Depth: 0` header
+  (RFC 4918 §9.2/§9.3): the operations apply to the target collection only (issue #77)
+- The collection PROPFIND bodies no longer request the non-existent
+  `<C:calendar-color/>` / `<C:addressbook-color/>` properties; the Apple
+  `<A:calendar-color/>` / `<A:addressbook-color/>` versions are kept (issue #77)
 
 ### Security
 - Bearer tokens and proxy credentials are zeroized in the intermediate

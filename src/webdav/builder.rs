@@ -58,6 +58,8 @@ pub struct WebDavClientBuilder {
     proxy_basic_pass: Option<String>,
     extra_root_certs_pem: Vec<Vec<u8>>,
     danger_accept_invalid_certs: bool,
+    follow_redirects: bool,
+    max_redirects: u8,
 }
 
 /// Manual implementation so held Basic/Bearer credentials are never printed.
@@ -90,6 +92,8 @@ impl std::fmt::Debug for WebDavClientBuilder {
             "danger_accept_invalid_certs",
             &self.danger_accept_invalid_certs,
         )
+        .field("follow_redirects", &self.follow_redirects)
+        .field("max_redirects", &self.max_redirects)
         .finish()
     }
 }
@@ -113,6 +117,8 @@ impl Default for WebDavClientBuilder {
             proxy_basic_pass: None,
             extra_root_certs_pem: Vec::new(),
             danger_accept_invalid_certs: false,
+            follow_redirects: true,
+            max_redirects: 5,
         }
     }
 }
@@ -246,6 +252,53 @@ impl WebDavClientBuilder {
         self
     }
 
+    /// Follow HTTP redirects (301/302/303/307/308) in `send`/`send_stream`.
+    /// Default: **true**.
+    ///
+    /// When a redirect crosses origins (scheme, host, or port change), the
+    /// `Authorization` and `Cookie` headers are stripped for the remainder of
+    /// the redirect chain. On 303 the request is re-sent as `GET` without a
+    /// body. Exceeding [`max_redirects`](Self::max_redirects) fails with
+    /// [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::WebDavClient;
+    ///
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .follow_redirects(false)
+    ///     .build()?;
+    /// # Ok::<(), fast_dav_rs::Error>(())
+    /// ```
+    pub fn follow_redirects(mut self, follow: bool) -> Self {
+        self.follow_redirects = follow;
+        self
+    }
+
+    /// Maximum number of redirects to follow before failing with
+    /// [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
+    /// Default: **5**.
+    ///
+    /// Only meaningful when [`follow_redirects`](Self::follow_redirects) is
+    /// enabled. The limit counts followed redirects; the initial request is
+    /// not counted.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::WebDavClient;
+    ///
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .max_redirects(10)
+    ///     .build()?;
+    /// # Ok::<(), fast_dav_rs::Error>(())
+    /// ```
+    pub fn max_redirects(mut self, max: u8) -> Self {
+        self.max_redirects = max;
+        self
+    }
+
     /// Validate the configuration and construct the [`WebDavClient`].
     ///
     /// # Errors
@@ -338,6 +391,8 @@ impl WebDavClientBuilder {
             user_agent,
             self.timeout,
             self.request_compression,
+            self.follow_redirects,
+            self.max_redirects,
         ))
     }
 }
@@ -647,6 +702,26 @@ macro_rules! impl_dav_builder {
 
             pub fn danger_accept_invalid_certs(mut self, accept: bool) -> Self {
                 self.inner = self.inner.danger_accept_invalid_certs(accept);
+                self
+            }
+
+            /// Follow HTTP redirects (301/302/303/307/308) in `send`/`send_stream`.
+            /// Default: **true**.
+            ///
+            /// On 303 the request is re-sent as `GET` without a body, and
+            /// `Authorization`/`Cookie` headers are stripped when a hop crosses
+            /// origins. Exceeding `max_redirects` fails with
+            /// [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
+            pub fn follow_redirects(mut self, follow: bool) -> Self {
+                self.inner = self.inner.follow_redirects(follow);
+                self
+            }
+
+            /// Maximum number of redirects to follow before failing with
+            /// [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
+            /// Default: **5**.
+            pub fn max_redirects(mut self, max: u8) -> Self {
+                self.inner = self.inner.max_redirects(max);
                 self
             }
 

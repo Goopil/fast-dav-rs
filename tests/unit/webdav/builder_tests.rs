@@ -156,6 +156,16 @@ fn builder_connect_timeout() {
 }
 
 #[test]
+fn builder_follow_redirects_and_max_redirects() {
+    let client = WebDavClient::builder(BASE)
+        .follow_redirects(true)
+        .max_redirects(10)
+        .build()
+        .expect("build succeeds");
+    let _ = client;
+}
+
+#[test]
 fn builder_pool_idle_timeout() {
     let client = WebDavClient::builder(BASE)
         .pool_idle_timeout(Duration::from_secs(90))
