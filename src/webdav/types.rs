@@ -290,6 +290,39 @@ pub fn parse_dav_header(value: &str) -> Result<DavCapabilities> {
     Ok(caps)
 }
 
+/// A media type advertised by a calendar collection via `supported-calendar-data`
+/// (RFC 4791 §5.2.6).
+///
+/// Parsed from the `content-type` and optional `version` attributes of the
+/// `<C:calendar-data-type>` elements inside the property, e.g.
+/// `<C:calendar-data-type content-type="text/calendar" version="2.0"/>`.
+///
+/// ```
+/// use fast_dav_rs::caldav::MediaType;
+///
+/// let media = MediaType::new("text/calendar", Some("2.0"));
+/// assert_eq!(media.content_type, "text/calendar");
+/// assert_eq!(media.version.as_deref(), Some("2.0"));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MediaType {
+    /// The MIME content type (e.g. `text/calendar`).
+    pub content_type: String,
+    /// The optional version parameter (e.g. `Some("2.0")` for iCalendar 2.0).
+    pub version: Option<String>,
+}
+
+impl MediaType {
+    /// Create a `MediaType` with the given content type and optional version.
+    pub fn new(content_type: impl Into<String>, version: Option<impl Into<String>>) -> Self {
+        Self {
+            content_type: content_type.into(),
+            version: version.map(Into::into),
+        }
+    }
+}
+
 /// Item extracted from a WebDAV `207 Multi-Status` response.
 ///
 /// Superset of the CalDAV and CardDAV item fields: only the properties the
@@ -309,6 +342,12 @@ pub struct DavItem {
     pub is_addressbook: bool,
     pub supported_components: Vec<String>,
     pub supported_address_data: Vec<String>,
+    /// `max-resource-size` in octets (RFC 4791 §5.2.3); `None` when absent or unparseable.
+    pub max_resource_size: Option<u64>,
+    /// Media types from `supported-calendar-data` (RFC 4791 §5.2.6).
+    pub supported_calendar_data: Vec<MediaType>,
+    /// `max-attendees-per-instance` (RFC 4791 §5.2.4); `None` when absent or unparseable.
+    pub max_attendees_per_instance: Option<u32>,
     pub calendar_data: Option<String>,
     pub address_data: Option<String>,
     pub calendar_home_set: Vec<String>,
@@ -345,6 +384,9 @@ impl DavItem {
             is_addressbook: false,
             supported_components: Vec::new(),
             supported_address_data: Vec::new(),
+            max_resource_size: None,
+            supported_calendar_data: Vec::new(),
+            max_attendees_per_instance: None,
             calendar_data: None,
             address_data: None,
             calendar_home_set: Vec::new(),

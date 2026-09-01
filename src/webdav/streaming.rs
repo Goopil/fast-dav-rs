@@ -242,7 +242,7 @@ impl CommonParser {
 // ---------------------------------------------------------------------------
 
 use crate::common::compression::{body_stream_reader, stack_decoders};
-use crate::webdav::types::DavItem;
+use crate::webdav::types::{DavItem, MediaType};
 use hyper::body::Incoming;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Decoder, Reader, XmlVersion};
@@ -297,6 +297,10 @@ pub enum ElementName {
     AddressbookDescription,
     AddressbookColor,
     AddressbookHomeSet,
+    MaxResourceSize,
+    SupportedCalendarData,
+    CalendarDataType,
+    MaxAttendeesPerInstance,
 }
 
 pub fn element_from_bytes(raw: &[u8]) -> ElementName {
@@ -354,6 +358,14 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
         ElementName::AddressbookColor
     } else if local.eq_ignore_ascii_case(b"addressbook-home-set") {
         ElementName::AddressbookHomeSet
+    } else if local.eq_ignore_ascii_case(b"max-resource-size") {
+        ElementName::MaxResourceSize
+    } else if local.eq_ignore_ascii_case(b"supported-calendar-data") {
+        ElementName::SupportedCalendarData
+    } else if local.eq_ignore_ascii_case(b"calendar-data-type") {
+        ElementName::CalendarDataType
+    } else if local.eq_ignore_ascii_case(b"max-attendees-per-instance") {
+        ElementName::MaxAttendeesPerInstance
     } else if local.eq_ignore_ascii_case(b"current-user-principal") {
         ElementName::CurrentUserPrincipal
     } else if local.eq_ignore_ascii_case(b"owner") {
@@ -369,6 +381,40 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
 
 pub(crate) trait ItemConsumer {
     fn consume(&mut self, item: DavItem) -> Result<()>;
+}
+
+/// Parse the `content-type` (required) and `version` (optional) attributes
+/// shared by `address-data-type` (RFC 6352 §6.2.1) and `calendar-data-type`
+/// (RFC 4791 §5.2.6) elements. Attribute values are trimmed; empty or
+/// whitespace-only values are treated as absent.
+fn parse_type_attributes(
+    event: &BytesStart<'_>,
+    decoder: Decoder,
+) -> Result<(Option<String>, Option<String>)> {
+    let mut content_type = None;
+    let mut version = None;
+    for attr in event.attributes().with_checks(true) {
+        let attr = attr?;
+        let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
+        if key == "content-type" {
+            let value = attr
+                .decoded_and_normalized_value(XmlVersion::default(), decoder)?
+                .into_owned();
+            let value = value.trim();
+            if !value.is_empty() {
+                content_type = Some(value.to_string());
+            }
+        } else if key == "version" {
+            let value = attr
+                .decoded_and_normalized_value(XmlVersion::default(), decoder)?
+                .into_owned();
+            let value = value.trim();
+            if !value.is_empty() {
+                version = Some(value.to_string());
+            }
+        }
+    }
+    Ok((content_type, version))
 }
 
 impl ItemConsumer for Vec<DavItem> {
@@ -498,27 +544,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                     ElementName::AddressDataType,
                 ]) =>
             {
-                let mut content_type = None;
-                let mut version = None;
-                for attr in event.attributes().with_checks(true) {
-                    let attr = attr?;
-                    let key = String::from_utf8_lossy(attr.key.as_ref()).to_ascii_lowercase();
-                    if key == "content-type" {
-                        let value = attr
-                            .decoded_and_normalized_value(XmlVersion::default(), decoder)?
-                            .into_owned();
-                        if !value.is_empty() {
-                            content_type = Some(value);
-                        }
-                    } else if key == "version" {
-                        let value = attr
-                            .decoded_and_normalized_value(XmlVersion::default(), decoder)?
-                            .into_owned();
-                        if !value.is_empty() {
-                            version = Some(value);
-                        }
-                    }
-                }
+                let (content_type, version) = parse_type_attributes(event, decoder)?;
                 if let Some(content_type) = content_type {
                     let value = if let Some(version) = version {
                         format!("{content_type};version={version}")
@@ -532,6 +558,26 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                         .any(|existing| existing.eq_ignore_ascii_case(&value))
                     {
                         self.current.supported_address_data.push(value);
+                    }
+                }
+            }
+            ElementName::CalendarDataType
+                if self.path_ends_with(&[
+                    ElementName::Response,
+                    ElementName::Propstat,
+                    ElementName::Prop,
+                    ElementName::SupportedCalendarData,
+                    ElementName::CalendarDataType,
+                ]) =>
+            {
+                let (content_type, version) = parse_type_attributes(event, decoder)?;
+                if let Some(content_type) = content_type {
+                    let media = MediaType {
+                        content_type,
+                        version,
+                    };
+                    if !self.current.supported_calendar_data.contains(&media) {
+                        self.current.supported_calendar_data.push(media);
                     }
                 }
             }
@@ -646,6 +692,21 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::AddressbookColor,
         ]) {
             self.current.addressbook_color = Some(trimmed.to_string());
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::MaxResourceSize,
+        ]) {
+            // Malformed or overflowing values are skipped (stay `None`).
+            self.current.max_resource_size = trimmed.parse::<u64>().ok();
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::MaxAttendeesPerInstance,
+        ]) {
+            self.current.max_attendees_per_instance = trimmed.parse::<u32>().ok();
         } else if self.path_ends_with(&[ElementName::Multistatus, ElementName::SyncToken]) {
             self.sync_token = Some(normalize_sync_token(trimmed));
         } else if self.path_ends_with(&[

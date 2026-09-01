@@ -714,9 +714,9 @@ pub use caldav::streaming::{
     parse_multistatus_stream_with_timeout,
 };
 pub use caldav::{
-    BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, SyncItem, SyncResponse,
-    build_calendar_multiget_body, build_calendar_query_body, build_sync_collection_body,
-    map_calendar_list, map_calendar_objects, map_sync_response,
+    BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, MediaType, SyncItem,
+    SyncResponse, build_calendar_multiget_body, build_calendar_query_body,
+    build_sync_collection_body, map_calendar_list, map_calendar_objects, map_sync_response,
 };
 pub use carddav::builder::CardDavClientBuilder;
 pub use carddav::{
