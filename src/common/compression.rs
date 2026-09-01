@@ -180,30 +180,38 @@ pub fn detect_encoding(headers: &HeaderMap) -> ContentEncoding {
         .unwrap_or(ContentEncoding::Identity)
 }
 
+/// Turn an HTTP body into a buffered async reader, skipping non-data frames
+/// (e.g. HTTP/2 trailers).
+pub(crate) fn body_stream_reader(body: Incoming) -> Box<dyn AsyncBufRead + Unpin + Send> {
+    let stream = BodyStream::new(body)
+        .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
+        .map_err(std::io::Error::other);
+    Box::new(BufReader::new(StreamReader::new(stream)))
+}
+
+/// Wrap a reader with the decoders for the given encodings (outermost first).
+pub(crate) fn stack_decoders(
+    mut reader: Box<dyn AsyncBufRead + Unpin + Send>,
+    encodings: &[ContentEncoding],
+) -> Box<dyn AsyncBufRead + Unpin + Send> {
+    for encoding in encodings.iter().rev() {
+        reader = match encoding {
+            ContentEncoding::Identity => reader,
+            ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(reader))),
+            ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(reader))),
+            ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(reader))),
+        };
+    }
+    reader
+}
+
 /// Decompress a response body based on the content encoding.
 ///
 /// This function takes an aggregated response body and decompresses it according
 /// to the specified encoding.
 pub async fn decompress_body(body: Incoming, encodings: &[ContentEncoding]) -> Result<Bytes> {
-    // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
-    let stream = BodyStream::new(body)
-        .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
-        .map_err(std::io::Error::other);
-    let reader = StreamReader::new(stream);
-    let reader = BufReader::new(reader);
+    let mut decoder = stack_decoders(body_stream_reader(body), encodings);
     let mut out = Vec::with_capacity(32 * 1024);
-    let mut current: Box<dyn AsyncBufRead + Unpin + Send> = Box::new(reader);
-
-    for encoding in encodings.iter().rev() {
-        current = match encoding {
-            ContentEncoding::Identity => current,
-            ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(current))),
-            ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(current))),
-            ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(current))),
-        };
-    }
-
-    let mut decoder = current;
     decoder.read_to_end(&mut out).await?;
 
     Ok(Bytes::from(out))
@@ -217,24 +225,7 @@ pub fn decompress_stream(
     body: Incoming,
     encodings: &[ContentEncoding],
 ) -> Result<Box<dyn AsyncBufRead + Unpin + Send>> {
-    // Non-data frames (e.g. HTTP/2 trailers) are intentionally skipped.
-    let stream = BodyStream::new(body)
-        .try_filter_map(|frame| std::future::ready(Ok(frame.into_data().ok())))
-        .map_err(std::io::Error::other);
-    let reader: Box<dyn AsyncBufRead + Unpin + Send> =
-        Box::new(BufReader::new(StreamReader::new(stream)));
-
-    let mut current = reader;
-    for encoding in encodings.iter().rev() {
-        current = match encoding {
-            ContentEncoding::Identity => current,
-            ContentEncoding::Br => Box::new(BufReader::new(BrotliDecoder::new(current))),
-            ContentEncoding::Gzip => Box::new(BufReader::new(GzipDecoder::new(current))),
-            ContentEncoding::Zstd => Box::new(BufReader::new(ZstdDecoder::new(current))),
-        };
-    }
-
-    Ok(current)
+    Ok(stack_decoders(body_stream_reader(body), encodings))
 }
 
 /// Compress a byte payload using the specified encoding.

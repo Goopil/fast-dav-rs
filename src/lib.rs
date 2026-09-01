@@ -726,10 +726,12 @@ pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{DavCapabilities, PropStat, RequestCompressionMode, WebDavClient, WebDavError};
 
 // Legacy module paths kept for compatibility with existing imports.
+// Deprecated since 0.8; scheduled for removal in the next breaking release
+// (see the `legacy` feature flag).
 #[cfg(feature = "legacy")]
 #[deprecated(
     since = "0.8.0",
-    note = "use `fast_dav_rs::caldav::client` directly instead"
+    note = "use `fast_dav_rs::caldav::client` directly instead; removal in next breaking release"
 )]
 pub mod client {
     pub use crate::caldav::client::*;
@@ -738,7 +740,7 @@ pub mod client {
 #[cfg(feature = "legacy")]
 #[deprecated(
     since = "0.8.0",
-    note = "use `fast_dav_rs::caldav::streaming` directly instead"
+    note = "use `fast_dav_rs::caldav::streaming` directly instead; removal in next breaking release"
 )]
 pub mod streaming {
     pub use crate::caldav::streaming::*;
@@ -747,7 +749,7 @@ pub mod streaming {
 #[cfg(feature = "legacy")]
 #[deprecated(
     since = "0.8.0",
-    note = "use `fast_dav_rs::caldav::types` directly instead"
+    note = "use `fast_dav_rs::caldav::types` directly instead; removal in next breaking release"
 )]
 pub mod types {
     pub use crate::caldav::types::*;
@@ -756,7 +758,7 @@ pub mod types {
 #[cfg(feature = "legacy")]
 #[deprecated(
     since = "0.8.0",
-    note = "use `fast_dav_rs::common::compression` directly instead"
+    note = "use `fast_dav_rs::common::compression` directly instead; removal in next breaking release"
 )]
 pub mod compression {
     pub use crate::common::compression::*;

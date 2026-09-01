@@ -302,7 +302,7 @@ END:VCALENDAR"#,
     assert!(response_copy.status().is_success());
 
     // Get ETag from response or HEAD request
-    let etag = CalDavClient::etag_from_headers(response_copy.headers());
+    let etag = fast_dav_rs::webdav::etag_from_headers(response_copy.headers());
 
     if let Some(etag_value) = etag {
         println!("Retrieved ETag: {}", etag_value);

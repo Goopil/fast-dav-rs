@@ -1,4 +1,156 @@
 use crate::Result;
+use crate::webdav::xml;
+
+/// Collation algorithm for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
+///
+/// Determines how string comparisons are performed in calendar-query and
+/// addressbook-query filters. See RFC 4790 for the collation registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Collation {
+    /// `i;unicode-casemap` — case-insensitive, Unicode-aware (default).
+    #[default]
+    UnicodeCasemap,
+    /// `i;ascii-casemap` — case-insensitive, ASCII only.
+    AsciiCasemap,
+}
+
+impl Collation {
+    /// Returns the collation identifier string used in XML attributes.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::UnicodeCasemap => "i;unicode-casemap",
+            Self::AsciiCasemap => "i;ascii-casemap",
+        }
+    }
+}
+
+/// Match type for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum MatchType {
+    /// Exact match (default).
+    #[default]
+    Equals,
+    /// Substring match.
+    Contains,
+    /// Prefix match.
+    StartsWith,
+    /// Suffix match.
+    EndsWith,
+}
+
+impl MatchType {
+    /// Returns the match-type identifier string used in XML attributes.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Equals => "equals",
+            Self::Contains => "contains",
+            Self::StartsWith => "starts-with",
+            Self::EndsWith => "ends-with",
+        }
+    }
+}
+
+/// Text-match condition for `prop-filter` and `param-filter`
+/// (RFC 4791 §8.4 / RFC 6352 §7.3).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct TextMatch {
+    /// The value to match against.
+    pub value: String,
+    /// Collation algorithm for comparison.
+    pub collation: Collation,
+    /// Match type for comparison.
+    pub match_type: MatchType,
+    /// If `true`, the match condition is negated (`negate-condition="yes"`).
+    pub negate: bool,
+}
+
+impl TextMatch {
+    /// Create a new `TextMatch` with the given value and default collation/match-type.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            collation: Collation::default(),
+            match_type: MatchType::default(),
+            negate: false,
+        }
+    }
+
+    /// Set the collation algorithm.
+    pub fn with_collation(mut self, collation: Collation) -> Self {
+        self.collation = collation;
+        self
+    }
+
+    /// Set the match type.
+    pub fn with_match_type(mut self, match_type: MatchType) -> Self {
+        self.match_type = match_type;
+        self
+    }
+
+    /// Negate the match condition.
+    pub fn with_negate(mut self, negate: bool) -> Self {
+        self.negate = negate;
+        self
+    }
+
+    /// Render this text-match as the `<C:text-match>` element.
+    pub fn to_xml(&self) -> String {
+        xml::text_match_xml(
+            &self.value,
+            self.collation.as_str(),
+            self.match_type.as_str(),
+            self.negate,
+        )
+    }
+}
+
+/// Nested parameter filter inside a `prop-filter` (RFC 4791 §8.3 / RFC 6352 §7.2).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ParamFilter {
+    /// The property parameter name to filter on (e.g. `PARTSTAT`, `TYPE`).
+    pub name: String,
+    /// Optional text-match condition. If `None` and `is_not_defined` is
+    /// `false`, the filter tests for the parameter's existence.
+    pub text_match: Option<TextMatch>,
+    /// If `true`, matches resources where this parameter is **absent**.
+    pub is_not_defined: bool,
+}
+
+impl ParamFilter {
+    /// Create a `ParamFilter` that matches the parameter with a text-match.
+    pub fn new(name: impl Into<String>, text_match: TextMatch) -> Self {
+        Self {
+            name: name.into(),
+            text_match: Some(text_match),
+            is_not_defined: false,
+        }
+    }
+
+    /// Create a `ParamFilter` that matches resources where the parameter is **absent**.
+    pub fn not_defined(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            text_match: None,
+            is_not_defined: true,
+        }
+    }
+
+    /// Render this param-filter as the `<C:param-filter>` element.
+    pub fn to_xml(&self) -> String {
+        let inner = if self.is_not_defined {
+            xml::IS_NOT_DEFINED_XML.to_string()
+        } else if let Some(tm) = &self.text_match {
+            tm.to_xml()
+        } else {
+            String::new()
+        };
+        xml::param_filter_xml(&self.name, &inner)
+    }
+}
 
 /// WebDAV Depth
 #[derive(Copy, Clone)]
@@ -122,6 +274,85 @@ pub fn parse_dav_header(value: &str) -> Result<DavCapabilities> {
     Ok(caps)
 }
 
+/// Item extracted from a WebDAV `207 Multi-Status` response.
+///
+/// Superset of the CalDAV and CardDAV item fields: only the properties the
+/// server actually returned are populated (`is_calendar`/`calendar_data` for
+/// CalDAV, `is_addressbook`/`address_data` for CardDAV).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DavItem {
+    pub href: String,
+    pub status: Option<String>,
+    pub displayname: Option<String>,
+    pub etag: Option<String>,
+    pub is_collection: bool,
+    /// `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>` seen (CalDAV).
+    pub is_calendar: bool,
+    /// `<D:resourcetype><D:collection/><C:addressbook/></D:resourcetype>` seen (CardDAV).
+    pub is_addressbook: bool,
+    pub supported_components: Vec<String>,
+    pub supported_address_data: Vec<String>,
+    pub calendar_data: Option<String>,
+    pub address_data: Option<String>,
+    pub calendar_home_set: Vec<String>,
+    pub addressbook_home_set: Vec<String>,
+    pub current_user_principal: Vec<String>,
+    pub owner: Option<String>,
+    pub calendar_description: Option<String>,
+    pub calendar_timezone: Option<String>,
+    pub calendar_color: Option<String>,
+    pub addressbook_description: Option<String>,
+    pub addressbook_color: Option<String>,
+    pub sync_token: Option<String>,
+    pub content_type: Option<String>,
+    pub last_modified: Option<String>,
+    pub propstats: Vec<PropStat>,
+    pub response_status: Option<String>,
+}
+
+impl Default for DavItem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DavItem {
+    pub fn new() -> Self {
+        Self {
+            href: String::new(),
+            status: None,
+            displayname: None,
+            etag: None,
+            is_collection: false,
+            is_calendar: false,
+            is_addressbook: false,
+            supported_components: Vec::new(),
+            supported_address_data: Vec::new(),
+            calendar_data: None,
+            address_data: None,
+            calendar_home_set: Vec::new(),
+            addressbook_home_set: Vec::new(),
+            current_user_principal: Vec::new(),
+            owner: None,
+            calendar_description: None,
+            calendar_timezone: None,
+            calendar_color: None,
+            addressbook_description: None,
+            addressbook_color: None,
+            sync_token: None,
+            content_type: None,
+            last_modified: None,
+            propstats: Vec::new(),
+            response_status: None,
+        }
+    }
+
+    pub(crate) fn apply_common(&mut self, common: DavItemCommon) {
+        crate::apply_common_fields!(self, common);
+    }
+}
+
 /// Common fields extracted from a WebDAV response.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
@@ -159,4 +390,61 @@ macro_rules! apply_common_fields {
         $self.propstats = $common.propstats;
         $self.response_status = $common.response_status;
     };
+}
+
+use hyper::HeaderMap;
+
+/// Flattened `sync-collection` item shared by the CalDAV/CardDAV mappers.
+pub(crate) struct SyncRow {
+    pub href: String,
+    pub etag: Option<String>,
+    pub data: Option<String>,
+    pub status: Option<String>,
+    pub is_deleted: bool,
+}
+
+/// Shared `sync-collection` mapping logic (RFC 6578): resolve the sync token
+/// (top-level, then `Sync-Token` header, then first per-item token), skip
+/// collection entries, and flag 404/410 items as deleted.
+pub(crate) fn map_sync_rows(
+    headers: &HeaderMap,
+    items: Vec<DavItem>,
+    top_level_sync_token: Option<String>,
+    data_of: impl FnMut(&mut DavItem) -> Option<String>,
+) -> (Option<String>, Vec<SyncRow>) {
+    let mut data_of = data_of;
+    let mut sync_token = top_level_sync_token.or_else(|| {
+        headers
+            .get("Sync-Token")
+            .and_then(|v| v.to_str().ok())
+            .map(crate::webdav::client::normalize_sync_token)
+    });
+    let mut out = Vec::new();
+
+    for mut item in items {
+        // Per-item tokens are already normalized by the streaming parser.
+        if item.sync_token.is_some() && sync_token.is_none() {
+            sync_token = item.sync_token.clone();
+        }
+
+        let is_collection = item.is_collection
+            || (item.sync_token.is_some() && item.etag.is_none() && data_of(&mut item).is_none());
+        if is_collection {
+            continue;
+        }
+        let status = item.status.clone();
+        let code = status.as_deref().and_then(http_status_code);
+        let is_deleted = matches!(code, Some(404) | Some(410));
+
+        let data = data_of(&mut item);
+        out.push(SyncRow {
+            href: item.href,
+            etag: item.etag,
+            data,
+            status,
+            is_deleted,
+        });
+    }
+
+    (sync_token, out)
 }

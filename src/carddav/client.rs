@@ -1,18 +1,16 @@
 use bytes::Bytes;
-use hyper::body::Incoming;
-use hyper::{HeaderMap, Method, Response, StatusCode, Uri, header};
-use std::sync::Arc;
-use tokio::time::Duration;
+use hyper::{HeaderMap, Method, Response, StatusCode, header};
 
+use crate::Depth;
 use crate::carddav::builder::CardDavClientBuilder;
 use crate::carddav::streaming::parse_multistatus_bytes;
 use crate::carddav::types::{
-    AddressBookInfo, AddressObject, BatchItem, CardDavFilter, Collation, DavItem, Depth, MatchType,
-    SyncItem, SyncResponse,
+    AddressBookInfo, AddressObject, CardDavFilter, Collation, DavItem, MatchType, SyncItem,
+    SyncResponse,
 };
-use crate::common::compression::ContentEncoding;
-use crate::webdav::client::{WebDavClient, if_match_header_value, normalize_sync_token};
-use crate::webdav::types::http_status_code;
+use crate::impl_dav_client_delegates;
+use crate::webdav::client::{WebDavClient, if_match_header_value};
+use crate::webdav::types::map_sync_rows;
 use crate::{Error, Operation, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
@@ -38,6 +36,8 @@ pub struct CardDavClient {
     webdav: WebDavClient,
 }
 
+impl_dav_client_delegates!(CardDavClient);
+
 impl CardDavClient {
     /// Create a new client from a **base URL** (collection/home-set) and optional **Basic** credentials.
     ///
@@ -51,18 +51,10 @@ impl CardDavClient {
     /// network path. Always use `https://` outside isolated test environments
     /// (e.g. a local Docker test server).
     ///
-    /// # Arguments
-    ///
-    /// * `base_url` - The base URL for the CardDAV server (must be a valid URI)
-    /// * `basic_user` - Optional username for Basic authentication
-    /// * `basic_pass` - Optional password for Basic authentication
-    ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The base URL is not a valid URI
-    /// - Credentials are provided but cannot be encoded properly
-    /// - TLS configuration fails
+    /// Returns an error if the base URL is not a valid URI, if credentials
+    /// cannot be encoded properly, or if TLS configuration fails.
     ///
     /// # Example
     /// ```no_run
@@ -107,133 +99,6 @@ impl CardDavClient {
         CardDavClientBuilder::new(base_url)
     }
 
-    /// Wrap a [`WebDavClient`] into a [`CardDavClient`].
-    pub(crate) fn from_webdav(webdav: WebDavClient) -> Self {
-        Self { webdav }
-    }
-
-    /// Configure request compression for this client.
-    ///
-    /// # Arguments
-    ///
-    /// * `encoding` - The compression algorithm to use for outgoing requests
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use fast_dav_rs::{CardDavClient, ContentEncoding};
-    ///
-    /// # fn example() -> fast_dav_rs::Result<()> {
-    /// let client = CardDavClient::new(
-    ///     "https://card.example.com/dav/user01/",
-    ///     Some("user01"),
-    ///     Some("secret"),
-    /// )?;
-    /// client.set_request_compression(ContentEncoding::Gzip);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn set_request_compression(&self, encoding: ContentEncoding) {
-        self.webdav.set_request_compression(encoding);
-    }
-
-    /// Configure the request compression strategy.
-    pub fn set_request_compression_mode(&self, mode: RequestCompressionMode) {
-        self.webdav.set_request_compression_mode(mode);
-    }
-
-    /// Enable adaptive request compression (default behaviour).
-    pub fn set_request_compression_auto(&self) {
-        self.webdav.set_request_compression_auto();
-    }
-
-    /// Disable request compression entirely.
-    pub fn disable_request_compression(&self) {
-        self.webdav.disable_request_compression();
-    }
-
-    /// Get the current request compression strategy.
-    pub fn request_compression_mode(&self) -> RequestCompressionMode {
-        self.webdav.request_compression_mode()
-    }
-
-    /// Get the currently resolved request compression encoding.
-    pub fn request_compression(&self) -> ContentEncoding {
-        self.webdav.request_compression()
-    }
-
-    pub fn build_uri(&self, path: &str) -> Result<Uri> {
-        self.webdav.build_uri(path)
-    }
-
-    // ----------- Aggregated send (Bytes) with automatic decompression -----------
-
-    /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
-    ///
-    /// Returns a `Response<Bytes>` where the body is fully aggregated and already decompressed.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use fast_dav_rs::CardDavClient;
-    /// # use hyper::{Method, HeaderMap};
-    /// # use bytes::Bytes;
-    /// #
-    /// # async fn demo(cli: &CardDavClient) -> fast_dav_rs::Result<()> {
-    /// let res = cli.send(Method::GET, "Calendars/Personal/", HeaderMap::new(), None, None).await?;
-    /// assert!(res.status().is_success());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn send(
-        &self,
-        method: Method,
-        path: &str,
-        headers: HeaderMap,
-        body_bytes: Option<Bytes>,
-        per_req_timeout: Option<Duration>,
-    ) -> Result<Response<Bytes>> {
-        self.webdav
-            .send(method, path, headers, body_bytes, per_req_timeout)
-            .await
-    }
-
-    // ----------- Streaming send (for parsing on the fly) -----------
-
-    /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
-    ///
-    /// Use this when you want to parse the response on the fly, e.g. with
-    /// [`crate::carddav::streaming::parse_multistatus_stream`].
-    pub async fn send_stream(
-        &self,
-        method: Method,
-        path: &str,
-        headers: HeaderMap,
-        body_bytes: Option<Bytes>,
-        per_req_timeout: Option<Duration>,
-    ) -> Result<Response<Incoming>> {
-        self.webdav
-            .send_stream(method, path, headers, body_bytes, per_req_timeout)
-            .await
-    }
-
-    // ----------- HTTP/WebDAV Verbs -----------
-
-    /// Send an `OPTIONS` request.
-    ///
-    /// Useful to discover server capabilities.
-    pub async fn options(&self, path: &str) -> Result<Response<Bytes>> {
-        self.webdav.options(path).await
-    }
-    /// Send a `HEAD` request.
-    ///
-    /// Often used to retrieve an `ETag` before a conditional update/delete.
-    pub async fn head(&self, path: &str) -> Result<Response<Bytes>> {
-        self.webdav.head(path).await
-    }
-    /// Send a `GET` request and return the fully aggregated (and decompressed) body.
-    pub async fn get(&self, path: &str) -> Result<Response<Bytes>> {
-        self.webdav.get(path).await
-    }
     /// Send a `PUT` with a vCard body (`text/vcard`).
     ///
     /// Use [`put_if_match`] or [`put_if_none_match`] for safer conditional writes.
@@ -295,70 +160,7 @@ impl CardDavClient {
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
     }
-    /// Send a `DELETE` request.
-    ///
-    /// Prefer [`delete_if_match`] when you want to ensure you delete the expected version.
-    pub async fn delete(&self, path: &str) -> Result<Response<Bytes>> {
-        self.webdav.delete(path).await
-    }
-    /// Conditional `DELETE` guarded by `If-Match`.
-    ///
-    /// The delete only succeeds if the current resource ETag matches.
-    pub async fn delete_if_match(&self, path: &str, etag: &str) -> Result<Response<Bytes>> {
-        self.webdav.delete_if_match(path, etag).await
-    }
-    /// Send a WebDAV `COPY` from `src_path` to an absolute `Destination` URL.
-    ///
-    /// Set `overwrite = true` to allow replacing the destination if it exists.
-    pub async fn copy(
-        &self,
-        src_path: &str,
-        dest_absolute_url: &str,
-        overwrite: bool,
-    ) -> Result<Response<Bytes>> {
-        self.webdav
-            .copy(src_path, dest_absolute_url, overwrite)
-            .await
-    }
-    /// Send a WebDAV `MOVE` from `src_path` to an absolute `Destination` URL.
-    ///
-    /// Set `overwrite = true` to allow replacing the destination if it exists.
-    pub async fn r#move(
-        &self,
-        src_path: &str,
-        dest_absolute_url: &str,
-        overwrite: bool,
-    ) -> Result<Response<Bytes>> {
-        self.webdav
-            .r#move(src_path, dest_absolute_url, overwrite)
-            .await
-    }
 
-    /// Send a WebDAV `PROPFIND` with a custom XML body and `Depth` header.
-    ///
-    /// Typical properties to request include `DAV:displayname`, `DAV:getetag`,
-    /// and `DAV:resourcetype`.
-    pub async fn propfind(
-        &self,
-        path: &str,
-        depth: Depth,
-        xml_body: &str,
-    ) -> Result<Response<Bytes>> {
-        self.webdav.propfind(path, depth, xml_body).await
-    }
-    /// Send a WebDAV `PROPPATCH` with a custom XML body.
-    pub async fn proppatch(&self, path: &str, xml_body: &str) -> Result<Response<Bytes>> {
-        self.webdav.proppatch(path, xml_body).await
-    }
-    /// Send a CardDAV `REPORT` (e.g. `addressbook-query`) with a custom XML body and `Depth`.
-    pub async fn report(
-        &self,
-        path: &str,
-        depth: Depth,
-        xml_body: &str,
-    ) -> Result<Response<Bytes>> {
-        self.webdav.report(path, depth, xml_body).await
-    }
     /// Send a CardDAV `MKADDRESSBOOK` to create an addressbook collection.
     pub async fn mkaddressbook(&self, path: &str, xml_body: &str) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
@@ -397,17 +199,6 @@ impl CardDavClient {
         }
 
         Ok(resp)
-    }
-    /// Send a WebDAV `MKCOL` to create a generic collection. Some servers accept an optional XML body.
-    pub async fn mkcol(&self, path: &str, xml_body: Option<&str>) -> Result<Response<Bytes>> {
-        self.webdav.mkcol(path, xml_body).await
-    }
-
-    /// Discover the current user's principal URL via `current-user-principal`.
-    ///
-    /// Returns `None` if the server omits the property.
-    pub async fn discover_current_user_principal(&self) -> Result<Option<String>> {
-        self.webdav.discover_current_user_principal().await
     }
 
     /// Discover the addressbook-home-set collection(s) for the provided principal path.
@@ -571,112 +362,9 @@ impl CardDavClient {
 
     // ----------- ETag helpers -----------
 
-    /// Extract the `ETag` from a response header map, if present.
-    pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
-        WebDavClient::etag_from_headers(headers)
-    }
-
-    /// Normalize an ETag by stripping surrounding double quotes.
-    ///
-    /// `"abc"` becomes `abc`, `W/"abc"` becomes `W/abc`; bare values are
-    /// returned unchanged.  Use the normalized value with [`Self::put_if_match`]
-    /// / [`Self::delete_if_match`], which re-add quoting on the wire.
-    pub fn normalize_etag(etag: &str) -> String {
-        WebDavClient::normalize_etag(etag)
-    }
-
-    /// Normalize a sync token by trimming whitespace and stripping
-    /// surrounding double quotes.
-    pub fn normalize_sync_token(token: &str) -> String {
-        WebDavClient::normalize_sync_token(token)
-    }
-
     // ----------- Batch (limited concurrency) -----------
 
-    /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
-    ///
-    /// Returns results in the same order as inputs.
-    pub async fn propfind_many(
-        &self,
-        paths: impl IntoIterator<Item = String>,
-        depth: Depth,
-        xml_body: Arc<Bytes>,
-        max_concurrency: usize,
-    ) -> Vec<BatchItem<Response<Bytes>>> {
-        self.webdav
-            .propfind_many(paths, depth, xml_body, max_concurrency)
-            .await
-    }
-
-    /// Run many `REPORT`s concurrently with a semaphore-bound concurrency limit.
-    ///
-    /// Returns results in the same order as inputs.
-    pub async fn report_many(
-        &self,
-        paths: impl IntoIterator<Item = String>,
-        depth: Depth,
-        xml_body: Arc<Bytes>,
-        max_concurrency: usize,
-    ) -> Vec<BatchItem<Response<Bytes>>> {
-        self.webdav
-            .report_many(paths, depth, xml_body, max_concurrency)
-            .await
-    }
-
     // ----------- Public streaming helpers -----------
-
-    /// Check if the server supports WebDAV-Sync (RFC 6578).
-    ///
-    /// This method determines if the server supports the `sync-collection` REPORT
-    /// method which enables efficient incremental synchronization.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(true)` if WebDAV-Sync is supported, `Ok(false)` if not, or an error
-    /// if the capability cannot be determined.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use fast_dav_rs::CardDavClient;
-    /// # use fast_dav_rs::Result;
-    /// #
-    /// # async fn example() -> Result<()> {
-    /// # let client = CardDavClient::new("https://example.com/", None, None)?;
-    /// if client.supports_webdav_sync().await? {
-    ///     println!("Server supports efficient incremental sync");
-    /// } else {
-    ///     println!("Server requires traditional polling");
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn supports_webdav_sync(&self) -> Result<bool> {
-        self.webdav.supports_webdav_sync().await
-    }
-
-    /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
-    ///
-    /// Combine with [`crate::carddav::streaming::parse_multistatus_stream`].
-    pub async fn propfind_stream(
-        &self,
-        path: &str,
-        depth: Depth,
-        xml_body: &str,
-    ) -> Result<Response<Incoming>> {
-        self.webdav.propfind_stream(path, depth, xml_body).await
-    }
-    /// Streaming variant of `REPORT`, returning the non-aggregated body.
-    ///
-    /// Combine with [`crate::carddav::streaming::parse_multistatus_stream`].
-    pub async fn report_stream(
-        &self,
-        path: &str,
-        depth: Depth,
-        xml_body: &str,
-    ) -> Result<Response<Incoming>> {
-        self.webdav.report_stream(path, depth, xml_body).await
-    }
 }
 
 pub fn escape_xml(input: &str) -> String {
@@ -862,43 +550,21 @@ pub fn map_sync_response(
     items: Vec<DavItem>,
     top_level_sync_token: Option<String>,
 ) -> SyncResponse {
-    // Prioritize top-level sync-token (RFC 6578), then headers, then per-item tokens
-    let mut sync_token = top_level_sync_token.or_else(|| {
-        headers
-            .get("Sync-Token")
-            .and_then(|v| v.to_str().ok())
-            .map(normalize_sync_token)
+    let (sync_token, rows) = map_sync_rows(headers, items, top_level_sync_token, |item| {
+        item.address_data.take()
     });
-    let mut out = Vec::new();
-
-    for mut item in items {
-        // Capture per-item sync token if we don't have a top-level one (fallback)
-        // Already normalized by the streaming parser's normalize_sync_token.
-        if item.sync_token.is_some() && sync_token.is_none() {
-            sync_token = item.sync_token.clone();
-        }
-
-        let is_collection = item.is_collection
-            || (item.sync_token.is_some() && item.etag.is_none() && item.address_data.is_none());
-        if is_collection {
-            continue;
-        }
-        let status = item.status.clone();
-        let code = status.as_deref().and_then(http_status_code);
-        let is_deleted = matches!(code, Some(404) | Some(410));
-
-        out.push(SyncItem {
-            href: item.href,
-            etag: item.etag,
-            address_data: item.address_data.take(),
-            status,
-            is_deleted,
-        });
-    }
-
     SyncResponse {
         sync_token,
-        items: out,
+        items: rows
+            .into_iter()
+            .map(|r| SyncItem {
+                href: r.href,
+                etag: r.etag,
+                address_data: r.data,
+                status: r.status,
+                is_deleted: r.is_deleted,
+            })
+            .collect(),
     }
 }
 

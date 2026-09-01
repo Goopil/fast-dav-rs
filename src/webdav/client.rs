@@ -122,6 +122,35 @@ pub fn normalize_sync_token(token: &str) -> String {
     token.trim().trim_matches('"').to_string()
 }
 
+/// Extract the `ETag` from a response header map, if present.
+///
+/// The returned value is **normalized**: surrounding double quotes are
+/// stripped, so `"abc"` becomes `abc` and `W/"abc"` becomes `W/abc`.
+pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(normalize_etag)
+        .filter(|s| !s.is_empty())
+}
+
+fn normalize_decompressed_headers(
+    headers: &mut HeaderMap,
+    encodings: &[ContentEncoding],
+    body_len: usize,
+) {
+    if encodings.is_empty() {
+        return;
+    }
+
+    headers.remove(header::CONTENT_ENCODING);
+    if let Ok(value) = header::HeaderValue::from_str(&body_len.to_string()) {
+        headers.insert(header::CONTENT_LENGTH, value);
+    } else {
+        headers.remove(header::CONTENT_LENGTH);
+    }
+}
+
 #[derive(Clone)]
 pub struct WebDavClient {
     base: Uri,
@@ -216,6 +245,10 @@ impl WebDavClient {
     }
 
     /// Configure request compression for this client.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use `set_request_compression_mode(RequestCompressionMode::Force(encoding))` instead"
+    )]
     pub fn set_request_compression(&self, encoding: ContentEncoding) {
         self.set_request_compression_mode(RequestCompressionMode::Force(encoding));
     }
@@ -237,11 +270,19 @@ impl WebDavClient {
     }
 
     /// Enable adaptive request compression (default behaviour).
+    #[deprecated(
+        since = "0.9.0",
+        note = "use `set_request_compression_mode(RequestCompressionMode::Auto)` instead"
+    )]
     pub fn set_request_compression_auto(&self) {
         self.set_request_compression_mode(RequestCompressionMode::Auto);
     }
 
     /// Disable request compression entirely.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use `set_request_compression_mode(RequestCompressionMode::Disabled)` instead"
+    )]
     pub fn disable_request_compression(&self) {
         self.set_request_compression_mode(RequestCompressionMode::Disabled);
     }
@@ -515,39 +556,23 @@ impl WebDavClient {
         }
     }
 
-    fn normalize_decompressed_headers(
-        &self,
-        headers: &mut HeaderMap,
-        encodings: &[ContentEncoding],
-        body_len: usize,
-    ) {
-        if encodings.is_empty() {
-            return;
-        }
-
-        headers.remove(header::CONTENT_ENCODING);
-        if let Ok(value) = header::HeaderValue::from_str(&body_len.to_string()) {
-            headers.insert(header::CONTENT_LENGTH, value);
-        } else {
-            headers.remove(header::CONTENT_LENGTH);
-        }
-    }
-
     // ----------- Aggregated send (Bytes) with automatic decompression -----------
 
-    /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
-    pub async fn send(
+    /// Shared request pipeline: builds the request (auth, UA, compression),
+    /// sends it with the compression-retry loop, and returns the raw
+    /// (still-encoded) response.
+    async fn build_and_send(
         &self,
         method: Method,
         path: &str,
         headers: HeaderMap,
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
-    ) -> Result<Response<Bytes>> {
+    ) -> Result<Response<Incoming>> {
         let uri = self.build_uri(path)?;
         let auth = self.auth_header.clone();
         let base_headers = headers;
-        let base_body = body_bytes.clone();
+        let base_body = body_bytes;
         let mut attempt = 0;
 
         loop {
@@ -603,14 +628,30 @@ impl WebDavClient {
                 continue;
             }
 
-            let encodings = detect_encodings(resp.headers());
-            let (mut parts, body) = resp.into_parts();
-
-            let decompressed = decompress_body(body, &encodings).await?;
-            self.normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
-
-            break Ok(Response::from_parts(parts, decompressed));
+            return Ok(resp);
         }
+    }
+
+    /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
+    pub async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        headers: HeaderMap,
+        body_bytes: Option<Bytes>,
+        per_req_timeout: Option<Duration>,
+    ) -> Result<Response<Bytes>> {
+        let resp = self
+            .build_and_send(method, path, headers, body_bytes, per_req_timeout)
+            .await?;
+
+        let encodings = detect_encodings(resp.headers());
+        let (mut parts, body) = resp.into_parts();
+
+        let decompressed = decompress_body(body, &encodings).await?;
+        normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
+
+        Ok(Response::from_parts(parts, decompressed))
     }
 
     // ----------- Streaming send (for parsing on the fly) -----------
@@ -624,67 +665,8 @@ impl WebDavClient {
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
     ) -> Result<Response<Incoming>> {
-        let uri = self.build_uri(path)?;
-        let auth = self.auth_header.clone();
-        let base_headers = headers;
-        let base_body = body_bytes.clone();
-        let mut attempt = 0;
-
-        loop {
-            let mut headers = base_headers.clone();
-            add_accept_encoding(&mut headers);
-
-            let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
-
-            if let Some(ref auth_header) = auth {
-                req_builder = req_builder.header(header::AUTHORIZATION, auth_header);
-            }
-
-            if let Some(ua) = &self.user_agent {
-                headers.insert(header::USER_AGENT, ua.clone());
-            }
-
-            let mut final_body: Option<Bytes> = None;
-            let mut attempted_encoding: Option<ContentEncoding> = None;
-
-            if let Some(body) = base_body.clone() {
-                if !headers.contains_key(header::CONTENT_TYPE) {
-                    req_builder = req_builder.header(
-                        header::CONTENT_TYPE,
-                        header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                    );
-                }
-
-                let (payload, encoding) = self.prepare_request_body(body, &mut headers).await;
-                attempted_encoding = encoding;
-                final_body = Some(payload);
-            }
-
-            for (k, v) in headers.iter() {
-                req_builder = req_builder.header(k, v);
-            }
-
-            let req = match final_body {
-                Some(body) => req_builder.body(Full::new(body))?,
-                None => req_builder.body(Full::new(Bytes::new()))?,
-            };
-
-            let limit = per_req_timeout.unwrap_or(self.default_timeout);
-            let fut = self.client.request(req);
-            let resp = timeout(limit, fut)
-                .await
-                .map_err(|_| Error::Timeout { limit })?
-                .map_err(Error::from_client)?;
-
-            let should_retry =
-                self.handle_request_compression_outcome(attempted_encoding, resp.status());
-            if should_retry && attempt == 0 && base_body.is_some() {
-                attempt += 1;
-                continue;
-            }
-
-            break Ok(resp);
-        }
+        self.build_and_send(method, path, headers, body_bytes, per_req_timeout)
+            .await
     }
 
     // ----------- HTTP/WebDAV Verbs -----------
@@ -769,22 +751,24 @@ impl WebDavClient {
         dest_absolute_url: &str,
         overwrite: bool,
     ) -> Result<Response<Bytes>> {
-        let mut h = HeaderMap::new();
-        h.insert(
-            "Destination",
-            header::HeaderValue::from_str(dest_absolute_url)?,
-        );
-        h.insert(
-            "Overwrite",
-            header::HeaderValue::from_static(if overwrite { "T" } else { "F" }),
-        );
-        self.send(Method::from_bytes(b"COPY")?, src_path, h, None, None)
+        self.copy_move(b"COPY", src_path, dest_absolute_url, overwrite)
             .await
     }
 
     /// Send a WebDAV `MOVE` from `src_path` to an absolute `Destination` URL.
     pub async fn r#move(
         &self,
+        src_path: &str,
+        dest_absolute_url: &str,
+        overwrite: bool,
+    ) -> Result<Response<Bytes>> {
+        self.copy_move(b"MOVE", src_path, dest_absolute_url, overwrite)
+            .await
+    }
+
+    async fn copy_move(
+        &self,
+        method: &[u8],
         src_path: &str,
         dest_absolute_url: &str,
         overwrite: bool,
@@ -798,7 +782,7 @@ impl WebDavClient {
             "Overwrite",
             header::HeaderValue::from_static(if overwrite { "T" } else { "F" }),
         );
-        self.send(Method::from_bytes(b"MOVE")?, src_path, h, None, None)
+        self.send(Method::from_bytes(method)?, src_path, h, None, None)
             .await
     }
 
@@ -885,24 +869,32 @@ impl WebDavClient {
     /// so `"abc"` becomes `abc` and `W/"abc"` becomes `W/abc`.
     /// Use the value directly with `put_if_match` / `delete_if_match`, which
     /// re-adds the quoting on the wire.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use the free function `fast_dav_rs::webdav::etag_from_headers` instead"
+    )]
     pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
-        headers
-            .get(header::ETAG)
-            .and_then(|v| v.to_str().ok())
-            .map(normalize_etag)
-            .filter(|s| !s.is_empty())
+        etag_from_headers(headers)
     }
 
     /// Normalize an ETag by stripping surrounding double quotes.
     ///
     /// `"abc"` becomes `abc`, `W/"abc"` becomes `W/abc`; bare values are
     /// returned unchanged.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use the free function `fast_dav_rs::webdav::normalize_etag` instead"
+    )]
     pub fn normalize_etag(etag: &str) -> String {
         normalize_etag(etag)
     }
 
     /// Normalize a sync token by trimming whitespace and stripping
     /// surrounding double quotes.
+    #[deprecated(
+        since = "0.9.0",
+        note = "use the free function `fast_dav_rs::webdav::normalize_sync_token` instead"
+    )]
     pub fn normalize_sync_token(token: &str) -> String {
         normalize_sync_token(token)
     }
@@ -915,52 +907,37 @@ impl WebDavClient {
         xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
-        let sem = Arc::new(Semaphore::new(max_concurrency.max(1)));
-        let mut tasks = FuturesOrdered::new();
-
-        for path in paths {
-            let sem_clone = sem.clone();
-            let this = self.clone();
-            let body = xml_body.clone();
-            let p = path.clone();
-            tasks.push_back(async move {
-                let _permit: OwnedSemaphorePermit =
-                    sem_clone.acquire_owned().await.expect("semaphore closed");
-                let mut h = HeaderMap::new();
-                h.insert(
-                    "Depth",
-                    header::HeaderValue::from_str(depth.as_str()).unwrap(),
-                );
-                h.insert(
-                    header::CONTENT_TYPE,
-                    header::HeaderValue::from_static("application/xml; charset=utf-8"),
-                );
-                let res = this
-                    .send(
-                        Method::from_bytes(b"PROPFIND").unwrap(),
-                        &p,
-                        h,
-                        Some((*body).clone()),
-                        None,
-                    )
-                    .await;
-                BatchItem {
-                    pub_path: p,
-                    result: res,
-                }
-            });
-        }
-
-        let mut out = Vec::new();
-        while let Some(item) = tasks.next().await {
-            out.push(item);
-        }
-        out
+        self.many(
+            Method::from_bytes(b"PROPFIND").unwrap(),
+            paths,
+            depth,
+            xml_body,
+            max_concurrency,
+        )
+        .await
     }
 
     /// Run many `REPORT`s concurrently with a semaphore-bound concurrency limit.
     pub async fn report_many(
         &self,
+        paths: impl IntoIterator<Item = String>,
+        depth: Depth,
+        xml_body: Arc<Bytes>,
+        max_concurrency: usize,
+    ) -> Vec<BatchItem<Response<Bytes>>> {
+        self.many(
+            Method::from_bytes(b"REPORT").unwrap(),
+            paths,
+            depth,
+            xml_body,
+            max_concurrency,
+        )
+        .await
+    }
+
+    async fn many(
+        &self,
+        method: Method,
         paths: impl IntoIterator<Item = String>,
         depth: Depth,
         xml_body: Arc<Bytes>,
@@ -974,6 +951,7 @@ impl WebDavClient {
             let this = self.clone();
             let body = xml_body.clone();
             let p = path.clone();
+            let method = method.clone();
             tasks.push_back(async move {
                 let _permit: OwnedSemaphorePermit =
                     sem_clone.acquire_owned().await.expect("semaphore closed");
@@ -986,15 +964,7 @@ impl WebDavClient {
                     header::CONTENT_TYPE,
                     header::HeaderValue::from_static("application/xml; charset=utf-8"),
                 );
-                let res = this
-                    .send(
-                        Method::from_bytes(b"REPORT").unwrap(),
-                        &p,
-                        h,
-                        Some((*body).clone()),
-                        None,
-                    )
-                    .await;
+                let res = this.send(method, &p, h, Some((*body).clone()), None).await;
                 BatchItem {
                     pub_path: p,
                     result: res,
@@ -1121,6 +1091,276 @@ impl WebDavClient {
         )
         .await
     }
+}
+
+/// Generates the shared delegate methods for the thin CalDAV/CardDAV client
+/// wrappers over [`WebDavClient`].
+///
+/// The wrapper struct must own a `webdav: WebDavClient` field.
+#[macro_export]
+macro_rules! impl_dav_client_delegates {
+    ($client:ident) => {
+        impl $client {
+            /// Wrap a [`WebDavClient`] into this client type.
+            pub(crate) fn from_webdav(webdav: $crate::webdav::WebDavClient) -> Self {
+                Self { webdav }
+            }
+
+            /// Configure request compression for this client.
+            #[allow(deprecated)]
+            #[deprecated(
+                since = "0.9.0",
+                note = "use `set_request_compression_mode(RequestCompressionMode::Force(encoding))` instead"
+            )]
+            pub fn set_request_compression(&self, encoding: $crate::common::compression::ContentEncoding) {
+                self.webdav.set_request_compression(encoding);
+            }
+
+            /// Configure the request compression strategy.
+            pub fn set_request_compression_mode(
+                &self,
+                mode: $crate::webdav::client::RequestCompressionMode,
+            ) {
+                self.webdav.set_request_compression_mode(mode);
+            }
+
+            /// Enable adaptive request compression (default behaviour).
+            #[allow(deprecated)]
+            #[deprecated(
+                since = "0.9.0",
+                note = "use `set_request_compression_mode(RequestCompressionMode::Auto)` instead"
+            )]
+            pub fn set_request_compression_auto(&self) {
+                self.webdav.set_request_compression_auto();
+            }
+
+            /// Disable request compression entirely.
+            #[allow(deprecated)]
+            #[deprecated(
+                since = "0.9.0",
+                note = "use `set_request_compression_mode(RequestCompressionMode::Disabled)` instead"
+            )]
+            pub fn disable_request_compression(&self) {
+                self.webdav.disable_request_compression();
+            }
+
+            /// Get the current request compression strategy.
+            pub fn request_compression_mode(&self) -> $crate::webdav::client::RequestCompressionMode {
+                self.webdav.request_compression_mode()
+            }
+
+            /// Get the currently resolved request compression encoding.
+            pub fn request_compression(&self) -> $crate::common::compression::ContentEncoding {
+                self.webdav.request_compression()
+            }
+
+            pub fn build_uri(&self, path: &str) -> $crate::Result<hyper::Uri> {
+                self.webdav.build_uri(path)
+            }
+
+            /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
+            pub async fn send(
+                &self,
+                method: hyper::Method,
+                path: &str,
+                headers: hyper::HeaderMap,
+                body_bytes: Option<bytes::Bytes>,
+                per_req_timeout: Option<std::time::Duration>,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav
+                    .send(method, path, headers, body_bytes, per_req_timeout)
+                    .await
+            }
+
+            /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
+            pub async fn send_stream(
+                &self,
+                method: hyper::Method,
+                path: &str,
+                headers: hyper::HeaderMap,
+                body_bytes: Option<bytes::Bytes>,
+                per_req_timeout: Option<std::time::Duration>,
+            ) -> $crate::Result<hyper::Response<hyper::body::Incoming>> {
+                self.webdav
+                    .send_stream(method, path, headers, body_bytes, per_req_timeout)
+                    .await
+            }
+
+            /// Send an `OPTIONS` request.
+            pub async fn options(&self, path: &str) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.options(path).await
+            }
+
+            /// Send a `HEAD` request.
+            pub async fn head(&self, path: &str) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.head(path).await
+            }
+
+            /// Send a `GET` request and return the fully aggregated (and decompressed) body.
+            pub async fn get(&self, path: &str) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.get(path).await
+            }
+
+            /// Send a `DELETE` request.
+            pub async fn delete(&self, path: &str) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.delete(path).await
+            }
+
+            /// Conditional `DELETE` guarded by `If-Match`.
+            pub async fn delete_if_match(
+                &self,
+                path: &str,
+                etag: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.delete_if_match(path, etag).await
+            }
+
+            /// Send a WebDAV `COPY` from `src_path` to an absolute `Destination` URL.
+            pub async fn copy(
+                &self,
+                src_path: &str,
+                dest_absolute_url: &str,
+                overwrite: bool,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.copy(src_path, dest_absolute_url, overwrite).await
+            }
+
+            /// Send a WebDAV `MOVE` from `src_path` to an absolute `Destination` URL.
+            pub async fn r#move(
+                &self,
+                src_path: &str,
+                dest_absolute_url: &str,
+                overwrite: bool,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.r#move(src_path, dest_absolute_url, overwrite).await
+            }
+
+            /// Send a WebDAV `PROPFIND` with a custom XML body and `Depth` header.
+            pub async fn propfind(
+                &self,
+                path: &str,
+                depth: $crate::Depth,
+                xml_body: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.propfind(path, depth, xml_body).await
+            }
+
+            /// Send a WebDAV `PROPPATCH` with a custom XML body.
+            pub async fn proppatch(
+                &self,
+                path: &str,
+                xml_body: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.proppatch(path, xml_body).await
+            }
+
+            /// Send a `REPORT` with a custom XML body and `Depth`.
+            pub async fn report(
+                &self,
+                path: &str,
+                depth: $crate::Depth,
+                xml_body: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.report(path, depth, xml_body).await
+            }
+
+            /// Send a WebDAV `MKCOL` to create a generic collection.
+            pub async fn mkcol(
+                &self,
+                path: &str,
+                xml_body: Option<&str>,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.mkcol(path, xml_body).await
+            }
+
+            /// Discover the current user's principal URL via `current-user-principal`.
+            pub async fn discover_current_user_principal(&self) -> $crate::Result<Option<String>> {
+                self.webdav.discover_current_user_principal().await
+            }
+
+            /// Extract the `ETag` from a response header map, if present.
+            #[allow(deprecated)]
+            #[deprecated(
+                since = "0.9.0",
+                note = "use the free function `fast_dav_rs::webdav::etag_from_headers` instead"
+            )]
+            pub fn etag_from_headers(headers: &hyper::HeaderMap) -> Option<String> {
+                $crate::webdav::client::WebDavClient::etag_from_headers(headers)
+            }
+
+            /// Normalize an ETag by stripping surrounding double quotes.
+            #[allow(deprecated)]
+            #[deprecated(
+                since = "0.9.0",
+                note = "use the free function `fast_dav_rs::webdav::normalize_etag` instead"
+            )]
+            pub fn normalize_etag(etag: &str) -> String {
+                $crate::webdav::client::WebDavClient::normalize_etag(etag)
+            }
+
+            /// Normalize a sync token by trimming whitespace and stripping
+            /// surrounding double quotes.
+            #[allow(deprecated)]
+            #[deprecated(
+                since = "0.9.0",
+                note = "use the free function `fast_dav_rs::webdav::normalize_sync_token` instead"
+            )]
+            pub fn normalize_sync_token(token: &str) -> String {
+                $crate::webdav::client::WebDavClient::normalize_sync_token(token)
+            }
+
+            /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
+            pub async fn propfind_many(
+                &self,
+                paths: impl IntoIterator<Item = String>,
+                depth: $crate::Depth,
+                xml_body: std::sync::Arc<bytes::Bytes>,
+                max_concurrency: usize,
+            ) -> Vec<$crate::BatchItem<hyper::Response<bytes::Bytes>>> {
+                self.webdav
+                    .propfind_many(paths, depth, xml_body, max_concurrency)
+                    .await
+            }
+
+            /// Run many `REPORT`s concurrently with a semaphore-bound concurrency limit.
+            pub async fn report_many(
+                &self,
+                paths: impl IntoIterator<Item = String>,
+                depth: $crate::Depth,
+                xml_body: std::sync::Arc<bytes::Bytes>,
+                max_concurrency: usize,
+            ) -> Vec<$crate::BatchItem<hyper::Response<bytes::Bytes>>> {
+                self.webdav
+                    .report_many(paths, depth, xml_body, max_concurrency)
+                    .await
+            }
+
+            /// Check if the server supports WebDAV-Sync (RFC 6578).
+            pub async fn supports_webdav_sync(&self) -> $crate::Result<bool> {
+                self.webdav.supports_webdav_sync().await
+            }
+
+            /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
+            pub async fn propfind_stream(
+                &self,
+                path: &str,
+                depth: $crate::Depth,
+                xml_body: &str,
+            ) -> $crate::Result<hyper::Response<hyper::body::Incoming>> {
+                self.webdav.propfind_stream(path, depth, xml_body).await
+            }
+
+            /// Streaming variant of `REPORT`, returning the non-aggregated body.
+            pub async fn report_stream(
+                &self,
+                path: &str,
+                depth: $crate::Depth,
+                xml_body: &str,
+            ) -> $crate::Result<hyper::Response<hyper::body::Incoming>> {
+                self.webdav.report_stream(path, depth, xml_body).await
+            }
+        }
+    };
 }
 
 #[cfg(test)]
@@ -1459,32 +1699,29 @@ mod tests {
 
     #[test]
     fn normalize_decompressed_headers_empty_encodings_noop() {
-        let client = make_client(BASE);
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
         headers.insert(header::CONTENT_LENGTH, "100".parse().unwrap());
-        client.normalize_decompressed_headers(&mut headers, &[], 42);
+        normalize_decompressed_headers(&mut headers, &[], 42);
         assert_eq!(headers.get(header::CONTENT_ENCODING).unwrap(), "gzip");
         assert_eq!(headers.get(header::CONTENT_LENGTH).unwrap(), "100");
     }
 
     #[test]
     fn normalize_decompressed_headers_removes_encoding_sets_length() {
-        let client = make_client(BASE);
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
-        client.normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], 42);
+        normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], 42);
         assert!(headers.get(header::CONTENT_ENCODING).is_none());
         assert_eq!(headers.get(header::CONTENT_LENGTH).unwrap(), "42");
     }
 
     #[test]
     fn normalize_decompressed_headers_large_body_len_removes_length() {
-        let client = make_client(BASE);
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_LENGTH, "100".parse().unwrap());
         let huge = usize::MAX;
-        client.normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], huge);
+        normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], huge);
         assert!(headers.get(header::CONTENT_ENCODING).is_none());
         assert!(headers.get(header::CONTENT_LENGTH).is_none());
     }

@@ -326,17 +326,7 @@ impl WebDavClientBuilder {
             None => None,
         };
 
-        let hyper_client = build_hyper_client(HyperClientConfig {
-            pool_max_idle_per_host: self.pool_max_idle_per_host,
-            pool_idle_timeout: self.pool_idle_timeout,
-            force_http1: self.force_http1,
-            connect_timeout: self.connect_timeout,
-            proxy: self.proxy.take(),
-            proxy_basic_user: self.proxy_basic_user.take(),
-            proxy_basic_pass: self.proxy_basic_pass.take(),
-            extra_root_certs_pem: std::mem::take(&mut self.extra_root_certs_pem),
-            danger_accept_invalid_certs: self.danger_accept_invalid_certs,
-        })?;
+        let hyper_client = build_hyper_client(&self)?;
 
         Ok(WebDavClient::from_parts(
             base,
@@ -502,35 +492,22 @@ fn build_rustls_config(
 // Hyper client construction
 // ---------------------------------------------------------------------------
 
-/// Configuration for the Hyper client connector, TLS, and pool.
-struct HyperClientConfig {
-    pool_max_idle_per_host: usize,
-    pool_idle_timeout: Option<Duration>,
-    force_http1: bool,
-    connect_timeout: Option<Duration>,
-    proxy: Option<Uri>,
-    proxy_basic_user: Option<String>,
-    proxy_basic_pass: Option<String>,
-    extra_root_certs_pem: Vec<Vec<u8>>,
-    danger_accept_invalid_certs: bool,
-}
-
 /// Build a fully configured Hyper client.
 ///
 /// Constructs the connector (with optional proxy tunnel), the TLS config
 /// (with optional extra roots / danger mode), and the Hyper client with
 /// pool settings. Called by [`WebDavClientBuilder::build`].
-fn build_hyper_client(cfg: HyperClientConfig) -> Result<HyperClient> {
+fn build_hyper_client(b: &WebDavClientBuilder) -> Result<HyperClient> {
     let mut http = HttpConnector::new();
     http.enforce_http(false);
-    if let Some(t) = cfg.connect_timeout {
+    if let Some(t) = b.connect_timeout {
         http.set_connect_timeout(Some(t));
     }
 
-    let inner = match cfg.proxy {
+    let inner = match &b.proxy {
         Some(proxy_uri) => {
-            let mut tunnel = Tunnel::new(proxy_uri, http);
-            if let (Some(user), Some(pass)) = (cfg.proxy_basic_user, cfg.proxy_basic_pass) {
+            let mut tunnel = Tunnel::new(proxy_uri.clone(), http);
+            if let (Some(user), Some(pass)) = (&b.proxy_basic_user, &b.proxy_basic_pass) {
                 let basic = B64.encode(format!("{user}:{pass}"));
                 tunnel = tunnel.with_auth(format!("Basic {basic}").parse()?);
             }
@@ -539,25 +516,25 @@ fn build_hyper_client(cfg: HyperClientConfig) -> Result<HyperClient> {
         None => MaybeProxied::Direct(http),
     };
 
-    let tls = build_rustls_config(&cfg.extra_root_certs_pem, cfg.danger_accept_invalid_certs)?;
+    let tls = build_rustls_config(&b.extra_root_certs_pem, b.danger_accept_invalid_certs)?;
 
     let https_builder = HttpsConnectorBuilder::new()
         .with_tls_config(tls)
         .https_or_http()
         .enable_http1();
 
-    let https = if cfg.force_http1 {
+    let https = if b.force_http1 {
         https_builder.wrap_connector(inner)
     } else {
         https_builder.enable_http2().wrap_connector(inner)
     };
 
     let mut builder = Client::builder(TokioExecutor::new());
-    if !cfg.force_http1 {
+    if !b.force_http1 {
         builder.http2_adaptive_window(true);
     }
-    builder.pool_max_idle_per_host(cfg.pool_max_idle_per_host);
-    if let Some(t) = cfg.pool_idle_timeout {
+    builder.pool_max_idle_per_host(b.pool_max_idle_per_host);
+    if let Some(t) = b.pool_idle_timeout {
         builder.pool_idle_timeout(t);
     }
 
