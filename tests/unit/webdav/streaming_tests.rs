@@ -241,3 +241,26 @@ async fn unreachable_server_returns_errors_from_all_verbs() {
         .await;
     assert!(results.iter().all(|b| b.result.is_err()));
 }
+
+#[tokio::test]
+async fn send_returns_timeout_when_response_body_stalls() {
+    let head = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n";
+    let base = crate::common::http_helpers::serve_stalled(head.to_string(), b"partial").await;
+    let client = WebDavClient::new(&base, None, None).unwrap();
+
+    let err = client
+        .send(
+            Method::GET,
+            "",
+            HeaderMap::new(),
+            None,
+            Some(Duration::from_millis(200)),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, Error::Timeout { .. }),
+        "expected Timeout, got: {err:?}"
+    );
+}

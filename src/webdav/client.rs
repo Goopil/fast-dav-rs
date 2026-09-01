@@ -648,7 +648,10 @@ impl WebDavClient {
         let encodings = detect_encodings(resp.headers());
         let (mut parts, body) = resp.into_parts();
 
-        let decompressed = decompress_body(body, &encodings).await?;
+        let limit = per_req_timeout.unwrap_or(self.default_timeout);
+        let decompressed = timeout(limit, decompress_body(body, &encodings))
+            .await
+            .map_err(|_| Error::Timeout { limit })??;
         normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
 
         Ok(Response::from_parts(parts, decompressed))
@@ -1184,7 +1187,9 @@ macro_rules! impl_dav_client_delegates {
                     .await
             }
 
-            /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
+    /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
+    /// The caller must enforce its own read deadline on the returned body; the
+    /// per-request timeout covers headers only.
             pub async fn send_stream(
                 &self,
                 method: hyper::Method,

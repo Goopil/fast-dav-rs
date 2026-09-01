@@ -135,7 +135,11 @@ pub enum Error {
         status: StatusCode,
     },
 
-    /// An operation exceeded its configured time limit.
+    /// A request phase exceeded its configured time limit.
+    ///
+    /// Covers receiving response headers and reading/decompressing an aggregated
+    /// body, each bounded by the limit. Streaming responses (`send_stream`) and
+    /// stream parsing enforce their own timeouts (30 s idle by default).
     #[error("operation timed out after {}s", limit.as_secs())]
     #[non_exhaustive]
     Timeout {
