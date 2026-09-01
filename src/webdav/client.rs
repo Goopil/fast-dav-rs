@@ -3,7 +3,8 @@ use futures::{StreamExt, stream::FuturesOrdered};
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
-use std::sync::{Arc, PoisonError, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, timeout};
 
@@ -14,7 +15,7 @@ use crate::common::compression::{
 use crate::common::http::HyperClient;
 use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
-use crate::webdav::types::{BatchItem, DavCapabilities, Depth};
+use crate::webdav::types::{BatchItem, DavCapabilities, Depth, SyncCapability};
 use crate::{Error, Operation, Result};
 
 /// Strategy for compressing outgoing request bodies.
@@ -255,11 +256,7 @@ impl WebDavClient {
 
     /// Configure the request compression strategy.
     pub fn set_request_compression_mode(&self, mode: RequestCompressionMode) {
-        let mut guard = self
-            .request_compression_mode
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
-        *guard = mode;
+        *self.request_compression_mode.write() = mode;
         match mode {
             RequestCompressionMode::Auto => self.set_negotiated_encoding(None),
             RequestCompressionMode::Disabled => {
@@ -289,10 +286,7 @@ impl WebDavClient {
 
     /// Get the current request compression strategy.
     pub fn request_compression_mode(&self) -> RequestCompressionMode {
-        *self
-            .request_compression_mode
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        *self.request_compression_mode.read()
     }
 
     /// Get the currently resolved request compression encoding.
@@ -355,10 +349,7 @@ impl WebDavClient {
     }
 
     fn resolve_request_encoding(&self) -> ContentEncoding {
-        let mode = self
-            .request_compression_mode
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mode = self.request_compression_mode.read();
         self.resolve_request_encoding_with_mode(&mode)
     }
 
@@ -369,19 +360,12 @@ impl WebDavClient {
             RequestCompressionMode::Auto => self
                 .negotiated_request_compression
                 .read()
-                .unwrap_or_else(PoisonError::into_inner)
                 .unwrap_or(AUTO_DEFAULT_ENCODING),
         }
     }
 
     fn set_negotiated_encoding(&self, encoding: Option<ContentEncoding>) {
-        // Recover from poisoning: the guarded value is a plain
-        // `Option<ContentEncoding>` that cannot be left logically inconsistent,
-        // so taking over the poisoned guard is safe.
-        *self
-            .negotiated_request_compression
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = encoding;
+        *self.negotiated_request_compression.write() = encoding;
     }
 
     /// Probe whether the server accepts compressed request bodies.
@@ -392,24 +376,11 @@ impl WebDavClient {
     /// and keeps gzip — proven to work by the probe — otherwise. On failure,
     /// request compression is disabled (identity).
     async fn probe_request_compression_support(&self) {
-        if !self
-            .request_compression_mode
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_auto()
-        {
+        if !self.request_compression_mode.read().is_auto() {
             return;
         }
 
-        // Recover from poisoning: the guarded value is a plain
-        // `Option<ContentEncoding>` that cannot be left logically inconsistent,
-        // so taking over the poisoned guard is safe.
-        if self
-            .negotiated_request_compression
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_some()
-        {
+        if self.negotiated_request_compression.read().is_some() {
             return;
         }
 
@@ -486,12 +457,7 @@ impl WebDavClient {
         attempted: Option<ContentEncoding>,
         status: StatusCode,
     ) -> bool {
-        if !self
-            .request_compression_mode
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_auto()
-        {
+        if !self.request_compression_mode.read().is_auto() {
             return false;
         }
 
@@ -518,22 +484,13 @@ impl WebDavClient {
         payload: Bytes,
         headers: &mut HeaderMap,
     ) -> (Bytes, Option<ContentEncoding>) {
-        let mode = *self
-            .request_compression_mode
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mode = *self.request_compression_mode.read();
 
         if mode.is_auto() {
-            let negotiated = *self
-                .negotiated_request_compression
-                .read()
-                .unwrap_or_else(PoisonError::into_inner);
+            let negotiated = *self.negotiated_request_compression.read();
             if negotiated.is_none() {
                 let _probe_guard = self.request_compression_probe.lock().await;
-                let negotiated = *self
-                    .negotiated_request_compression
-                    .read()
-                    .unwrap_or_else(PoisonError::into_inner);
+                let negotiated = *self.negotiated_request_compression.read();
                 if negotiated.is_none() {
                     self.probe_request_compression_support().await;
                 }
@@ -988,7 +945,7 @@ impl WebDavClient {
         out
     }
 
-    /// Check if the server supports WebDAV-Sync (RFC 6578) on the base collection.
+    /// Check whether the server supports WebDAV-Sync (RFC 6578) on the base collection.
     ///
     /// Detection strategy:
     /// 1. **`DAV:supported-report-set`** — a `PROPFIND` with `Depth: 0` asks the
@@ -996,10 +953,15 @@ impl WebDavClient {
     ///    advertises the `sync-collection` report, support is confirmed.
     /// 2. **Probe REPORT fallback** — when the `PROPFIND` does not confirm
     ///    support, a minimal `sync-collection` REPORT is attempted. Only a 2xx
-    ///    status (which includes `207 Multi-Status`) counts as supported; any
-    ///    other status — including `415 Unsupported Media Type` — reports
-    ///    `false`.
-    pub async fn supports_webdav_sync(&self) -> Result<bool> {
+    ///    status (which includes `207 Multi-Status`) counts as
+    ///    [`SyncCapability::Supported`].
+    ///
+    /// Returns [`SyncCapability::Unknown`] when the probe fails at the
+    /// transport level (connection refused, timeout, …): the server's support
+    /// could not be determined. Callers must not treat `Unknown` as
+    /// "unsupported" — a client that falls back to full-list polling on a
+    /// transient network error silently degrades every sync cycle.
+    pub async fn supports_webdav_sync(&self) -> Result<SyncCapability> {
         // Primary: ask the collection which reports it supports (RFC 3253 §3.1.5).
         let supported_report_set = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:propfind xmlns:D="DAV:">
@@ -1012,14 +974,15 @@ impl WebDavClient {
             if response.status().is_success() {
                 let body = String::from_utf8_lossy(response.body());
                 if body.to_ascii_lowercase().contains("sync-collection") {
-                    return Ok(true);
+                    return Ok(SyncCapability::Supported);
                 }
             }
         }
 
         // Fallback: attempt a minimal sync-collection REPORT; only a 2xx
         // answer proves support. Depth: 0 per RFC 6578; `<D:sync-level>`
-        // scopes how deep the sync goes.
+        // scopes how deep the sync goes. A transport/timeout error leaves the
+        // support undetermined (`Unknown`) instead of reporting "unsupported".
         let test_sync = r#"<D:sync-collection xmlns:D="DAV:">
             <D:sync-token/>
             <D:sync-level>1</D:sync-level>
@@ -1029,8 +992,9 @@ impl WebDavClient {
         </D:sync-collection>"#;
 
         match self.report("", Depth::Zero, test_sync).await {
-            Ok(response) => Ok(response.status().is_success()),
-            Err(_) => Ok(false),
+            Ok(response) if response.status().is_success() => Ok(SyncCapability::Supported),
+            Ok(_) => Ok(SyncCapability::Unsupported),
+            Err(_) => Ok(SyncCapability::Unknown),
         }
     }
 
@@ -1347,8 +1311,8 @@ macro_rules! impl_dav_client_delegates {
                     .await
             }
 
-            /// Check if the server supports WebDAV-Sync (RFC 6578).
-            pub async fn supports_webdav_sync(&self) -> $crate::Result<bool> {
+            /// Check whether the server supports WebDAV-Sync (RFC 6578).
+            pub async fn supports_webdav_sync(&self) -> $crate::Result<$crate::SyncCapability> {
                 self.webdav.supports_webdav_sync().await
             }
 
@@ -1729,13 +1693,16 @@ mod tests {
     }
 
     #[test]
-    fn normalize_decompressed_headers_large_body_len_removes_length() {
+    fn normalize_decompressed_headers_large_body_len_sets_length() {
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_LENGTH, "100".parse().unwrap());
         let huge = usize::MAX;
         normalize_decompressed_headers(&mut headers, &[ContentEncoding::Gzip], huge);
         assert!(headers.get(header::CONTENT_ENCODING).is_none());
-        assert!(headers.get(header::CONTENT_LENGTH).is_none());
+        assert_eq!(
+            headers.get(header::CONTENT_LENGTH).unwrap(),
+            usize::MAX.to_string().as_str()
+        );
     }
 
     #[test]

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** `supports_webdav_sync` (and its CalDAV/CardDAV delegates) now returns
+  `Result<SyncCapability>` instead of `Result<bool>`, with `SyncCapability` being
+  `Supported`, `Unsupported` or `Unknown`: a transport or timeout error is reported as
+  `SyncCapability::Unknown` instead of being silently swallowed as "unsupported"
+  (issue #80, audit AUDIT-013)
+- The request-compression caches (`request_compression_mode`,
+  `negotiated_request_compression`) migrated from `std::sync::RwLock` to
+  `parking_lot::RwLock` (new dependency), removing the `PoisonError` recovery shims
+  (issue #80)
+- The CardDAV `mkcol` body builder now extracts the `D:prop` element with `quick-xml`
+  instead of a string search: any namespace prefix (including a default-namespace-bound
+  unprefixed `prop`) and any attributes on the element are handled, nested elements are
+  captured correctly, and self-closing elements yield an empty inner body (issue #80)
+
 ## [0.9.2] - 2026-09-01
 
 ### Fixed

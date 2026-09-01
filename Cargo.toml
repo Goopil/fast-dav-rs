@@ -15,6 +15,7 @@ include = ["Cargo.toml", "LICENSE", "README.md", "src/**/*.rs", "examples/**/*.r
 
 [dependencies]
 base64 = "0.23"
+parking_lot = "0.12"
 rustls = "0.23"
 rustls-pki-types = "1"
 rustls-native-certs = "0.8"

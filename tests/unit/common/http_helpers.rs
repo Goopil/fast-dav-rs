@@ -74,6 +74,47 @@ pub async fn serve_capture(head: String, body: Vec<u8>) -> (String, Arc<Mutex<Ve
     (format!("http://127.0.0.1:{port}/"), captured)
 }
 
+/// Serve the same HTTP/1.1 response to every connection until the test ends.
+/// Unlike `serve_once`, supports requests that trigger additional probes
+/// (e.g. the request-compression probe) or sequential requests.
+pub async fn serve_always(head: String, body: Vec<u8>) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let head = head.clone();
+            let body = body.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let mut seen = Vec::new();
+                loop {
+                    match socket.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            seen.extend_from_slice(&buf[..n]);
+                            if seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+            });
+        }
+    });
+    format!("http://127.0.0.1:{port}/")
+}
+
+/// Bind an ephemeral port, immediately drop the listener, and return its URL:
+/// connections are refused (transport error, not a timeout).
+pub async fn unreachable_base() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}/")
+}
+
 /// Serve response head plus a partial body, then hold the connection open
 /// (the response never completes). Used to exercise read timeouts.
 pub async fn serve_stalled(head: String, partial_body: &[u8]) -> String {

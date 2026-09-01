@@ -1,6 +1,7 @@
 use crate::util::{unique_calendar_name, unique_uid};
 use bytes::Bytes;
 use fast_dav_rs::CalDavClient;
+use fast_dav_rs::SyncCapability;
 use std::time::Duration;
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
@@ -30,11 +31,11 @@ async fn test_webdav_sync_support() {
     let supports_sync = client.supports_webdav_sync().await;
 
     match supports_sync {
-        Ok(supported) => {
-            println!("WebDAV Sync support: {}", supported);
+        Ok(capability) => {
+            println!("WebDAV Sync support: {capability:?}");
             // SabreDAV should support sync
             // Note: We're not asserting here because server availability may vary
-            if supported {
+            if capability == SyncCapability::Supported {
                 println!("✅ Server supports WebDAV Sync");
             } else {
                 println!("⚠️  Server does not support WebDAV Sync");

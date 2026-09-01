@@ -1,6 +1,22 @@
 use crate::Result;
 use crate::webdav::xml;
 
+/// Outcome of the WebDAV-Sync (RFC 6578) support probe.
+///
+/// Distinguishes a server that does not implement the `sync-collection`
+/// report from one the client could not reach — a network failure no longer
+/// masquerades as "unsupported".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SyncCapability {
+    /// The server advertised or accepted the `sync-collection` report.
+    Supported,
+    /// The server answered and does not support the `sync-collection` report.
+    Unsupported,
+    /// Network error — the probe could not determine support.
+    Unknown,
+}
+
 /// Collation algorithm for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
 ///
 /// Determines how string comparisons are performed in calendar-query and
