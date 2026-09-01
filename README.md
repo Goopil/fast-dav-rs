@@ -78,6 +78,7 @@ features, and major releases introduce breaking changes when needed.
 
 - CalDAV calendar discovery, queries, and event CRUD.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
+- Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`).
 - CardDAV addressbook discovery, queries, and contact CRUD.
 - HTTP/2 with connection pooling and automatic response decompression.
 - Streaming XML parsing for multistatus responses.
@@ -189,6 +190,7 @@ fn is_retryable(error: &Error) -> bool {
 | `InvalidEtag`          | An ETag value failed validation                                        |
 | `InvalidComponentName` | A calendar/addressbook component name failed validation               |
 | `InvalidDateTime`      | A date-time value did not match the expected iCalendar UTC format     |
+| `InvalidICalendar`     | An iCalendar body failed structural validation (CalDAV `PUT`)          |
 | `InvalidConfig`        | A builder configuration value is invalid                               |
 | `InvalidHeader`        | An HTTP header value could not be constructed                         |
 | `InvalidMethod`        | An HTTP method was invalid                                            |
@@ -545,6 +547,31 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .prefer(Some(Prefer::Minimal)) // default: none
     .build()?;
 ```
+
+### iCalendar validation (CalDAV)
+
+CalDAV `PUT` bodies (`put`, `put_if_match`, `put_if_none_match`) are validated
+client-side **before any network I/O**. The default `ValidationLevel::Structural`
+checks that the body is valid UTF-8, starts with `BEGIN:VCALENDAR`, ends with
+`END:VCALENDAR`, declares `VERSION:2.0` and a `PRODID`, and has balanced
+`BEGIN`/`END` component pairs. On a body that declares a `VERSION`, the wire
+`Content-Type` gains a matching `version` parameter
+(`text/calendar; charset=utf-8; version=2.0`). Invalid bodies fail with
+`Error::InvalidICalendar` (carrying an `ICalendarViolation`) without a request
+being sent:
+
+```rust
+use fast_dav_rs::caldav::ValidationLevel;
+use fast_dav_rs::CalDavClient;
+
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .validation_level(ValidationLevel::Strict) // also require UID in every VEVENT/VTODO
+    // .validation_level(ValidationLevel::None) // pre-validation behavior
+    .build()?;
+```
+
+`fast_dav_rs::caldav::validate_icalendar(&body)` runs all seven structural
+checks directly. CardDAV (vCard) requests are never validated as iCalendar.
 
 ## Security
 

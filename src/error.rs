@@ -27,6 +27,45 @@ impl std::fmt::Display for EtagReason {
     }
 }
 
+/// Why an iCalendar body was rejected by structural validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ICalendarViolation {
+    /// The body is not valid UTF-8.
+    NotUtf8,
+    /// The body does not start with a `BEGIN:VCALENDAR` line.
+    MissingBegin,
+    /// The body does not end with an `END:VCALENDAR` line.
+    MissingEnd,
+    /// No `VERSION` property is present.
+    MissingVersion,
+    /// A `VERSION` property is present but its value is not `2.0`.
+    UnsupportedVersion,
+    /// No `PRODID` property is present (RFC 5545 §3.6 requires one).
+    MissingProdId,
+    /// A `BEGIN:x`/`END:x` pair is unbalanced or the names do not match.
+    UnbalancedComponents,
+    /// A `VEVENT` or `VTODO` component has no `UID` property
+    /// (reported at [`ValidationLevel::Strict`](crate::caldav::ValidationLevel::Strict) only).
+    MissingUid,
+}
+
+impl std::fmt::Display for ICalendarViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::NotUtf8 => "body is not valid UTF-8",
+            Self::MissingBegin => "missing BEGIN:VCALENDAR at start",
+            Self::MissingEnd => "missing END:VCALENDAR at end",
+            Self::MissingVersion => "missing VERSION property",
+            Self::UnsupportedVersion => "unsupported VERSION value (only 2.0 is supported)",
+            Self::MissingProdId => "missing PRODID property",
+            Self::UnbalancedComponents => "unbalanced BEGIN/END component pairs",
+            Self::MissingUid => "VEVENT/VTODO component without a UID property",
+        };
+        f.write_str(s)
+    }
+}
+
 /// Error returned by `fast-dav-rs` operations.
 ///
 /// The enum is `#[non_exhaustive]` so that new variants can be added
@@ -95,6 +134,18 @@ pub enum Error {
         value: String,
         /// Why it was rejected.
         reason: &'static str,
+    },
+
+    /// An iCalendar body failed structural validation (CalDAV `PUT`).
+    ///
+    /// Returned by `put`, `put_if_match`, and `put_if_none_match` on
+    /// `CalDavClient` **before any network I/O** when the configured
+    /// [`ValidationLevel`](crate::caldav::ValidationLevel) rejects the body.
+    #[error("invalid iCalendar: {violation}")]
+    #[non_exhaustive]
+    InvalidICalendar {
+        /// Which structural check failed.
+        violation: ICalendarViolation,
     },
 
     /// A builder configuration value is invalid (timeout, pool size, auth, etc.).

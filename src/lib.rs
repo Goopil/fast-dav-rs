@@ -704,7 +704,7 @@ pub mod common;
 mod error;
 pub mod webdav;
 
-pub use error::{Error, EtagReason, Operation, Result};
+pub use error::{Error, EtagReason, ICalendarViolation, Operation, Result};
 
 // Backwards-compatible re-exports
 pub use caldav::builder::CalDavClientBuilder;
@@ -715,8 +715,9 @@ pub use caldav::streaming::{
 };
 pub use caldav::{
     BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, MediaType, SyncItem,
-    SyncResponse, build_calendar_multiget_body, build_calendar_query_body,
+    SyncResponse, ValidationLevel, build_calendar_multiget_body, build_calendar_query_body,
     build_sync_collection_body, map_calendar_list, map_calendar_objects, map_sync_response,
+    validate_icalendar,
 };
 pub use carddav::builder::CardDavClientBuilder;
 pub use carddav::{

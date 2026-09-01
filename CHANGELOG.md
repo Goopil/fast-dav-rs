@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- iCalendar validation before CalDAV `PUT` (issue #89): `put`, `put_if_match`, and
+  `put_if_none_match` on `CalDavClient` now validate the body client-side **before any
+  network I/O**. New API: the pure function `caldav::validate_icalendar` (seven structural
+  checks — valid UTF-8, `BEGIN:VCALENDAR` at start, `END:VCALENDAR` at end, `VERSION:2.0`,
+  `PRODID`, balanced `BEGIN`/`END` pairs, and a `UID` in every `VEVENT`/`VTODO`), the
+  `#[non_exhaustive]` `caldav::ValidationLevel` enum (`None` / `Structural` / `Strict`),
+  and the `validation_level(...)` builder option on `CalDavClientBuilder` (default
+  `Structural`; `Structural` runs checks 1–6, `Strict` adds the `UID` check). When
+  validation is enabled and the body declares a `VERSION`, the wire `Content-Type`
+  becomes `text/calendar; charset=utf-8; version=<declared>`. **Behavior change:** with
+  the default `Structural` level, structurally invalid bodies now fail client-side with
+  the new `Error::InvalidICalendar` variant (carrying an `ICalendarViolation`) before any
+  request is sent; set `ValidationLevel::None` for the previous behavior. CardDAV (vCard)
+  requests are never validated as iCalendar
 - `SyncLevel` enum (`One` / `Infinite`, RFC 6578 §3.3), re-exported from `fast_dav_rs::webdav`
   and the crate root, and `sync_collection_with_level` on `WebDavClient`, `CalDavClient`, and
   `CardDavClient` — a `sync-collection` REPORT with a configurable `sync-level` (the existing

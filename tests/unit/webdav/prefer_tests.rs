@@ -187,7 +187,9 @@ async fn caldav_put_if_match_prefer_sends_representation() {
     let resp = client
         .put_if_match_prefer(
             "event.ics",
-            Bytes::from_static(b"BEGIN:VCALENDAR"),
+            Bytes::from_static(
+                b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nEND:VCALENDAR\r\n",
+            ),
             "etag-1",
         )
         .await
@@ -216,7 +218,9 @@ async fn caldav_put_if_match_omits_prefer() {
     client
         .put_if_match(
             "event.ics",
-            Bytes::from_static(b"BEGIN:VCALENDAR"),
+            Bytes::from_static(
+                b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nEND:VCALENDAR\r\n",
+            ),
             "etag-1",
         )
         .await

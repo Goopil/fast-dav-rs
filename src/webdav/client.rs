@@ -941,15 +941,12 @@ impl WebDavClient {
         &self,
         path: &str,
         body: Bytes,
-        content_type: &'static str,
+        content_type: header::HeaderValue,
         etag: &str,
         prefer: Option<Prefer>,
     ) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
-        h.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static(content_type),
-        );
+        h.insert(header::CONTENT_TYPE, content_type);
         h.insert(header::IF_MATCH, if_match_header_value(etag)?);
         if let Some(prefer) = prefer {
             h.insert("Prefer", header::HeaderValue::from_static(prefer.as_str()));
@@ -1491,6 +1488,14 @@ impl WebDavClient {
 /// (iCalendar vs. vCard); `$namespace`/`$data_element` select the sync-collection
 /// data property; `$sync_response`/`$map_sync_response` are the domain sync
 /// response type and its mapper (`map_sync_response`).
+///
+/// The optional trailing arguments (`$extra_field: $extra_ty` field threaded
+/// through `from_webdav`, and the `$validate` method name) wire client-side
+/// body validation into the conditional `PUT` methods: `$validate` names a
+/// `fn(&Bytes) -> Result<HeaderValue>` method on `$client` that runs before
+/// any network I/O and supplies the wire `Content-Type` (iCalendar
+/// validation for CalDAV). Omit both for clients whose bodies need no
+/// client-side validation (CardDAV/vCard).
 #[macro_export]
 macro_rules! impl_dav_client_delegates {
     (
@@ -1500,11 +1505,15 @@ macro_rules! impl_dav_client_delegates {
         $data_element:expr,
         $sync_response:ty,
         $map_sync_response:path
+        $(, $extra_field:ident : $extra_ty:ty, $validate:ident)?
     ) => {
         impl $client {
             /// Wrap a [`WebDavClient`] into this client type.
-            pub(crate) fn from_webdav(webdav: $crate::webdav::WebDavClient) -> Self {
-                Self { webdav }
+            pub(crate) fn from_webdav(
+                webdav: $crate::webdav::WebDavClient
+                $(, $extra_field: $extra_ty)?
+            ) -> Self {
+                Self { webdav, $($extra_field)? }
             }
 
             /// Configure request compression for this client.
@@ -1635,8 +1644,12 @@ macro_rules! impl_dav_client_delegates {
                 body: bytes::Bytes,
                 etag: &str,
             ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                #[allow(unused_mut, unused_assignments)]
+                let mut content_type =
+                    hyper::header::HeaderValue::from_static($content_type);
+                $(content_type = self.$validate(&body)?;)?
                 self.webdav
-                    .put_if_match_with(path, body, $content_type, etag, None)
+                    .put_if_match_with(path, body, content_type, etag, None)
                     .await
             }
 
@@ -1676,11 +1689,15 @@ macro_rules! impl_dav_client_delegates {
                 body: bytes::Bytes,
                 etag: &str,
             ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                #[allow(unused_mut, unused_assignments)]
+                let mut content_type =
+                    hyper::header::HeaderValue::from_static($content_type);
+                $(content_type = self.$validate(&body)?;)?
                 self.webdav
                     .put_if_match_with(
                         path,
                         body,
-                        $content_type,
+                        content_type,
                         etag,
                         Some($crate::webdav::Prefer::Representation),
                     )
