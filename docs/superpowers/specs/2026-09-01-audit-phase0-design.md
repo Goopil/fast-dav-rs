@@ -8,7 +8,7 @@ Scope: REMEDIATION_PLAN.md Phase 0 (issue #109), items AUDIT-001, -002, -005, -0
 2. **AUDIT-002** — in `WebDavClient::send`, the body read (`decompress_body`) runs outside any timeout. Wrap it in `timeout(limit, …)` with the same limit as the headers phase (per-phase semantics, as recommended by the audit). Fix `Error::Timeout` doc (`error.rs`) which overstates coverage.
 3. **AUDIT-005** — `publish.yml`: publish condition becomes tag-only (`startsWith(github.ref, 'refs/tags/')`), plus a version↔tag match check. (Repository-level protected environment is a GitHub settings change — maintainer action, out of repo.)
 4. **AUDIT-030** — add `.env` to `.gitignore`.
-5. **AUDIT-022** — Replace the semaphore `expect` and depth-header `unwrap` with graceful `BatchItem` errors; keep the two `Method::from_bytes` unwraps on compile-time literals (removal requires `Result` signatures — breaking, deferred to 0.10).
+5. **AUDIT-022** — Superseded by a coverage-gate ruling: the four `unwrap`/`expect` sites are statically infallible (static method literals, enum-controlled depth string, private never-closed semaphore), so the graceful-`BatchItem` guards would have been dead code and are not applied; all four sites keep `expect`/`unwrap` with `ponytail:` invariant markers. Typed-error conversion requires breaking `Result` signatures — re-evaluate in 0.10.
 
 ## Tests
 

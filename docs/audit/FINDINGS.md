@@ -559,7 +559,7 @@ Append text for all fields (then trim once at `finish()`); propagate an `Error::
 - **Confidence:** Confirmed
 - **Domain:** Stability
 - **Location:** `src/webdav/client.rs:928,932,940,979,983,991`
-- **Status:** ⚠️ Partially fixed 2026-09-01 (phase 0): semaphore + depth header no longer panic; the two static `Method::from_bytes` unwraps remain (infallible literals; removal needs breaking signature change, 0.10 window).
+- **Status:** ✅ Closed 2026-09-01 (phase 0) — assessed as statically infallible: the two `Method::from_bytes` literals and the enum-controlled `Depth::as_str()` cannot fail, and the batch semaphore is private and never closed. `expect`/`unwrap` retained with `ponytail:` markers documenting each invariant; typed-error conversion requires breaking `Result` signatures — re-evaluate in the 0.10 window.
 
 ### Problem
 `acquire_owned().await.expect("semaphore closed")`, `HeaderValue::from_str(depth.as_str()).unwrap()`, `Method::from_bytes(b"PROPFIND").unwrap()` — infallible today (static values, semaphore never closed), but they violate the crate's own no-panic discipline and become reachable if `Depth`/methods gain dynamic values. Flagged by the 2026-08-20 audit (Task 1) and never fixed (→ AUDIT-009).

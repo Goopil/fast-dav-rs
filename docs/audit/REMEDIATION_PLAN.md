@@ -8,7 +8,7 @@ Prioritization: impact × risk × urgency ÷ effort. Each item references `FINDI
 - [x] Fix AUDIT-002 — wrap body read/decompress in the per-request timeout (or add total-request deadline); correct `Error::Timeout` docs. ✅
 - [x] Fix AUDIT-005 — publish.yml: tag-only trigger, version↔tag match, protected `environment:`. ✅
 - [x] Fix AUDIT-030 — add `.env` patterns to `.gitignore` (1 line). ✅
-- [x] Fix AUDIT-022 — replace `expect`/`unwrap` in `webdav/client.rs:928-991` with typed errors (mechanical; also closes 2026-08-20 plan Task 1). ⚠️ partial (see FINDINGS)
+- [x] Fix AUDIT-022 — replace `expect`/`unwrap` in `webdav/client.rs:928-991` with typed errors (mechanical; also closes 2026-08-20 plan Task 1). ✅ closed 2026-09-01: all four sites assessed statically infallible, `expect`/`unwrap` kept with `ponytail:` markers (see FINDINGS)
 - [x] Close AUDIT-009 — execute or explicitly close every unexecuted task of `docs/superpowers/plans/2026-08-20-audit-fixes.md` (Tasks 2, 4, 6, 11 + dedup spec) and adopt the "plan = executed or closed" rule. ✅ closed
 
   Closed 2026-09-01: dedup spec executed by #111; Task 2 closed (connect already bounded by the request-level timeout); Task 4 → #79; Task 6 → AUDIT-012 (Phase 1); Task 11 closed (hyper-util legacy client defaults pool_idle_timeout to 90 s).

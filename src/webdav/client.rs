@@ -960,23 +960,15 @@ impl WebDavClient {
             let p = path.clone();
             let method = method.clone();
             tasks.push_back(async move {
-                let _permit: OwnedSemaphorePermit = match sem_clone.acquire_owned().await {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        return BatchItem {
-                            pub_path: p,
-                            result: Err(Error::other("semaphore closed")),
-                        };
-                    }
-                };
-                let Ok(depth_value) = header::HeaderValue::from_str(depth.as_str()) else {
-                    return BatchItem {
-                        pub_path: p,
-                        result: Err(Error::other("invalid depth value")),
-                    };
-                };
+                // ponytail: semaphore is private and never closed; expect cannot fire
+                let _permit: OwnedSemaphorePermit =
+                    sem_clone.acquire_owned().await.expect("semaphore closed");
                 let mut h = HeaderMap::new();
-                h.insert("Depth", depth_value);
+                // ponytail: Depth::as_str is enum-controlled; header parse cannot fail
+                h.insert(
+                    "Depth",
+                    header::HeaderValue::from_str(depth.as_str()).unwrap(),
+                );
                 h.insert(
                     header::CONTENT_TYPE,
                     header::HeaderValue::from_static("application/xml; charset=utf-8"),
