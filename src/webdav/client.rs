@@ -660,6 +660,8 @@ impl WebDavClient {
     // ----------- Streaming send (for parsing on the fly) -----------
 
     /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
+    /// The caller must enforce its own read deadline on the returned body; the
+    /// per-request timeout covers headers only.
     pub async fn send_stream(
         &self,
         method: Method,
@@ -1188,8 +1190,8 @@ macro_rules! impl_dav_client_delegates {
             }
 
     /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
-    /// The caller must enforce its own read deadline on the returned body; the
-    /// per-request timeout covers headers only.
+            /// The caller must enforce its own read deadline on the returned body; the
+            /// per-request timeout covers headers only.
             pub async fn send_stream(
                 &self,
                 method: hyper::Method,
