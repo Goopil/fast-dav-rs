@@ -21,6 +21,13 @@ const SYNC_SUPPORTED_MULTISTATUS: &str = r#"<?xml version="1.0" encoding="utf-8"
   </D:response>
 </D:multistatus>"#;
 
+const PLAIN_MULTISTATUS: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/</D:href>
+  </D:response>
+</D:multistatus>"#;
+
 fn client_without_compression_probe(base: &str) -> WebDavClient {
     let client = WebDavClient::new(base, None, None).unwrap();
     client.set_request_compression_mode(RequestCompressionMode::Disabled);
@@ -32,6 +39,27 @@ async fn sync_capability_supported_when_propfind_advertises_sync_collection() {
     let base = serve_once(
         response_head("", SYNC_SUPPORTED_MULTISTATUS.len()),
         SYNC_SUPPORTED_MULTISTATUS.as_bytes().to_vec(),
+    )
+    .await;
+    let client = client_without_compression_probe(&base);
+
+    assert_eq!(
+        client.supports_webdav_sync().await.unwrap(),
+        SyncCapability::Supported
+    );
+}
+
+#[tokio::test]
+async fn sync_capability_supported_via_report_fallback() {
+    // The PROPFIND succeeds but does not advertise sync-collection, so the
+    // client falls back to a sync-collection REPORT; a 207 answer proves
+    // support. The same response is served to both sequential requests.
+    let base = serve_always(
+        format!(
+            "HTTP/1.1 207 Multi-Status\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            PLAIN_MULTISTATUS.len()
+        ),
+        PLAIN_MULTISTATUS.as_bytes().to_vec(),
     )
     .await;
     let client = client_without_compression_probe(&base);
