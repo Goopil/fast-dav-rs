@@ -5,6 +5,25 @@ use crate::{Error, Result};
 use quick_xml::escape::unescape;
 use std::time::Duration;
 
+#[macro_export]
+#[deprecated(
+    since = "0.9.0",
+    note = "internal code-generation macro; will be removed in 0.10"
+)]
+macro_rules! impl_multistatus_on_end {
+    ($self:ident, $name:expr, $elem:ty) => {{
+        $self.common.on_end($name)?;
+        if let Some(popped) = $self.stack.pop() {
+            if popped == <$elem>::Response {
+                let common = $self.common.finish_response();
+                $self.current.apply_common(common);
+                let finished = std::mem::take(&mut $self.current);
+                $self.sink.consume(finished)?;
+            }
+        }
+    }};
+}
+
 /// Compact dispatch of a single XML event to a [`MultistatusParser`], shared by
 /// the streaming (async) and aggregated (sync) parse loops.
 ///
@@ -240,7 +259,12 @@ pub const STREAM_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Element names inside a `207 Multi-Status` body — union of the DAV core,
 /// CalDAV, and CardDAV element sets. Domain variants only appear in responses
 /// from the matching server type.
+///
+/// The first 24 variants keep the discriminant order of the pre-unification
+/// `caldav::streaming::ElementName`; CardDAV-only variants are appended after
+/// [`ElementName::Other`] for 0.9 compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ElementName {
     Multistatus,
     Response,
@@ -261,6 +285,11 @@ pub enum ElementName {
     CalendarColor,
     SyncToken,
     CalendarHomeSet,
+    CurrentUserPrincipal,
+    Owner,
+    Getcontenttype,
+    Getlastmodified,
+    Other,
     Addressbook,
     SupportedAddressData,
     AddressDataType,
@@ -268,11 +297,6 @@ pub enum ElementName {
     AddressbookDescription,
     AddressbookColor,
     AddressbookHomeSet,
-    CurrentUserPrincipal,
-    Owner,
-    Getcontenttype,
-    Getlastmodified,
-    Other,
 }
 
 pub fn element_from_bytes(raw: &[u8]) -> ElementName {
