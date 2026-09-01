@@ -648,7 +648,10 @@ impl WebDavClient {
         let encodings = detect_encodings(resp.headers());
         let (mut parts, body) = resp.into_parts();
 
-        let decompressed = decompress_body(body, &encodings).await?;
+        let limit = per_req_timeout.unwrap_or(self.default_timeout);
+        let decompressed = timeout(limit, decompress_body(body, &encodings))
+            .await
+            .map_err(|_| Error::Timeout { limit })??;
         normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
 
         Ok(Response::from_parts(parts, decompressed))
@@ -657,6 +660,8 @@ impl WebDavClient {
     // ----------- Streaming send (for parsing on the fly) -----------
 
     /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
+    /// The caller must enforce its own read deadline on the returned body; the
+    /// per-request timeout covers headers only.
     pub async fn send_stream(
         &self,
         method: Method,
@@ -908,6 +913,7 @@ impl WebDavClient {
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         self.many(
+            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"PROPFIND").unwrap(),
             paths,
             depth,
@@ -926,6 +932,7 @@ impl WebDavClient {
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         self.many(
+            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"REPORT").unwrap(),
             paths,
             depth,
@@ -953,9 +960,11 @@ impl WebDavClient {
             let p = path.clone();
             let method = method.clone();
             tasks.push_back(async move {
+                // ponytail: semaphore is private and never closed; expect cannot fire
                 let _permit: OwnedSemaphorePermit =
                     sem_clone.acquire_owned().await.expect("semaphore closed");
                 let mut h = HeaderMap::new();
+                // ponytail: Depth::as_str is enum-controlled; header parse cannot fail
                 h.insert(
                     "Depth",
                     header::HeaderValue::from_str(depth.as_str()).unwrap(),
@@ -1009,7 +1018,8 @@ impl WebDavClient {
         }
 
         // Fallback: attempt a minimal sync-collection REPORT; only a 2xx
-        // answer proves support.
+        // answer proves support. Depth: 0 per RFC 6578; `<D:sync-level>`
+        // scopes how deep the sync goes.
         let test_sync = r#"<D:sync-collection xmlns:D="DAV:">
             <D:sync-token/>
             <D:sync-level>1</D:sync-level>
@@ -1018,7 +1028,7 @@ impl WebDavClient {
             </D:prop>
         </D:sync-collection>"#;
 
-        match self.report("", Depth::One, test_sync).await {
+        match self.report("", Depth::Zero, test_sync).await {
             Ok(response) => Ok(response.status().is_success()),
             Err(_) => Ok(false),
         }
@@ -1172,7 +1182,9 @@ macro_rules! impl_dav_client_delegates {
                     .await
             }
 
-            /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
+    /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
+            /// The caller must enforce its own read deadline on the returned body; the
+            /// per-request timeout covers headers only.
             pub async fn send_stream(
                 &self,
                 method: hyper::Method,

@@ -4,12 +4,16 @@ Prioritization: impact × risk × urgency ÷ effort. Each item references `FINDI
 
 ## Phase 0 — Immediate (this week; all small diffs)
 
-- [ ] Fix AUDIT-001 — `sync_collection` → `Depth::Zero` in `caldav/client.rs:584` and `carddav/client.rs:558` (2 lines + tests). *Highest correctness ROI in the whole report.*
-- [ ] Fix AUDIT-002 — wrap body read/decompress in the per-request timeout (or add total-request deadline); correct `Error::Timeout` docs.
-- [ ] Fix AUDIT-005 — publish.yml: tag-only trigger, version↔tag match, protected `environment:`.
-- [ ] Fix AUDIT-030 — add `.env` patterns to `.gitignore` (1 line).
-- [ ] Fix AUDIT-022 — replace `expect`/`unwrap` in `webdav/client.rs:928-991` with typed errors (mechanical; also closes 2026-08-20 plan Task 1).
-- [ ] Close AUDIT-009 — execute or explicitly close every unexecuted task of `docs/superpowers/plans/2026-08-20-audit-fixes.md` (Tasks 2, 4, 6, 11 + dedup spec) and adopt the "plan = executed or closed" rule.
+- [x] Fix AUDIT-001 — `sync_collection` → `Depth::Zero` in `caldav/client.rs:584` and `carddav/client.rs:558` (2 lines + tests). *Highest correctness ROI in the whole report.* ✅
+- [x] Fix AUDIT-002 — wrap body read/decompress in the per-request timeout (or add total-request deadline); correct `Error::Timeout` docs. ✅
+- [x] Fix AUDIT-005 — publish.yml: tag-only trigger, version↔tag match, protected `environment:`. ✅
+- [x] Fix AUDIT-030 — add `.env` patterns to `.gitignore` (1 line). ✅
+- [x] Fix AUDIT-022 — replace `expect`/`unwrap` in `webdav/client.rs:928-991` with typed errors (mechanical; also closes 2026-08-20 plan Task 1). ✅ closed 2026-09-01: all four sites assessed statically infallible, `expect`/`unwrap` kept with `ponytail:` markers (see FINDINGS)
+- [x] Close AUDIT-009 — execute or explicitly close every unexecuted task of `docs/superpowers/plans/2026-08-20-audit-fixes.md` (Tasks 2, 4, 6, 11 + dedup spec) and adopt the "plan = executed or closed" rule. ✅ closed
+
+  Closed 2026-09-01: dedup spec executed by #111; Task 2 closed (connect already bounded by the request-level timeout); Task 4 → #79; Task 6 → AUDIT-012 (Phase 1); Task 11 closed (hyper-util legacy client defaults pool_idle_timeout to 90 s).
+
+Note: AUDIT-006/014/028 are largely resolved by #111 (dedup executed, types unified in webdav/) and #112 (dead macro removed) — confirm at re-audit.
 
 ## Phase 1 — Stabilization (2–3 weeks)
 
