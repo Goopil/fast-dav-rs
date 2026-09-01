@@ -980,3 +980,120 @@ async fn sync_collection_with_level_sends_infinite() {
         "expected the configured sync-level on the wire: {req}"
     );
 }
+#[tokio::test]
+async fn delegate_options_sends_options_request() {
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", 0),
+        Vec::new(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    client.options("cal/").await.unwrap();
+
+    let guard = captured.lock().unwrap();
+    let raw = String::from_utf8_lossy(&guard);
+    assert!(
+        raw.starts_with("OPTIONS "),
+        "expected OPTIONS method in request: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn delegate_delete_sends_delete_request() {
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", 0),
+        Vec::new(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    client.delete("cal/event.ics").await.unwrap();
+
+    let guard = captured.lock().unwrap();
+    let raw = String::from_utf8_lossy(&guard);
+    assert!(
+        raw.starts_with("DELETE "),
+        "expected DELETE method in request: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn delegate_copy_sends_copy_with_destination() {
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", 0),
+        Vec::new(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    client
+        .copy("cal/a.ics", &format!("{base}cal/b.ics"), true)
+        .await
+        .unwrap();
+
+    let guard = captured.lock().unwrap();
+    let raw = String::from_utf8_lossy(&guard);
+    assert!(
+        raw.starts_with("COPY "),
+        "expected COPY method in request: {raw}"
+    );
+    let lower = raw.to_ascii_lowercase();
+    assert!(
+        lower.contains("destination: "),
+        "expected Destination header: {raw}"
+    );
+    assert!(
+        lower.contains("overwrite: t"),
+        "expected 'Overwrite: T' in request: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn delegate_move_sends_move_with_destination() {
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", 0),
+        Vec::new(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    client
+        .r#move("cal/a.ics", &format!("{base}cal/b.ics"), false)
+        .await
+        .unwrap();
+
+    let guard = captured.lock().unwrap();
+    let raw = String::from_utf8_lossy(&guard);
+    let lower = raw.to_ascii_lowercase();
+    assert!(
+        raw.starts_with("MOVE "),
+        "expected MOVE method in request: {raw}"
+    );
+    assert!(
+        lower.contains("destination: "),
+        "expected Destination header: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn delegate_request_compression_mode_getter_roundtrips() {
+    let client = CalDavClient::new("http://127.0.0.1:1/", None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+    assert_eq!(
+        client.request_compression_mode(),
+        RequestCompressionMode::Disabled
+    );
+
+    client.set_request_compression_mode(RequestCompressionMode::Force(
+        fast_dav_rs::ContentEncoding::Gzip,
+    ));
+    assert_eq!(
+        client.request_compression_mode(),
+        RequestCompressionMode::Force(fast_dav_rs::ContentEncoding::Gzip)
+    );
+}
