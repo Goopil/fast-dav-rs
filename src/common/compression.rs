@@ -10,10 +10,16 @@ use http_body_util::BodyStream;
 use hyper::body::Incoming;
 use hyper::{HeaderMap, header, http};
 use std::io::Cursor;
-use tokio::io::{AsyncBufRead, AsyncReadExt, BufReader};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncReadExt, BufReader, ReadBuf};
 use tokio_util::io::StreamReader;
 
-use crate::Result;
+use crate::{Error, Result};
+
+/// Maximum size (in bytes) a decompressed response body may reach before it
+/// is rejected. Guards against decompression bombs.
+pub(crate) const MAX_DECOMPRESSED_SIZE: u64 = 256 * 1024 * 1024;
 
 /// Supported content encodings for streaming decompression.
 ///
@@ -209,23 +215,118 @@ pub(crate) fn stack_decoders(
 ///
 /// This function takes an aggregated response body and decompresses it according
 /// to the specified encoding.
+///
+/// # Errors
+///
+/// Returns [`Error::BodyTooLarge`] when the decompressed payload exceeds
+/// `MAX_DECOMPRESSED_SIZE` (256 MiB).
 pub async fn decompress_body(body: Incoming, encodings: &[ContentEncoding]) -> Result<Bytes> {
-    let mut decoder = stack_decoders(body_stream_reader(body), encodings);
+    let decoder = stack_decoders(body_stream_reader(body), encodings);
     let mut out = Vec::with_capacity(32 * 1024);
-    decoder.read_to_end(&mut out).await?;
+    decoder
+        .take(MAX_DECOMPRESSED_SIZE + 1)
+        .read_to_end(&mut out)
+        .await?;
+    cap_check(out.len(), MAX_DECOMPRESSED_SIZE as usize)?;
 
     Ok(Bytes::from(out))
+}
+
+/// Reject a decompressed payload length above `limit`.
+///
+/// Split out from [`decompress_body`] so tests can exercise the size cap
+/// cheaply without inflating a 256 MiB body.
+#[doc(hidden)]
+pub fn cap_check(len: usize, limit: usize) -> Result<()> {
+    if len > limit {
+        Err(Error::BodyTooLarge { limit })
+    } else {
+        Ok(())
+    }
+}
+
+/// Async reader that errors instead of producing more than `limit` bytes.
+///
+/// Wraps decompressed streams so a decompression bomb cannot grow beyond the
+/// configured cap; reading past the limit yields an I/O error rather than
+/// silently truncating the stream.
+struct SizeCapped<R> {
+    inner: R,
+    remaining: u64,
+}
+
+impl<R> SizeCapped<R> {
+    fn new(inner: R, limit: u64) -> Self {
+        Self {
+            inner,
+            remaining: limit,
+        }
+    }
+}
+
+impl<R: AsyncBufRead + Unpin> AsyncBufRead for SizeCapped<R> {
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<&[u8]>> {
+        let this = self.get_mut();
+        let buf = std::task::ready!(Pin::new(&mut this.inner).poll_fill_buf(cx))?;
+        if buf.is_empty() {
+            return Poll::Ready(Ok(buf));
+        }
+        let max = (buf.len() as u64).min(this.remaining) as usize;
+        if max == 0 {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "decompressed stream exceeds the size limit",
+            )));
+        }
+        Poll::Ready(Ok(&buf[..max]))
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        let this = self.get_mut();
+        this.remaining -= amt as u64;
+        Pin::new(&mut this.inner).consume(amt);
+    }
+}
+
+impl<R: AsyncBufRead + Unpin> AsyncRead for SizeCapped<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let data = std::task::ready!(self.as_mut().poll_fill_buf(cx))?;
+        let n = data.len().min(buf.remaining());
+        buf.put_slice(&data[..n]);
+        self.consume(n);
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// Bound a decompressed reader so it errors past `limit` bytes.
+///
+/// Split out from [`decompress_stream`] so tests can exercise the cap
+/// cheaply with a small limit.
+#[doc(hidden)]
+pub fn cap_stream(
+    reader: Box<dyn AsyncBufRead + Unpin + Send>,
+    limit: u64,
+) -> Box<dyn AsyncBufRead + Unpin + Send> {
+    Box::new(SizeCapped::new(reader, limit))
 }
 
 /// Create a buffered reader with decompression support for streaming.
 ///
 /// This function wraps a stream with the appropriate decompression decoder
 /// based on the content encoding.
+///
+/// Reading past `MAX_DECOMPRESSED_SIZE` (256 MiB) yields an I/O error to
+/// guard against decompression bombs.
 pub fn decompress_stream(
     body: Incoming,
     encodings: &[ContentEncoding],
 ) -> Result<Box<dyn AsyncBufRead + Unpin + Send>> {
-    Ok(stack_decoders(body_stream_reader(body), encodings))
+    let decoder = stack_decoders(body_stream_reader(body), encodings);
+    Ok(cap_stream(decoder, MAX_DECOMPRESSED_SIZE))
 }
 
 /// Compress a byte payload using the specified encoding.

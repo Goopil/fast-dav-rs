@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use fast_dav_rs::Error;
 use fast_dav_rs::common::compression::*;
 use http_body_util::Full;
 use hyper::Request;
@@ -401,4 +402,40 @@ fn test_detect_request_compression_preference_all_q_zero() {
         detect_request_compression_preference(&headers),
         Some(ContentEncoding::Identity)
     );
+}
+
+#[test]
+fn test_cap_check_rejects_oversized_length() {
+    assert!(matches!(cap_check(17, 16), Err(Error::BodyTooLarge { .. })));
+}
+
+#[test]
+fn test_cap_check_accepts_length_at_or_under_limit() {
+    assert!(cap_check(16, 16).is_ok());
+    assert!(cap_check(0, 16).is_ok());
+}
+
+#[tokio::test]
+async fn test_capped_stream_rejects_oversized_data() {
+    let mut reader = cap_stream(Box::new(std::io::Cursor::new(vec![0u8; 64])), 16);
+    let mut out = Vec::new();
+    let err = reader.read_to_end(&mut out).await.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(out.len() <= 16);
+}
+
+#[tokio::test]
+async fn test_capped_stream_allows_data_at_limit() {
+    let mut reader = cap_stream(Box::new(std::io::Cursor::new(vec![7u8; 16])), 16);
+    let mut out = Vec::new();
+    reader.read_to_end(&mut out).await.unwrap();
+    assert_eq!(out.len(), 16);
+}
+
+#[tokio::test]
+async fn test_capped_stream_allows_data_under_limit() {
+    let mut reader = cap_stream(Box::new(std::io::Cursor::new(vec![7u8; 8])), 16);
+    let mut out = Vec::new();
+    reader.read_to_end(&mut out).await.unwrap();
+    assert_eq!(out, vec![7u8; 8]);
 }

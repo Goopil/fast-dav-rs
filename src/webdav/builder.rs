@@ -363,7 +363,9 @@ fn build_auth_header(
     bearer_token: Option<String>,
 ) -> Result<Option<header::HeaderValue>> {
     if let Some(mut token) = bearer_token {
-        let header_value = header::HeaderValue::from_str(&format!("Bearer {token}"));
+        let mut bearer = format!("Bearer {token}");
+        let header_value = header::HeaderValue::from_str(&bearer);
+        bearer.zeroize();
         token.zeroize();
         return Ok(Some(header_value?));
     }
@@ -511,8 +513,14 @@ fn build_hyper_client(b: &WebDavClientBuilder) -> Result<HyperClient> {
         Some(proxy_uri) => {
             let mut tunnel = Tunnel::new(proxy_uri.clone(), http);
             if let (Some(user), Some(pass)) = (&b.proxy_basic_user, &b.proxy_basic_pass) {
-                let basic = B64.encode(format!("{user}:{pass}"));
-                tunnel = tunnel.with_auth(format!("Basic {basic}").parse()?);
+                let mut raw = format!("{user}:{pass}");
+                let mut basic = B64.encode(&raw);
+                let mut auth = format!("Basic {basic}");
+                let parsed = auth.parse();
+                raw.zeroize();
+                basic.zeroize();
+                auth.zeroize();
+                tunnel = tunnel.with_auth(parsed?);
             }
             MaybeProxied::Tunneled(tunnel)
         }
