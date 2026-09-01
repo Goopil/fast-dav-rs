@@ -16,6 +16,7 @@
 - **Confidence:** Confirmed
 - **Domain:** Correctness / Interoperability
 - **Location:** `src/caldav/client.rs:584`, `src/carddav/client.rs:558`
+- **Status:** ✅ Fixed 2026-09-01 (phase 0).
 
 ### Problem
 Both `sync_collection()` methods send the `sync-collection` REPORT with header `Depth: 1`. RFC 6578 §3.2/§3.3 defines the report **only for `Depth: 0`** ("other values result in a 400 (Bad Request) error response"); scoping is expressed by `<D:sync-level>` (already present in the body, `src/webdav/xml.rs:95`).
@@ -49,6 +50,7 @@ None for lenient servers; strict servers start working.
 - **Confidence:** Confirmed
 - **Domain:** Reliability / Stability
 - **Location:** `src/webdav/client.rs:592-609` (aggregated path), `src/webdav/client.rs:619-688` (streaming path), doc claim at `src/error.rs:138-144`
+- **Status:** ✅ Fixed 2026-09-01 (phase 0).
 
 ### Problem
 The per-request timeout wraps only the future up to response **headers**:
@@ -161,6 +163,7 @@ Servers legitimately serving content from CDN hosts would need the allow-list; d
 - **Confidence:** Confirmed
 - **Domain:** Operations / Supply chain
 - **Location:** `.github/workflows/publish.yml:18`
+- **Status:** ✅ Fixed 2026-09-01 (phase 0; protected GitHub environment = maintainer settings action).
 
 ### Problem
 ```yaml
@@ -556,6 +559,7 @@ Append text for all fields (then trim once at `finish()`); propagate an `Error::
 - **Confidence:** Confirmed
 - **Domain:** Stability
 - **Location:** `src/webdav/client.rs:928,932,940,979,983,991`
+- **Status:** ⚠️ Partially fixed 2026-09-01 (phase 0): semaphore + depth header no longer panic; the two static `Method::from_bytes` unwraps remain (infallible literals; removal needs breaking signature change, 0.10 window).
 
 ### Problem
 `acquire_owned().await.expect("semaphore closed")`, `HeaderValue::from_str(depth.as_str()).unwrap()`, `Method::from_bytes(b"PROPFIND").unwrap()` — infallible today (static values, semaphore never closed), but they violate the crate's own no-panic discipline and become reachable if `Depth`/methods gain dynamic values. Flagged by the 2026-08-20 audit (Task 1) and never fixed (→ AUDIT-009).
@@ -673,6 +677,7 @@ One documentation sweep; add doc-claim verification to the release checklist (re
 - **Confidence:** Confirmed
 - **Domain:** Security hygiene
 - **Location:** `.gitignore` (11 lines, no `.env` pattern)
+- **Status:** ✅ Fixed 2026-09-01 (phase 0).
 
 ### Problem
 CI defines `CALDAV_PASSWORD` conventions; a local `.env` (or `.envrc.local`) would be commit-ready. No secret is currently committed (checked `.envrc`, `flake.nix`, `sabredav-test/**`).
