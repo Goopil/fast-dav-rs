@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-01
+
 ### Added
 - iCalendar validation before CalDAV `PUT` (issue #89): `put`, `put_if_match`, and
   `put_if_none_match` on `CalDavClient` now validate the body client-side **before any
@@ -101,6 +103,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build_calendar_multiget_body`, and the CalDAV `build_sync_collection_body` gained a trailing
   `expand` argument (pass `None` to keep the previous behavior; scheduled for the 0.10 breaking
   window)
+
+### Removed
+Everything deprecated during the 0.9 cycle (semver 0.x → breaking shipped as a minor bump):
+
+- Deprecated request-compression setters on `WebDavClient`, `CalDavClient`, `CardDavClient`:
+  `set_request_compression`, `set_request_compression_auto`, `disable_request_compression`.
+  Replacement: the builder (`request_compression(...)`) or `set_request_compression_mode`.
+- Deprecated associated helpers `etag_from_headers` / `normalize_etag` / `normalize_sync_token`
+  on all three clients. Replacement: the free functions re-exported at the crate root
+  (`fast_dav_rs::{etag_from_headers, normalize_etag, normalize_sync_token}`).
+- Deprecated `impl_multistatus_on_end!` macro.
+- Deprecated per-domain streaming aliases `caldav::streaming::{ElementName, element_from_bytes}`
+  and their CardDAV counterparts. Replacement:
+  `fast_dav_rs::webdav::streaming::{ElementName, element_from_bytes}` (also re-exported under
+  the `caldav::streaming` / `carddav::streaming` modules).
+- The `legacy` cargo feature and the gated legacy root module paths
+  `fast_dav_rs::{client,streaming,types,compression}`. Replacement: `fast_dav_rs::caldav::*`,
+  `fast_dav_rs::carddav::*`, `fast_dav_rs::webdav::*`, `fast_dav_rs::common::compression`, or
+  the crate-root re-exports.
 
 ## [0.9.2] - 2026-09-01
 
