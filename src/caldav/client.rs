@@ -207,6 +207,9 @@ impl CalDavClient {
     <C:calendar-timezone/>
     <A:calendar-color/>
     <C:supported-calendar-component-set/>
+    <C:max-resource-size/>
+    <C:supported-calendar-data/>
+    <C:max-attendees-per-instance/>
     <D:getetag/>
     <D:resourcetype/>
     <D:sync-token/>
@@ -659,6 +662,9 @@ pub fn map_calendar_list(mut items: Vec<DavItem>) -> Vec<CalendarInfo> {
                 etag: item.etag,
                 sync_token: item.sync_token,
                 supported_components: item.supported_components,
+                max_resource_size: item.max_resource_size,
+                supported_calendar_data: std::mem::take(&mut item.supported_calendar_data),
+                max_attendees_per_instance: item.max_attendees_per_instance,
             });
         }
     }

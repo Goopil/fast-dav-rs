@@ -731,6 +731,92 @@ async fn list_calendars_requests_apple_color_not_caldav_color() {
 }
 
 #[tokio::test]
+async fn list_calendars_requests_and_maps_collection_properties() {
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/home/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>Personal</D:displayname>
+        <D:resourcetype>
+          <D:collection/>
+          <C:calendar/>
+        </D:resourcetype>
+        <C:max-resource-size>102400</C:max-resource-size>
+        <C:supported-calendar-data>
+          <C:calendar-data-type content-type="text/calendar" version="2.0"/>
+        </C:supported-calendar-data>
+        <C:max-attendees-per-instance>100</C:max-attendees-per-instance>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let calendars = client.list_calendars("home/").await.unwrap();
+    assert_eq!(calendars.len(), 1);
+    assert_eq!(calendars[0].max_resource_size, Some(102400));
+    assert_eq!(calendars[0].max_attendees_per_instance, Some(100));
+    assert_eq!(
+        calendars[0].supported_calendar_data,
+        vec![fast_dav_rs::caldav::MediaType::new(
+            "text/calendar",
+            Some("2.0")
+        )]
+    );
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains("<C:max-resource-size/>"),
+        "max-resource-size must be requested: {req}"
+    );
+    assert!(
+        req.contains("<C:supported-calendar-data/>"),
+        "supported-calendar-data must be requested: {req}"
+    );
+    assert!(
+        req.contains("<C:max-attendees-per-instance/>"),
+        "max-attendees-per-instance must be requested: {req}"
+    );
+}
+
+#[test]
+fn test_map_calendar_list_maps_collection_properties() {
+    let mut item = fast_dav_rs::caldav::types::DavItem::new();
+    item.href = "/calendars/user/personal/".to_string();
+    item.is_calendar = true;
+    item.max_resource_size = Some(102400);
+    item.max_attendees_per_instance = Some(100);
+    item.supported_calendar_data = vec![fast_dav_rs::caldav::MediaType::new(
+        "text/calendar",
+        Some("2.0"),
+    )];
+
+    let calendars = fast_dav_rs::caldav::client::map_calendar_list(vec![item]);
+    assert_eq!(calendars.len(), 1);
+    assert_eq!(calendars[0].max_resource_size, Some(102400));
+    assert_eq!(calendars[0].max_attendees_per_instance, Some(100));
+    assert_eq!(
+        calendars[0].supported_calendar_data,
+        vec![fast_dav_rs::caldav::MediaType::new(
+            "text/calendar",
+            Some("2.0")
+        )]
+    );
+}
+
+#[tokio::test]
 async fn caldav_follow_redirects_false_propagates() {
     let (base, captured) = crate::common::http_helpers::serve_capture(
         "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/never/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"

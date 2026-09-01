@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the CalDAV `sync_collection` for server-side recurrence expansion (RFC 4791 §9.6); when
   `expand` is `Some`, `include_data` is implied `true`. New types `FreeBusyPeriod` and
   `FreeBusyType`, re-exported from `fast_dav_rs::caldav`
+- `CalendarInfo` now exposes the CalDAV collection properties `max_resource_size` (`Option<u64>`,
+  RFC 4791 §5.2.3), `supported_calendar_data` (`Vec<MediaType>`, RFC 4791 §5.2.6), and
+  `max_attendees_per_instance` (`Option<u32>`, RFC 4791 §5.2.4); `list_calendars` requests them in
+  its PROPFIND. New public type `MediaType { content_type, version }`, re-exported from
+  `fast_dav_rs::caldav` and the crate root; absent or malformed values yield the type defaults
 
 ### Fixed
 - `send`/`send_stream` now follow HTTP redirects (301/302/303/307/308) per the

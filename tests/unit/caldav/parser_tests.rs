@@ -1,5 +1,95 @@
 use fast_dav_rs::parse_multistatus_bytes;
 
+fn calendar_collection_xml(props: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/dav/user01/cal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype>
+          <D:collection/>
+          <C:calendar/>
+        </D:resourcetype>
+        {props}
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>
+"#
+    )
+}
+
+#[test]
+fn parse_multistatus_extracts_calendar_collection_properties() {
+    let xml = calendar_collection_xml(
+        r#"<C:max-resource-size>
+             102400
+           </C:max-resource-size>
+           <C:supported-calendar-data>
+             <C:calendar-data-type content-type="text/calendar" version="2.0"/>
+             <C:calendar-data-type content-type="application/calendar+json"/>
+           </C:supported-calendar-data>
+           <C:max-attendees-per-instance> 100 </C:max-attendees-per-instance>"#,
+    );
+
+    let item = &parse_multistatus_bytes(xml.as_bytes())
+        .expect("xml parsing succeeds")
+        .items[0];
+    assert_eq!(item.max_resource_size, Some(102400));
+    assert_eq!(item.max_attendees_per_instance, Some(100));
+    assert_eq!(
+        item.supported_calendar_data,
+        vec![
+            fast_dav_rs::caldav::MediaType::new("text/calendar", Some("2.0")),
+            fast_dav_rs::caldav::MediaType::new("application/calendar+json", None::<String>),
+        ]
+    );
+}
+
+#[test]
+fn parse_multistatus_calendar_collection_properties_absent_defaults() {
+    let xml = calendar_collection_xml("<D:displayname>Personal</D:displayname>");
+
+    let item = &parse_multistatus_bytes(xml.as_bytes())
+        .expect("xml parsing succeeds")
+        .items[0];
+    assert_eq!(item.max_resource_size, None);
+    assert_eq!(item.max_attendees_per_instance, None);
+    assert!(item.supported_calendar_data.is_empty());
+}
+
+#[test]
+fn parse_multistatus_malformed_calendar_collection_properties_skipped() {
+    let xml = calendar_collection_xml(
+        r#"<C:max-resource-size>not-a-number</C:max-resource-size>
+           <C:max-resource-size>-102400</C:max-resource-size>
+           <C:max-resource-size>18446744073709551616</C:max-resource-size>
+           <C:max-attendees-per-instance>many</C:max-attendees-per-instance>
+           <C:max-attendees-per-instance>4294967296</C:max-attendees-per-instance>
+           <C:supported-calendar-data>
+             <C:calendar-data-type version="2.0"/>
+             <C:calendar-data-type content-type="   "/>
+             <C:calendar-data-type content-type="text/calendar" version="2.0"/>
+           </C:supported-calendar-data>"#,
+    );
+
+    let item = &parse_multistatus_bytes(xml.as_bytes())
+        .expect("xml parsing succeeds")
+        .items[0];
+    assert_eq!(item.max_resource_size, None);
+    assert_eq!(item.max_attendees_per_instance, None);
+    assert_eq!(
+        item.supported_calendar_data,
+        vec![fast_dav_rs::caldav::MediaType::new(
+            "text/calendar",
+            Some("2.0")
+        )]
+    );
+}
+
 #[test]
 fn parse_multistatus_extracts_calendar_properties() {
     let xml = r#"
