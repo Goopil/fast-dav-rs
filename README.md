@@ -404,31 +404,16 @@ match parse_port("abc") {
 }
 ```
 
-### Migrating module paths
+### Removed legacy module paths
 
-The deprecated top-level modules (`client`, `streaming`, `types`,
-`compression`) are now gated behind the `legacy` Cargo feature
-(default-off). Update your imports to the canonical paths:
+The former top-level modules (`client`, `streaming`, `types`,
+`compression`) — previously available behind the `legacy` Cargo feature —
+have been **removed**. Use the canonical paths:
 
 ```rust
-// Before (deprecated, requires `legacy` feature)
-use fast_dav_rs::client::CalDavClient;
-use fast_dav_rs::streaming::parse_multistatus_stream;
-
-// After (canonical paths)
 use fast_dav_rs::caldav::client::CalDavClient;
 use fast_dav_rs::caldav::streaming::parse_multistatus_stream;
 ```
-
-If you need temporary backward compatibility, enable the `legacy`
-feature in your `Cargo.toml`:
-
-```toml
-[dependencies]
-fast-dav-rs = { version = "0.7", features = ["legacy"] }
-```
-
-The `legacy` feature will be removed in a future major release.
 
 ## Configuration
 
@@ -443,14 +428,6 @@ client.set_request_compression_mode(RequestCompressionMode::Force(ContentEncodin
 client.set_request_compression_mode(RequestCompressionMode::Auto);
 client.set_request_compression_mode(RequestCompressionMode::Disabled);
 ```
-
-> The `set_request_compression`, `set_request_compression_auto`, and
-> `disable_request_compression` sugar methods, the associated
-> `etag_from_headers` / `normalize_etag` / `normalize_sync_token` helpers,
-> and the `legacy` feature are **deprecated since 0.9** and will be removed
-> in the next breaking release. Use `set_request_compression_mode`, the free
-> functions `fast_dav_rs::webdav::{etag_from_headers, normalize_etag,
-> normalize_sync_token}`, and the canonical module paths instead.
 
 ### Per-request timeouts
 

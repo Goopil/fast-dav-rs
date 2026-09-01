@@ -409,15 +409,6 @@ impl WebDavClient {
         self.auth_header.as_ref()
     }
 
-    /// Configure request compression for this client.
-    #[deprecated(
-        since = "0.9.0",
-        note = "use `set_request_compression_mode(RequestCompressionMode::Force(encoding))` instead"
-    )]
-    pub fn set_request_compression(&self, encoding: ContentEncoding) {
-        self.set_request_compression_mode(RequestCompressionMode::Force(encoding));
-    }
-
     /// Configure the request compression strategy.
     pub fn set_request_compression_mode(&self, mode: RequestCompressionMode) {
         *self.request_compression_mode.write() = mode;
@@ -428,24 +419,6 @@ impl WebDavClient {
             }
             RequestCompressionMode::Force(enc) => self.set_negotiated_encoding(Some(enc)),
         }
-    }
-
-    /// Enable adaptive request compression (default behaviour).
-    #[deprecated(
-        since = "0.9.0",
-        note = "use `set_request_compression_mode(RequestCompressionMode::Auto)` instead"
-    )]
-    pub fn set_request_compression_auto(&self) {
-        self.set_request_compression_mode(RequestCompressionMode::Auto);
-    }
-
-    /// Disable request compression entirely.
-    #[deprecated(
-        since = "0.9.0",
-        note = "use `set_request_compression_mode(RequestCompressionMode::Disabled)` instead"
-    )]
-    pub fn disable_request_compression(&self) {
-        self.set_request_compression_mode(RequestCompressionMode::Disabled);
     }
 
     /// Get the current request compression strategy.
@@ -1077,42 +1050,6 @@ impl WebDavClient {
             .await
     }
 
-    /// Extract the `ETag` from a response header map, if present.
-    ///
-    /// The returned value is **normalized**: surrounding double quotes are stripped,
-    /// so `"abc"` becomes `abc` and `W/"abc"` becomes `W/abc`.
-    /// Use the value directly with `put_if_match` / `delete_if_match`, which
-    /// re-adds the quoting on the wire.
-    #[deprecated(
-        since = "0.9.0",
-        note = "use the free function `fast_dav_rs::webdav::etag_from_headers` instead"
-    )]
-    pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
-        etag_from_headers(headers)
-    }
-
-    /// Normalize an ETag by stripping surrounding double quotes.
-    ///
-    /// `"abc"` becomes `abc`, `W/"abc"` becomes `W/abc`; bare values are
-    /// returned unchanged.
-    #[deprecated(
-        since = "0.9.0",
-        note = "use the free function `fast_dav_rs::webdav::normalize_etag` instead"
-    )]
-    pub fn normalize_etag(etag: &str) -> String {
-        normalize_etag(etag)
-    }
-
-    /// Normalize a sync token by trimming whitespace and stripping
-    /// surrounding double quotes.
-    #[deprecated(
-        since = "0.9.0",
-        note = "use the free function `fast_dav_rs::webdav::normalize_sync_token` instead"
-    )]
-    pub fn normalize_sync_token(token: &str) -> String {
-        normalize_sync_token(token)
-    }
-
     /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
     pub async fn propfind_many(
         &self,
@@ -1516,16 +1453,6 @@ macro_rules! impl_dav_client_delegates {
                 Self { webdav, $($extra_field)? }
             }
 
-            /// Configure request compression for this client.
-            #[allow(deprecated)]
-            #[deprecated(
-                since = "0.9.0",
-                note = "use `set_request_compression_mode(RequestCompressionMode::Force(encoding))` instead"
-            )]
-            pub fn set_request_compression(&self, encoding: $crate::common::compression::ContentEncoding) {
-                self.webdav.set_request_compression(encoding);
-            }
-
             /// Configure the request compression strategy.
             pub fn set_request_compression_mode(
                 &self,
@@ -1534,28 +1461,10 @@ macro_rules! impl_dav_client_delegates {
                 self.webdav.set_request_compression_mode(mode);
             }
 
-            /// Enable adaptive request compression (default behaviour).
-            #[allow(deprecated)]
-            #[deprecated(
-                since = "0.9.0",
-                note = "use `set_request_compression_mode(RequestCompressionMode::Auto)` instead"
-            )]
-            pub fn set_request_compression_auto(&self) {
-                self.webdav.set_request_compression_auto();
-            }
-
-            /// Disable request compression entirely.
-            #[allow(deprecated)]
-            #[deprecated(
-                since = "0.9.0",
-                note = "use `set_request_compression_mode(RequestCompressionMode::Disabled)` instead"
-            )]
-            pub fn disable_request_compression(&self) {
-                self.webdav.disable_request_compression();
-            }
-
             /// Get the current request compression strategy.
-            pub fn request_compression_mode(&self) -> $crate::webdav::client::RequestCompressionMode {
+            pub fn request_compression_mode(
+                &self,
+            ) -> $crate::webdav::client::RequestCompressionMode {
                 self.webdav.request_compression_mode()
             }
 
@@ -1599,7 +1508,10 @@ macro_rules! impl_dav_client_delegates {
             }
 
             /// Send an `OPTIONS` request.
-            pub async fn options(&self, path: &str) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+            pub async fn options(
+                &self,
+                path: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
                 self.webdav.options(path).await
             }
 
@@ -1614,7 +1526,10 @@ macro_rules! impl_dav_client_delegates {
             }
 
             /// Send a `DELETE` request.
-            pub async fn delete(&self, path: &str) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+            pub async fn delete(
+                &self,
+                path: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
                 self.webdav.delete(path).await
             }
 
@@ -1711,7 +1626,9 @@ macro_rules! impl_dav_client_delegates {
                 dest_absolute_url: &str,
                 overwrite: bool,
             ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
-                self.webdav.copy(src_path, dest_absolute_url, overwrite).await
+                self.webdav
+                    .copy(src_path, dest_absolute_url, overwrite)
+                    .await
             }
 
             /// Send a WebDAV `MOVE` from `src_path` to an absolute `Destination` URL.
@@ -1721,7 +1638,9 @@ macro_rules! impl_dav_client_delegates {
                 dest_absolute_url: &str,
                 overwrite: bool,
             ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
-                self.webdav.r#move(src_path, dest_absolute_url, overwrite).await
+                self.webdav
+                    .r#move(src_path, dest_absolute_url, overwrite)
+                    .await
             }
 
             /// Send a WebDAV `PROPFIND` with a custom XML body and `Depth` header.
@@ -1765,37 +1684,6 @@ macro_rules! impl_dav_client_delegates {
             /// Discover the current user's principal URL via `current-user-principal`.
             pub async fn discover_current_user_principal(&self) -> $crate::Result<Option<String>> {
                 self.webdav.discover_current_user_principal().await
-            }
-
-            /// Extract the `ETag` from a response header map, if present.
-            #[allow(deprecated)]
-            #[deprecated(
-                since = "0.9.0",
-                note = "use the free function `fast_dav_rs::webdav::etag_from_headers` instead"
-            )]
-            pub fn etag_from_headers(headers: &hyper::HeaderMap) -> Option<String> {
-                $crate::webdav::client::WebDavClient::etag_from_headers(headers)
-            }
-
-            /// Normalize an ETag by stripping surrounding double quotes.
-            #[allow(deprecated)]
-            #[deprecated(
-                since = "0.9.0",
-                note = "use the free function `fast_dav_rs::webdav::normalize_etag` instead"
-            )]
-            pub fn normalize_etag(etag: &str) -> String {
-                $crate::webdav::client::WebDavClient::normalize_etag(etag)
-            }
-
-            /// Normalize a sync token by trimming whitespace and stripping
-            /// surrounding double quotes.
-            #[allow(deprecated)]
-            #[deprecated(
-                since = "0.9.0",
-                note = "use the free function `fast_dav_rs::webdav::normalize_sync_token` instead"
-            )]
-            pub fn normalize_sync_token(token: &str) -> String {
-                $crate::webdav::client::WebDavClient::normalize_sync_token(token)
             }
 
             /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.

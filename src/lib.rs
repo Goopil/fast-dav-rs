@@ -189,7 +189,7 @@
 //! ## Working with ETags for Safe Operations
 //!
 //! ```no_run
-//! use fast_dav_rs::{CalDavClient, Result};
+//! use fast_dav_rs::{CalDavClient, Result, etag_from_headers};
 //! use bytes::Bytes;
 //!
 //! #[tokio::main]
@@ -203,7 +203,7 @@
 //!     # let event_path = ""; // Placeholder
 //!     // Get current ETag before modifying a resource
 //!     let head_response = client.head("my-calendar/some-event.ics").await?;
-//!     if let Some(etag) = CalDavClient::etag_from_headers(head_response.headers()) {
+//!     if let Some(etag) = etag_from_headers(head_response.headers()) {
 //!         // Now we can safely update with If-Match
 //!         let updated_ics = Bytes::from(r#"BEGIN:VCALENDAR
 //! VERSION:2.0
@@ -535,7 +535,7 @@
 //! ## CardDAV Contact Operations
 //!
 //! ```no_run
-//! use fast_dav_rs::{CardDavClient, Result};
+//! use fast_dav_rs::{CardDavClient, Result, etag_from_headers};
 //! use bytes::Bytes;
 //!
 //! #[tokio::main]
@@ -564,7 +564,7 @@
 //!     println!("Create contact: {}", create_resp.status());
 //!
 //!     let head = client.head(&contact_path).await?;
-//!     if let Some(etag) = CardDavClient::etag_from_headers(head.headers()) {
+//!     if let Some(etag) = etag_from_headers(head.headers()) {
 //!         let updated = Bytes::from("BEGIN:VCARD\nVERSION:3.0\nFN:Jane Doe\nUID:jane-1\nEMAIL:jane@example.com\nTEL:+1-555-0100\nEND:VCARD\n");
 //!         let update_resp = client.put_if_match(&contact_path, updated, &etag).await?;
 //!         println!("Update contact: {}", update_resp.status());
@@ -731,44 +731,6 @@ pub use common::compression::{
 pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
     DavCapabilities, Prefer, PropStat, RequestCompressionMode, SyncCapability, SyncLevel,
-    WebDavClient, WebDavError, preference_applied_from_headers,
+    WebDavClient, WebDavError, etag_from_headers, normalize_etag, normalize_sync_token,
+    preference_applied_from_headers,
 };
-
-// Legacy module paths kept for compatibility with existing imports.
-// Deprecated since 0.8; scheduled for removal in the next breaking release
-// (see the `legacy` feature flag).
-#[cfg(feature = "legacy")]
-#[deprecated(
-    since = "0.8.0",
-    note = "use `fast_dav_rs::caldav::client` directly instead; removal in next breaking release"
-)]
-pub mod client {
-    pub use crate::caldav::client::*;
-}
-
-#[cfg(feature = "legacy")]
-#[deprecated(
-    since = "0.8.0",
-    note = "use `fast_dav_rs::caldav::streaming` directly instead; removal in next breaking release"
-)]
-pub mod streaming {
-    pub use crate::caldav::streaming::*;
-}
-
-#[cfg(feature = "legacy")]
-#[deprecated(
-    since = "0.8.0",
-    note = "use `fast_dav_rs::caldav::types` directly instead; removal in next breaking release"
-)]
-pub mod types {
-    pub use crate::caldav::types::*;
-}
-
-#[cfg(feature = "legacy")]
-#[deprecated(
-    since = "0.8.0",
-    note = "use `fast_dav_rs::common::compression` directly instead; removal in next breaking release"
-)]
-pub mod compression {
-    pub use crate::common::compression::*;
-}
