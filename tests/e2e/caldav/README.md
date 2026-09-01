@@ -6,7 +6,8 @@ This directory contains a comprehensive test suite for the fast-dav-rs CalDAV cl
 
 ### 🧪 Core Functionality
 - **Connectivity Tests** - Basic HTTP operations (GET, OPTIONS, HEAD)
-- Located in: `core/connectivity_tests.rs`
+- **Transport Tests** - Chunked transfer responses, Basic/Bearer auth on the wire, HTTP version negotiation
+- Located in: `core/connectivity_tests.rs`, `core/transport_tests.rs`
 
 ### 🔍 Discovery Operations
 - **Principal Discovery** - Finding user principals and calendar homes
@@ -53,6 +54,13 @@ This directory contains a comprehensive test suite for the fast-dav-rs CalDAV cl
 - **Parallel Sync** - Multi-calendar optimization
 - Located in: `sync/sync_tests.rs`
 
+### 🚀 Wave-3 APIs
+- **Free/Busy Queries** - `free-busy-query` REPORT with real VFREEBUSY parsing
+- **Recurrence Expansion** - `expand` on calendar-query, calendar-multiget, and sync-collection
+- **Sync Capability Detection** - `supports_webdav_sync` → `SyncCapability` (Supported/Unknown)
+- **Bomb-Guard Interplay** - Large legit collections do not trip the `BodyTooLarge` cap
+- Located in: `wave3/wave3_tests.rs`
+
 ### 🛡️ Resilience Tests
 - **Network Disconnect/Reconnect** - Connection recovery scenarios
 - **High Concurrency Load** - Stress testing with many parallel requests
@@ -70,10 +78,11 @@ This directory contains a comprehensive test suite for the fast-dav-rs CalDAV cl
 
 ### 🔐 Security Tests
 - **Invalid Credential Handling** - Authentication failure scenarios
+- **Basic Auth On Wire** - 401 with bad/missing credentials → typed error; success with valid credentials
 - **Path Traversal Prevention** - Rejecting malicious path attempts
 - **Malformed Request Handling** - Graceful error handling
 - **Unauthorized Access Attempts** - Permission validation
-- Located in: `security/security_tests.rs`
+- Located in: `security/security_tests.rs`, `security/auth_tests.rs`
 
 ### 📝 Parsing Tests
 - **Special Characters in Properties** - Accented characters, symbols

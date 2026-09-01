@@ -13,6 +13,96 @@ fn generate_unique_calendar_name() -> String {
     unique_calendar_name("sync_test_calendar")
 }
 
+/// Phase-0 regression guard (#113/#117): `sync_collection` on the current
+/// client still succeeds against Sabre/DAV — 207/200 OK with a valid delta
+/// (items + sync token). Guards the `Depth: 0` fix at the e2e layer; the
+/// wire-level header proof is owned by the unit tests.
+#[tokio::test]
+async fn test_sync_collection_returns_200_with_valid_delta() {
+    let client = create_test_client();
+    let calendar_name = generate_unique_calendar_name();
+    let calendar_path = format!("calendars/test/{}/", calendar_name);
+
+    let calendar_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{}</D:displayname>
+    </D:prop>
+  </D:set>
+</C:mkcalendar>"#,
+        calendar_name
+    );
+    let mk_response = client.mkcalendar(&calendar_path, &calendar_xml).await;
+    assert!(
+        mk_response
+            .as_ref()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false),
+        "Expected successful calendar creation"
+    );
+
+    let mut event_paths = Vec::new();
+    for i in 1..=2 {
+        let event_uid = format!("{}-depth0-{}", generate_unique_event_uid(), i);
+        let event_path = format!("{calendar_path}{event_uid}.ics");
+        let event_ics = format!(
+            r#"BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Depth0 Regression//EN
+BEGIN:VEVENT
+UID:{}
+DTSTAMP:20230101T000000Z
+DTSTART:20231225T100000Z
+DTEND:20231225T110000Z
+SUMMARY:Depth-0 regression event {}
+END:VEVENT
+END:VCALENDAR"#,
+            event_uid, i
+        );
+        let response = client
+            .put(&event_path, Bytes::from(event_ics))
+            .await
+            .expect("event PUT request");
+        assert!(
+            response.status().is_success(),
+            "Expected successful event creation, got {}",
+            response.status()
+        );
+        event_paths.push(event_path);
+    }
+
+    // Must not error (e.g. on an unexpected status from a Depth mismatch) and
+    // must return a well-formed delta: all our events, no bogus deletions.
+    let delta = client
+        .sync_collection(&calendar_path, None, Some(100), true, None)
+        .await
+        .expect("sync_collection must succeed (200/207) against Sabre/DAV");
+    assert!(
+        delta.items.len() >= event_paths.len(),
+        "Expected at least {} items in the delta, got {}",
+        event_paths.len(),
+        delta.items.len()
+    );
+    assert!(
+        delta
+            .items
+            .iter()
+            .all(|item| !item.is_deleted && item.etag.is_some()),
+        "A fresh initial sync must list live items with ETags, got: {delta:?}"
+    );
+    assert!(
+        delta.sync_token.is_some(),
+        "Sabre/DAV must hand out a sync token for incremental syncs"
+    );
+
+    for event_path in event_paths {
+        let _ = client.delete(&event_path).await;
+    }
+    let _ = client.delete(&calendar_path).await;
+}
+
 /// Helper function to generate unique event UIDs
 fn generate_unique_event_uid() -> String {
     unique_uid("sync-event")

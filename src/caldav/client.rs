@@ -444,6 +444,10 @@ impl CalDavClient {
     /// unfolded). The REPORT is sent with `Depth: 1` as mandated by
     /// RFC 4791 §9.7.
     ///
+    /// Both response shapes are handled: the RFC 4791 §7.10.2 multistatus with
+    /// a `calendar-data` property, and the bare `text/calendar` `VFREEBUSY`
+    /// body served by Sabre/DAV (which skips the multistatus wrapper).
+    ///
     /// # Errors
     ///
     /// Returns an error **before any network I/O** if `start` or `end` is not
@@ -489,11 +493,23 @@ impl CalDavClient {
                 status: resp.status(),
             });
         }
+        let content_type = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_ascii_lowercase())
+            .unwrap_or_default();
         let body = resp.into_body();
         let mut periods = Vec::new();
-        for item in parse_multistatus_bytes(&body)?.items {
-            if let Some(data) = item.calendar_data {
-                periods.extend(parse_free_busy_periods(&data));
+        if content_type.starts_with("text/calendar") {
+            // Sabre/DAV serves free-busy-query results as a bare iCalendar
+            // body instead of a multistatus; parse the VFREEBUSY directly.
+            periods.extend(parse_free_busy_periods(&String::from_utf8_lossy(&body)));
+        } else {
+            for item in parse_multistatus_bytes(&body)?.items {
+                if let Some(data) = item.calendar_data {
+                    periods.extend(parse_free_busy_periods(&data));
+                }
             }
         }
         Ok(periods)

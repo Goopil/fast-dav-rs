@@ -513,6 +513,9 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .build()?;
 ```
 
+> HTTP/2 is negotiated over **TLS via ALPN** on `https://` URLs only. Cleartext
+> `http://` connections always use HTTP/1.1 (h2c is not attempted).
+
 ### Redirect following
 
 HTTP redirects (301/302/303/307/308) are followed automatically in `send`/`send_stream`,
