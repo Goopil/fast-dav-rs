@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `CalDavClient::free_busy_query` — `free-busy-query` REPORT (RFC 4791 §9.7, sent with `Depth: 1`)
+  returning parsed `FreeBusyPeriod`s; the `FBTYPE` parameter maps to `FreeBusyType` (default
+  `BUSY` when absent), unrecognized values and `start/duration` periods are skipped
+- Optional `expand: Option<TimeRange>` parameter on `calendar_query_timerange`, `calendar_multiget`,
+  and the CalDAV `sync_collection` for server-side recurrence expansion (RFC 4791 §9.6); when
+  `expand` is `Some`, `include_data` is implied `true`. New types `FreeBusyPeriod` and
+  `FreeBusyType`, re-exported from `fast_dav_rs::caldav`
+
 ### Security
 - Bearer tokens and proxy credentials are zeroized in the intermediate
   `Authorization` header strings built by the client builder, so plaintext
@@ -29,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of a string search: any namespace prefix (including a default-namespace-bound
   unprefixed `prop`) and any attributes on the element are handled, nested elements are
   captured correctly, and self-closing elements yield an empty inner body (issue #80)
+- **Breaking:** `calendar_query_timerange`, `calendar_multiget`, and CalDAV `sync_collection`
+  gained a trailing `expand` parameter, and the free builders `build_calendar_query_body`,
+  `build_calendar_multiget_body`, and the CalDAV `build_sync_collection_body` gained a trailing
+  `expand` argument (pass `None` to keep the previous behavior; scheduled for the 0.10 breaking
+  window)
 
 ## [0.9.2] - 2026-09-01
 

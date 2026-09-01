@@ -5,12 +5,15 @@ use crate::Depth;
 use crate::caldav::builder::CalDavClientBuilder;
 use crate::caldav::streaming::parse_multistatus_bytes;
 use crate::caldav::types::{
-    CalendarInfo, CalendarObject, CalendarQueryFilter, DavItem, SyncItem, SyncResponse,
+    CalendarInfo, CalendarObject, CalendarQueryFilter, DavItem, FreeBusyPeriod, FreeBusyType,
+    SyncItem, SyncResponse, TimeRange,
 };
 use crate::impl_dav_client_delegates;
 use crate::webdav::client::{WebDavClient, if_match_header_value};
 use crate::webdav::types::map_sync_rows;
-use crate::webdav::xml::{validate_component_name, validate_utc_datetime};
+use crate::webdav::xml::{
+    data_element_xml, time_range_xml, validate_component_name, validate_utc_datetime,
+};
 use crate::{Error, Operation, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
@@ -223,13 +226,19 @@ impl CalDavClient {
     /// `component` should be `VEVENT`, `VTODO`, … while `start`/`end` are ISO-8601
     /// timestamps in the format required by CalDAV (e.g. `20240101T000000Z`).
     ///
+    /// `expand` asks the server to expand recurring components into their
+    /// individual instances covering the given range (RFC 4791 §9.6,
+    /// `<C:expand>`). When it is `Some`, `include_data` is implied `true`
+    /// (the server returns expanded calendar data).
+    ///
     /// # Errors
     ///
     /// Returns an error **before any network I/O** if `component` is empty or
-    /// contains characters outside ASCII alphanumerics and `-`, or if `start`
+    /// contains characters outside ASCII alphanumerics and `-`, if `start`
     /// /`end` is provided but is not a valid iCalendar UTC date-time
-    /// (`YYYYMMDDTHHMMSSZ`). Also returns an error if the REPORT request fails
-    /// or the server responds with a non-success status.
+    /// (`YYYYMMDDTHHMMSSZ`), or if `expand` is provided but its start/end are
+    /// not valid iCalendar UTC date-times. Also returns an error if the
+    /// REPORT request fails or the server responds with a non-success status.
     pub async fn calendar_query_timerange(
         &self,
         calendar_path: &str,
@@ -237,6 +246,7 @@ impl CalDavClient {
         start: Option<&str>,
         end: Option<&str>,
         include_data: bool,
+        expand: Option<TimeRange>,
     ) -> Result<Vec<CalendarObject>> {
         validate_component_name(component, "invalid calendar-query component")?;
         if let Some(s) = start {
@@ -245,8 +255,14 @@ impl CalDavClient {
         if let Some(e) = end {
             validate_utc_datetime(e, "invalid calendar-query end")?;
         }
+        if let Some(tr) = &expand {
+            validate_utc_datetime(&tr.start, "invalid calendar-query expand start")?;
+            if let Some(e) = &tr.end {
+                validate_utc_datetime(e, "invalid calendar-query expand end")?;
+            }
+        }
 
-        let xml = build_calendar_query_body(component, start, end, include_data);
+        let xml = build_calendar_query_body(component, start, end, include_data, expand.as_ref());
 
         let resp = self.report(calendar_path, Depth::One, &xml).await?;
         if !resp.status().is_success() {
@@ -314,17 +330,37 @@ impl CalDavClient {
     }
 
     /// Fetch specific calendar objects via `calendar-multiget`.
+    ///
+    /// `expand` asks the server to expand recurring components into their
+    /// individual instances covering the given range (RFC 4791 §9.6,
+    /// `<C:expand>`). When it is `Some`, `include_data` is implied `true`
+    /// (the server returns expanded calendar data).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error **before any network I/O** if `expand` is provided
+    /// but its start/end are not valid iCalendar UTC date-times. Also returns
+    /// an error if the REPORT request fails or the server responds with a
+    /// non-success status.
     pub async fn calendar_multiget<I, S>(
         &self,
         calendar_path: &str,
         hrefs: I,
         include_data: bool,
+        expand: Option<TimeRange>,
     ) -> Result<Vec<CalendarObject>>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let Some(body) = build_calendar_multiget_body(hrefs, include_data) else {
+        if let Some(tr) = &expand {
+            validate_utc_datetime(&tr.start, "invalid calendar-multiget expand start")?;
+            if let Some(e) = &tr.end {
+                validate_utc_datetime(e, "invalid calendar-multiget expand end")?;
+            }
+        }
+
+        let Some(body) = build_calendar_multiget_body(hrefs, include_data, expand.as_ref()) else {
             return Ok(Vec::new());
         };
 
@@ -340,14 +376,34 @@ impl CalDavClient {
     }
 
     /// Incrementally synchronise a calendar collection using `sync-collection`.
+    ///
+    /// `expand` asks the server to expand recurring components into their
+    /// individual instances covering the given range (RFC 4791 §9.6,
+    /// `<C:expand>`). When it is `Some`, `include_data` is implied `true`
+    /// (the server returns expanded calendar data).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error **before any network I/O** if `expand` is provided
+    /// but its start/end are not valid iCalendar UTC date-times. Also returns
+    /// an error if the REPORT request fails or the server responds with a
+    /// non-success status.
     pub async fn sync_collection(
         &self,
         calendar_path: &str,
         sync_token: Option<&str>,
         limit: Option<u32>,
         include_data: bool,
+        expand: Option<TimeRange>,
     ) -> Result<SyncResponse> {
-        let body = build_sync_collection_body(sync_token, limit, include_data);
+        if let Some(tr) = &expand {
+            validate_utc_datetime(&tr.start, "invalid sync-collection expand start")?;
+            if let Some(e) = &tr.end {
+                validate_utc_datetime(e, "invalid sync-collection expand end")?;
+            }
+        }
+
+        let body = build_sync_collection_body(sync_token, limit, include_data, expand.as_ref());
 
         let resp = self.report(calendar_path, Depth::Zero, &body).await?;
         if !resp.status().is_success() {
@@ -362,10 +418,145 @@ impl CalDavClient {
         let parsed = parse_multistatus_bytes(&body)?;
         Ok(map_sync_response(&headers, parsed.items, parsed.sync_token))
     }
+
+    /// Query free/busy information for a calendar via a `free-busy-query`
+    /// REPORT (RFC 4791 §9.7).
+    ///
+    /// The server reports the busy periods it knows about for `start`..`end`
+    /// (iCalendar UTC date-times, e.g. `20240101T000000Z`). Periods are
+    /// extracted from the `FREEBUSY` properties of the returned `VFREEBUSY`
+    /// component; periods in `start/duration` form and periods with an
+    /// unrecognized `FBTYPE` are skipped (free/busy line folding is not
+    /// unfolded). The REPORT is sent with `Depth: 1` as mandated by
+    /// RFC 4791 §9.7.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error **before any network I/O** if `start` or `end` is not
+    /// a valid iCalendar UTC date-time (`YYYYMMDDTHHMMSSZ`). Also returns an
+    /// error if the REPORT request fails or the server responds with a
+    /// non-success status.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use fast_dav_rs::CalDavClient;
+    /// use fast_dav_rs::caldav::FreeBusyType;
+    ///
+    /// # async fn example(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+    /// let periods = client
+    ///     .free_busy_query("calendars/user/work/", "20240101T000000Z", "20240108T000000Z")
+    ///     .await?;
+    /// for period in &periods {
+    ///     if period.fb_type != FreeBusyType::Free {
+    ///         println!("busy: {} -> {}", period.start, period.end);
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn free_busy_query(
+        &self,
+        calendar_path: &str,
+        start: &str,
+        end: &str,
+    ) -> Result<Vec<FreeBusyPeriod>> {
+        validate_utc_datetime(start, "invalid free-busy-query start")?;
+        validate_utc_datetime(end, "invalid free-busy-query end")?;
+
+        let body = format!(
+            r#"<C:free-busy-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">{}</C:free-busy-query>"#,
+            time_range_xml(start, Some(end))
+        );
+
+        let resp = self.report(calendar_path, Depth::One, &body).await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::ReportFreeBusyQuery,
+                status: resp.status(),
+            });
+        }
+        let body = resp.into_body();
+        let mut periods = Vec::new();
+        for item in parse_multistatus_bytes(&body)?.items {
+            if let Some(data) = item.calendar_data {
+                periods.extend(parse_free_busy_periods(&data));
+            }
+        }
+        Ok(periods)
+    }
 }
 
 pub fn escape_xml(input: &str) -> String {
     crate::webdav::xml::escape_xml(input)
+}
+
+/// Extract `FreeBusyPeriod`s from the `FREEBUSY` properties of a `VFREEBUSY`
+/// component (minimal line-based parser — no full iCalendar parser).
+///
+/// A `FREEBUSY` line looks like
+/// `FREEBUSY;FBTYPE=BUSY-UNAVAILABLE:start/end,start/end`. A missing `FBTYPE`
+/// defaults to `Busy`; an unrecognized `FBTYPE` value skips the line's
+/// periods. Periods in `start/duration` form are skipped.
+fn parse_free_busy_periods(calendar_data: &str) -> Vec<FreeBusyPeriod> {
+    let mut out = Vec::new();
+    for line in calendar_data.lines() {
+        let Some(rest) = line.trim().strip_prefix("FREEBUSY") else {
+            continue;
+        };
+        if !rest.starts_with(':') && !rest.starts_with(';') {
+            continue;
+        }
+        let Some((params, value)) = rest.split_once(':') else {
+            continue;
+        };
+        let fb_type = fbtype_from_params(params);
+        for period in value.split(',') {
+            let Some((start, end)) = period.split_once('/') else {
+                continue;
+            };
+            // ponytail: start/duration periods (end starting with `P`) are skipped;
+            // parse DURATION values if real servers start emitting them
+            if end.starts_with('P') || end.starts_with('p') {
+                continue;
+            }
+            if start.is_empty() || end.is_empty() {
+                continue;
+            }
+            let Some(fb_type) = fb_type else {
+                continue;
+            };
+            out.push(FreeBusyPeriod {
+                start: start.to_owned(),
+                end: end.to_owned(),
+                fb_type,
+            });
+        }
+    }
+    out
+}
+
+/// Map the `FBTYPE` parameter of a `FREEBUSY` property (RFC 4791 §9.7.3).
+///
+/// Returns `Some` with the mapped type — defaulting to `Busy` when the
+/// parameter is absent — or `None` when the value is unrecognized (the
+/// caller skips those periods).
+fn fbtype_from_params(params: &str) -> Option<FreeBusyType> {
+    for param in params.split(';') {
+        let Some((name, value)) = param.split_once('=') else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case("FBTYPE") {
+            continue;
+        }
+        return match value.trim().to_ascii_uppercase().as_str() {
+            "BUSY" => Some(FreeBusyType::Busy),
+            "BUSY-TENTATIVE" => Some(FreeBusyType::BusyTentative),
+            "BUSY-UNAVAILABLE" => Some(FreeBusyType::BusyUnavailable),
+            "FREE" => Some(FreeBusyType::Free),
+            _ => None,
+        };
+    }
+    Some(FreeBusyType::Busy)
 }
 
 pub fn build_calendar_query_body(
@@ -373,10 +564,14 @@ pub fn build_calendar_query_body(
     start: Option<&str>,
     end: Option<&str>,
     include_data: bool,
+    expand: Option<&TimeRange>,
 ) -> String {
     let mut prop = String::from("<D:prop><D:getetag/>");
-    if include_data {
-        prop.push_str("<C:calendar-data/>");
+    if include_data || expand.is_some() {
+        prop.push_str(&data_element_xml(
+            "calendar-data",
+            expand.map(|tr| (tr.start.as_str(), tr.end.as_deref())),
+        ));
     }
     prop.push_str("</D:prop>");
 
@@ -403,7 +598,11 @@ pub fn build_calendar_query_body(
     )
 }
 
-pub fn build_calendar_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
+pub fn build_calendar_multiget_body<I, S>(
+    hrefs: I,
+    include_data: bool,
+    expand: Option<&TimeRange>,
+) -> Option<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -414,6 +613,7 @@ where
         "urn:ietf:params:xml:ns:caldav",
         "calendar-multiget",
         "calendar-data",
+        expand.map(|tr| (tr.start.as_str(), tr.end.as_deref())),
     )
 }
 
@@ -421,6 +621,7 @@ pub fn build_sync_collection_body(
     sync_token: Option<&str>,
     limit: Option<u32>,
     include_data: bool,
+    expand: Option<&TimeRange>,
 ) -> String {
     crate::webdav::xml::build_sync_collection_body(
         sync_token,
@@ -428,6 +629,7 @@ pub fn build_sync_collection_body(
         include_data,
         "urn:ietf:params:xml:ns:caldav",
         "calendar-data",
+        expand.map(|tr| (tr.start.as_str(), tr.end.as_deref())),
     )
 }
 
@@ -494,5 +696,68 @@ pub fn map_sync_response(
                 is_deleted: r.is_deleted,
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_multi_period_lines_with_fbtype() {
+        let ical = "BEGIN:VFREEBUSY\r\nFREEBUSY;FBTYPE=BUSY-UNAVAILABLE:19970101T180000Z/19970102T070000Z,19970103T180000Z/19970104T070000Z\r\nEND:VFREEBUSY";
+        let periods = parse_free_busy_periods(ical);
+        assert_eq!(periods.len(), 2);
+        assert_eq!(periods[0].fb_type, FreeBusyType::BusyUnavailable);
+        assert_eq!(periods[0].start, "19970101T180000Z");
+        assert_eq!(periods[0].end, "19970102T070000Z");
+        assert_eq!(periods[1].fb_type, FreeBusyType::BusyUnavailable);
+        assert_eq!(periods[1].start, "19970103T180000Z");
+        assert_eq!(periods[1].end, "19970104T070000Z");
+    }
+
+    #[test]
+    fn missing_fbtype_defaults_to_busy() {
+        let periods = parse_free_busy_periods("FREEBUSY:19970105T100000Z/19970105T120000Z");
+        assert_eq!(periods.len(), 1);
+        assert_eq!(periods[0].fb_type, FreeBusyType::Busy);
+    }
+
+    #[test]
+    fn maps_all_fbtype_values_case_insensitively() {
+        let ical = "FREEBUSY;FBTYPE=FREE:a/b\r\n\
+            FREEBUSY;FBTYPE=busy:c/d\r\n\
+            FREEBUSY;FBTYPE=BUSY-TENTATIVE:e/f\r\n\
+            FREEBUSY;fbtype=BUSY-UNAVAILABLE:g/h";
+        let periods = parse_free_busy_periods(ical);
+        assert_eq!(periods.len(), 4);
+        assert_eq!(periods[0].fb_type, FreeBusyType::Free);
+        assert_eq!(periods[1].fb_type, FreeBusyType::Busy);
+        assert_eq!(periods[2].fb_type, FreeBusyType::BusyTentative);
+        assert_eq!(periods[3].fb_type, FreeBusyType::BusyUnavailable);
+    }
+
+    #[test]
+    fn unrecognized_fbtype_skips_period() {
+        let ical = "FREEBUSY;FBTYPE=WOBBLE:19970105T100000Z/19970105T120000Z\r\n\
+            FREEBUSY;FBTYPE=BUSY:19970106T100000Z/19970106T120000Z";
+        let periods = parse_free_busy_periods(ical);
+        assert_eq!(periods.len(), 1);
+        assert_eq!(periods[0].fb_type, FreeBusyType::Busy);
+        assert_eq!(periods[0].start, "19970106T100000Z");
+    }
+
+    #[test]
+    fn start_duration_periods_are_skipped() {
+        let ical = "FREEBUSY;FBTYPE=BUSY:19970105T100000Z/PT2H";
+        assert!(parse_free_busy_periods(ical).is_empty());
+    }
+
+    #[test]
+    fn non_freebusy_lines_are_ignored() {
+        let ical = "BEGIN:VFREEBUSY\r\nDTSTART:19970101T000000Z\r\nSUMMARY:Busy times\r\nFREEBUSY:19970105T100000Z/19970105T120000Z\r\nEND:VFREEBUSY";
+        let periods = parse_free_busy_periods(ical);
+        assert_eq!(periods.len(), 1);
+        assert_eq!(periods[0].start, "19970105T100000Z");
     }
 }

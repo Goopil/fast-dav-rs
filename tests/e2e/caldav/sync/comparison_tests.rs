@@ -110,7 +110,7 @@ async fn webdav_sync_method(
 ) -> fast_dav_rs::Result<(Option<String>, Vec<String>)> {
     // Use the sync_collection method implemented in the client
     let sync_response = client
-        .sync_collection(calendar_path, sync_token, Some(100), true)
+        .sync_collection(calendar_path, sync_token, Some(100), true, None)
         .await?;
 
     // Extract relevant data from sync response
@@ -442,7 +442,7 @@ END:VCALENDAR"#,
 
     // Test WebDAV sync method and validate data integrity
     let sync_response = client
-        .sync_collection(&calendar_path, None, Some(100), true)
+        .sync_collection(&calendar_path, None, Some(100), true, None)
         .await;
     match sync_response {
         Ok(response) => {
@@ -500,7 +500,7 @@ END:VCALENDAR"#,
 
     // Test lightweight sync (without data) and validate ETag integrity
     let lightweight_sync = client
-        .sync_collection(&calendar_path, None, Some(100), false)
+        .sync_collection(&calendar_path, None, Some(100), false, None)
         .await;
     match lightweight_sync {
         Ok(response) => {
@@ -794,7 +794,7 @@ END:VCALENDAR"#,
         let task = tokio::spawn(async move {
             // Lightweight sync first to get baseline
             let lightweight_sync = client_clone
-                .sync_collection(&path_clone, None, Some(100), false)
+                .sync_collection(&path_clone, None, Some(100), false, None)
                 .await;
             match lightweight_sync {
                 Ok(response) => {
@@ -818,7 +818,7 @@ END:VCALENDAR"#,
 
             // Full data sync
             let full_sync = client_clone
-                .sync_collection(&path_clone, None, Some(100), true)
+                .sync_collection(&path_clone, None, Some(100), true, None)
                 .await;
             match full_sync {
                 Ok(response) => {

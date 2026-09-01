@@ -77,6 +77,7 @@ features, and major releases introduce breaking changes when needed.
 ### Core Features
 
 - CalDAV calendar discovery, queries, and event CRUD.
+- CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
 - CardDAV addressbook discovery, queries, and contact CRUD.
 - HTTP/2 with connection pooling and automatic response decompression.
 - Streaming XML parsing for multistatus responses.
@@ -537,7 +538,7 @@ async fn main() -> Result<()> {
     client.put_if_none_match(&event_path, create).await?;
 
     let events = client
-        .calendar_query_timerange(calendar_path, "VEVENT", None, None, true)
+        .calendar_query_timerange(calendar_path, "VEVENT", None, None, true, None)
         .await?;
 
     if let Some(event) = events.first() {

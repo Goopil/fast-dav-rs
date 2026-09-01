@@ -313,7 +313,7 @@ END:VCALENDAR"#,
     if !event_hrefs.is_empty() {
         // Test calendar-multiget with multiple HREFs
         let multiget_results = client
-            .calendar_multiget(&calendar_path, &event_hrefs, true)
+            .calendar_multiget(&calendar_path, &event_hrefs, true, None)
             .await;
         match multiget_results {
             Ok(objects) => {

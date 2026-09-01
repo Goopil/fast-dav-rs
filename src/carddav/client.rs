@@ -513,6 +513,7 @@ where
         "urn:ietf:params:xml:ns:carddav",
         "addressbook-multiget",
         "address-data",
+        None,
     )
 }
 
@@ -527,6 +528,7 @@ pub fn build_sync_collection_body(
         include_data,
         "urn:ietf:params:xml:ns:carddav",
         "address-data",
+        None,
     )
 }
 

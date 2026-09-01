@@ -11,6 +11,7 @@ fn builds_calendar_query_with_timerange() {
         Some("20240101T000000Z"),
         Some("20240201T000000Z"),
         true,
+        None,
     );
     assert!(body.contains("<C:calendar-data/>"));
     assert!(body.contains("name=\"VEVENT\""));
@@ -25,6 +26,7 @@ fn calendar_query_body_escapes_injection_attempts() {
         Some("2024\"><x/>&"),
         Some("20240201T000000Z'"),
         false,
+        None,
     );
 
     // Raw injection artifacts must not survive escaping.
@@ -47,6 +49,7 @@ fn calendar_query_body_valid_inputs_pass_through_unchanged() {
         Some("20240101T000000Z"),
         Some("20241231T235959Z"),
         false,
+        None,
     );
     assert!(body.contains("name=\"X-CUSTOM\""));
     assert!(body.contains("start=\"20240101T000000Z\""));
@@ -56,9 +59,12 @@ fn calendar_query_body_valid_inputs_pass_through_unchanged() {
 
 #[test]
 fn calendar_multiget_body_escapes_xml_metacharacters_in_hrefs() {
-    let body =
-        build_calendar_multiget_body(vec![r#"/cal/a.ics"/><D:href>injected</D:href><!--"#], false)
-            .expect("hrefs present");
+    let body = build_calendar_multiget_body(
+        vec![r#"/cal/a.ics"/><D:href>injected</D:href><!--"#],
+        false,
+        None,
+    )
+    .expect("hrefs present");
 
     assert!(!body.contains("<D:href>injected</D:href>"));
     assert!(body.contains(
@@ -74,6 +80,7 @@ fn builds_calendar_multiget_and_escapes() {
             "/dav/user01/Calendars/Personal/tasks&todo.ics",
         ],
         true,
+        None,
     )
     .expect("hrefs present");
     assert!(body.contains("<C:calendar-data/>"));
@@ -82,7 +89,7 @@ fn builds_calendar_multiget_and_escapes() {
 
 #[test]
 fn builds_sync_collection_body_with_token_and_limit() {
-    let body = build_sync_collection_body(Some("http://token"), Some(50), false);
+    let body = build_sync_collection_body(Some("http://token"), Some(50), false, None);
     assert!(body.contains("<D:sync-token>http://token</D:sync-token>"));
     assert!(body.contains("<D:nresults>50</D:nresults>"));
     assert!(!body.contains("<C:calendar-data/>"));

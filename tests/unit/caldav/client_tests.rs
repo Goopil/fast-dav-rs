@@ -1,5 +1,170 @@
+use fast_dav_rs::caldav::{FreeBusyType, TimeRange};
 use fast_dav_rs::{CalDavClient, Depth, Error, RequestCompressionMode};
 use hyper::http::HeaderMap;
+
+#[tokio::test]
+async fn free_busy_query_sends_report_and_parses_periods() {
+    let ical = "BEGIN:VCALENDAR\r\nBEGIN:VFREEBUSY\r\n\
+        FREEBUSY;FBTYPE=BUSY-UNAVAILABLE:19970101T180000Z/19970102T070000Z,19970103T180000Z/19970104T070000Z\r\n\
+        FREEBUSY:19970105T100000Z/19970105T120000Z\r\n\
+        FREEBUSY;FBTYPE=BUSY-TENTATIVE:19970106T100000Z/19970106T120000Z\r\n\
+        END:VFREEBUSY\r\nEND:VCALENDAR";
+    let body = format!(
+        "<?xml version=\"1.0\"?>\
+<D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\
+<D:response><D:href>/cal/</D:href><D:propstat><D:prop>\
+<C:calendar-data><![CDATA[{ical}]]></C:calendar-data>\
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>\
+</D:multistatus>"
+    );
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body.into_bytes(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let periods = client
+        .free_busy_query("cal/", "20240101T000000Z", "20240201T000000Z")
+        .await
+        .unwrap();
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains("REPORT"),
+        "expected REPORT method in request: {req}"
+    );
+    assert!(
+        req.to_ascii_lowercase().contains("depth: 1"),
+        "expected 'Depth: 1' in request: {req}"
+    );
+    assert!(
+        req.contains(
+            "<C:free-busy-query xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
+        ),
+        "free-busy-query root element missing: {req}"
+    );
+    assert!(
+        req.contains("<C:time-range start=\"20240101T000000Z\" end=\"20240201T000000Z\"/>"),
+        "time-range element missing: {req}"
+    );
+
+    assert_eq!(periods.len(), 4);
+    assert_eq!(periods[0].fb_type, FreeBusyType::BusyUnavailable);
+    assert_eq!(periods[0].start, "19970101T180000Z");
+    assert_eq!(periods[0].end, "19970102T070000Z");
+    assert_eq!(periods[1].fb_type, FreeBusyType::BusyUnavailable);
+    assert_eq!(periods[1].start, "19970103T180000Z");
+    assert_eq!(periods[1].end, "19970104T070000Z");
+    assert_eq!(periods[2].fb_type, FreeBusyType::Busy);
+    assert_eq!(periods[2].start, "19970105T100000Z");
+    assert_eq!(periods[2].end, "19970105T120000Z");
+    assert_eq!(periods[3].fb_type, FreeBusyType::BusyTentative);
+    assert_eq!(periods[3].start, "19970106T100000Z");
+    assert_eq!(periods[3].end, "19970106T120000Z");
+}
+
+#[tokio::test]
+async fn free_busy_query_rejects_invalid_start() {
+    let client = CalDavClient::new("https://example.com/dav/", None, None).unwrap();
+    let err = client
+        .free_busy_query("cal/", "not-a-date", "20240201T000000Z")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDateTime { ref context, .. }
+            if context.contains("free-busy-query start")),
+        "expected InvalidDateTime for free-busy-query start, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn calendar_query_timerange_sends_expand() {
+    let body =
+        b"<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"><D:sync-token>t</D:sync-token></D:multistatus>"
+            .to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let expand = TimeRange::new("20240101T000000Z").with_end("20240201T000000Z");
+    client
+        .calendar_query_timerange("cal/", "VEVENT", None, None, false, Some(expand))
+        .await
+        .unwrap();
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains(
+            "<C:calendar-data><C:expand start=\"20240101T000000Z\" end=\"20240201T000000Z\"/></C:calendar-data>"
+        ),
+        "expected expand element in request body: {req}"
+    );
+}
+
+#[tokio::test]
+async fn calendar_multiget_sends_expand() {
+    let body =
+        b"<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"><D:sync-token>t</D:sync-token></D:multistatus>"
+            .to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let expand = TimeRange::new("20240101T000000Z");
+    client
+        .calendar_multiget("cal/", ["/cal/a.ics"], false, Some(expand))
+        .await
+        .unwrap();
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains("<C:calendar-data><C:expand start=\"20240101T000000Z\"/></C:calendar-data>"),
+        "expected start-only expand element in request body: {req}"
+    );
+}
+
+#[tokio::test]
+async fn sync_collection_sends_expand() {
+    let body =
+        b"<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"><D:sync-token>tok-1</D:sync-token></D:multistatus>"
+            .to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let expand = TimeRange::new("20240101T000000Z").with_end("20240201T000000Z");
+    let sync = client
+        .sync_collection("cal/", None, None, false, Some(expand))
+        .await
+        .unwrap();
+    assert_eq!(sync.sync_token.as_deref(), Some("tok-1"));
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains(
+            "<C:calendar-data><C:expand start=\"20240101T000000Z\" end=\"20240201T000000Z\"/></C:calendar-data>"
+        ),
+        "expected expand element in request body: {req}"
+    );
+}
 
 #[test]
 fn test_client_creation() {
@@ -138,6 +303,7 @@ fn test_build_calendar_query_body() {
         Some("20240101T000000Z"),
         Some("20240201T000000Z"),
         true,
+        None,
     );
     assert!(body.contains("<C:calendar-data/>"));
     assert!(body.contains("name=\"VEVENT\""));
@@ -147,7 +313,8 @@ fn test_build_calendar_query_body() {
 
 #[test]
 fn test_build_calendar_query_body_no_time_range() {
-    let body = fast_dav_rs::caldav::client::build_calendar_query_body("VTODO", None, None, false);
+    let body =
+        fast_dav_rs::caldav::client::build_calendar_query_body("VTODO", None, None, false, None);
     assert!(!body.contains("<C:calendar-data/>"));
     assert!(body.contains("name=\"VTODO\""));
     assert!(!body.contains("start="));
@@ -161,6 +328,7 @@ fn test_build_calendar_query_body_partial_time_range() {
         Some("20240101T000000Z"),
         None,
         true,
+        None,
     );
     assert!(body.contains("<C:calendar-data/>"));
     assert!(body.contains("start=\"20240101T000000Z\""));
@@ -175,6 +343,7 @@ fn test_build_calendar_multiget_and_escapes() {
             "/calendars/user/event&special.ics",
         ],
         true,
+        None,
     )
     .expect("Should create body");
 
@@ -186,7 +355,7 @@ fn test_build_calendar_multiget_and_escapes() {
 #[test]
 fn test_build_calendar_multiget_empty() {
     let body =
-        fast_dav_rs::caldav::client::build_calendar_multiget_body(Vec::<String>::new(), true);
+        fast_dav_rs::caldav::client::build_calendar_multiget_body(Vec::<String>::new(), true, None);
     assert!(body.is_none());
 }
 
@@ -196,6 +365,7 @@ fn test_build_sync_collection_body() {
         Some("http://example.com/sync-token-123"),
         Some(50),
         true,
+        None,
     );
 
     assert!(body.contains("<D:sync-token>http://example.com/sync-token-123</D:sync-token>"));
@@ -304,7 +474,7 @@ async fn test_calendar_query_timerange_rejects_malicious_component() {
         .expect("Failed to create client");
 
     let err = client
-        .calendar_query_timerange("calendar/", "VEVENT\"><evil/>", None, None, false)
+        .calendar_query_timerange("calendar/", "VEVENT\"><evil/>", None, None, false, None)
         .await
         .expect_err("component with XML metacharacters must be rejected before any request");
     assert!(matches!(
@@ -323,7 +493,7 @@ async fn test_calendar_query_timerange_rejects_empty_component() {
         CalDavClient::new("https://example.com/dav/", None, None).expect("Failed to create client");
 
     let err = client
-        .calendar_query_timerange("calendar/", "", None, None, false)
+        .calendar_query_timerange("calendar/", "", None, None, false, None)
         .await
         .expect_err("empty component must be rejected before any request");
     assert!(matches!(
@@ -344,6 +514,7 @@ async fn test_calendar_query_timerange_rejects_malformed_start() {
             Some("2024-01-01T00:00:00Z"),
             None,
             false,
+            None,
         )
         .await
         .expect_err("malformed start must be rejected before any request");
@@ -374,6 +545,7 @@ async fn test_calendar_query_timerange_rejects_malformed_end() {
             Some("20240101T000000Z"),
             Some("20240101T000000Z\"><inject/>"),
             false,
+            None,
         )
         .await
         .expect_err("malformed end must be rejected before any request");
@@ -459,8 +631,12 @@ fn sync_token_round_trip_unquoted_in_request_body() {
     let normalized = sync.sync_token.expect("sync token present");
     assert_eq!(normalized, "http://example.com/sync/99");
 
-    let body =
-        fast_dav_rs::caldav::client::build_sync_collection_body(Some(&normalized), None, true);
+    let body = fast_dav_rs::caldav::client::build_sync_collection_body(
+        Some(&normalized),
+        None,
+        true,
+        None,
+    );
     assert!(
         body.contains("<D:sync-token>http://example.com/sync/99</D:sync-token>"),
         "sync-token should appear unquoted in request body, got: {body}"
@@ -483,7 +659,7 @@ async fn sync_collection_sends_depth_zero() {
     client.set_request_compression_mode(RequestCompressionMode::Disabled);
 
     let sync = client
-        .sync_collection("cal/", None, None, true)
+        .sync_collection("cal/", None, None, true, None)
         .await
         .unwrap();
     assert_eq!(sync.sync_token.as_deref(), Some("tok-1"));
