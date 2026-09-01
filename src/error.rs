@@ -148,6 +148,14 @@ pub enum Error {
         limit: Duration,
     },
 
+    /// A decompressed response body exceeded the configured size limit.
+    #[error("decompressed body exceeds the {} MiB limit", limit / (1024 * 1024))]
+    #[non_exhaustive]
+    BodyTooLarge {
+        /// The configured maximum size in bytes.
+        limit: usize,
+    },
+
     /// Parsing or decoding XML failed.
     #[error("XML error: {0}")]
     Xml(#[from] quick_xml::Error),
