@@ -574,24 +574,15 @@ impl WebDavClient {
     /// `false` when the probe failed: nothing is cached then, so the next
     /// body-carrying request re-probes. The caller sends the current request
     /// uncompressed in that case.
+    ///
+    /// The caller guarantees `Auto` mode and an uncached negotiation (checked
+    /// under the probe lock) before invoking this.
     async fn probe_request_compression_support(&self) -> bool {
-        if !self.request_compression_mode.read().is_auto() {
-            return true;
-        }
+        let propfind = Method::from_bytes(b"PROPFIND").expect("static PROPFIND method is valid");
 
-        if self.negotiated_request_compression.read().is_some() {
-            return true;
-        }
-
-        let propfind = match Method::from_bytes(b"PROPFIND") {
-            Ok(m) => m,
-            Err(_) => return false,
-        };
-
-        let uri = match self.build_uri("") {
-            Ok(u) => u,
-            Err(_) => return false,
-        };
+        let uri = self
+            .build_uri("")
+            .expect("base URL is validated at build time");
 
         let mut headers = HeaderMap::new();
         headers.insert("Depth", header::HeaderValue::from_static("0"));
@@ -619,10 +610,9 @@ impl WebDavClient {
             req_builder = req_builder.header(k, v);
         }
 
-        let req = match req_builder.body(Full::new(encoded_body)) {
-            Ok(r) => r,
-            Err(_) => return false,
-        };
+        let req = req_builder
+            .body(Full::new(encoded_body))
+            .expect("valid static probe request parts");
 
         let fut = self.client.request(req);
         let result = timeout(self.default_timeout, fut).await;
