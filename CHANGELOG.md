@@ -109,6 +109,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or update them)
 
 ### Fixed
+- `Retry-After` handling on transient retries (issue #137): the honored delay
+  is now clamped to the retry backoff cap (a hostile or overloaded server
+  answering `429` with a huge `Retry-After` could previously park the request
+  future indefinitely, holding its batch semaphore permit), and the header is
+  now also honored on `503`/`504` (its canonical carriers per RFC 9110
+  §10.2.1), not only on `429`
 - **Behavior change:** weak ETags (`W/"abc"`) are now rejected client-side by
   `put_if_match`, `put_if_match_prefer`, and `delete_if_match` (AUDIT-008) with
   `Error::InvalidEtag` and the new `EtagReason::Weak`, **before any network
