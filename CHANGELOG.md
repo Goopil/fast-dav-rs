@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Custom hyper client injection (issue #91): new `with_hyper_client(HyperClient)`
+  builder method on `WebDavClientBuilder`, `CalDavClientBuilder`, and
+  `CardDavClientBuilder`. When a client is injected, the builder skips its own
+  transport construction entirely — `force_http1`, pool, TLS, and proxy options
+  are not applied (the caller owns the transport); request-level options (auth,
+  timeout, compression, redirects, `Prefer`, retries) still apply. The
+  `webdav::HyperClient` type alias and the `common::http::MaybeProxied`
+  connector are now public (`MaybeProxied` is `#[non_exhaustive]`, with a
+  `MaybeProxied::direct(HttpConnector)` constructor) so users can build a
+  client of the exact expected shape
 - RFC 6764 §5 auto-discovery (issue #91): free functions `discover_caldav` and
   `discover_carddav` (taking `&WebDavClient`, re-exported from `fast_dav_rs::webdav` and the
   crate root) probe `{base}/.well-known/caldav` or `/.well-known/carddav` with a `Depth: 0`
@@ -53,6 +63,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chain (total attempts = `1 + max_retries`), each attempt runs under the same per-request
   timeout, and exhausted retries return the last response as-is (no synthetic error).
   Compression-retry semantics are unchanged.
+
+### Changed
+- **Breaking:** `SyncItem`, `SyncResponse`, `build_sync_collection_body`, and
+  `map_sync_response` are no longer re-exported from the crate root. CalDAV and
+  CardDAV define distinct same-named types/helpers, and the root previously bound
+  only the CalDAV versions — a CardDAV user importing `fast_dav_rs::SyncResponse`
+  silently got the wrong type (AUDIT-014). Import them from their modules instead:
+  `fast_dav_rs::caldav::{SyncItem, SyncResponse, build_sync_collection_body,
+  map_sync_response}` or `fast_dav_rs::carddav::{SyncItem, SyncResponse, …}`. The
+  shared WebDAV types (`DavItem`, `BatchItem`, `Depth`, `TextMatch`, `Collation`,
+  `MatchType`, `ParamFilter`) are unchanged — a single definition re-exported by
+  both modules.
 
 ### Fixed
 - The request-compression probe (AUDIT-012) no longer permanently pins `Identity`

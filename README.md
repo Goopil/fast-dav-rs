@@ -513,6 +513,42 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
 > HTTP/2 is negotiated over **TLS via ALPN** on `https://` URLs only. Cleartext
 > `http://` connections always use HTTP/1.1 (h2c is not attempted).
 
+### Custom Hyper client injection
+
+Bring your own hyper client — for custom transports, wiremock-style test
+harnesses, or tailored TLS/pool settings. The injected client is used **as-is**:
+the builder skips its own transport construction, so `force_http1`, pool,
+TLS, and proxy options are **not** applied (the caller owns the transport).
+Request-level options (auth, timeout, compression, redirects, `Prefer`,
+retries) still apply:
+
+```rust
+use fast_dav_rs::common::http::MaybeProxied;
+use fast_dav_rs::webdav::{HyperClient, WebDavClient};
+use hyper_rustls::HttpsConnectorBuilder;
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::rt::TokioExecutor;
+
+let mut http = HttpConnector::new();
+http.enforce_http(false);
+let https = HttpsConnectorBuilder::new()
+    .with_webpki_roots()
+    .https_or_http()
+    .enable_http1()
+    .enable_http2()
+    .wrap_connector(MaybeProxied::direct(http));
+let hyper_client: HyperClient = Client::builder(TokioExecutor::new())
+    .pool_max_idle_per_host(8)
+    .build(https);
+
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .with_hyper_client(hyper_client)
+    .build()?;
+```
+
+The method is available on `WebDavClientBuilder`, `CalDavClientBuilder`, and
+`CardDavClientBuilder`.
+
 ### Redirect following
 
 HTTP redirects (301/302/303/307/308) are followed automatically in `send`/`send_stream`,
@@ -701,6 +737,10 @@ async fn main() -> Result<()> {
 - `sync_collection_resilient` (all clients) recovers automatically from `410 Gone` (stale sync
   token, RFC 6578 §3.11) by re-issuing the report as an initial sync and returning the full
   result set with the new token; any other error propagates unchanged.
+- The sync types and helpers (`SyncItem`, `SyncResponse`, `build_sync_collection_body`,
+  `map_sync_response`) are **module-qualified**: CalDAV and CardDAV define distinct same-named
+  items, so they are only available as `fast_dav_rs::caldav::{SyncItem, SyncResponse, …}` and
+  `fast_dav_rs::carddav::{SyncItem, SyncResponse, …}` — never at the crate root.
 
 ### WebDAV locking (class 2)
 

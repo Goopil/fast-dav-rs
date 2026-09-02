@@ -9,17 +9,39 @@ use std::task::{Context, Poll};
 use tower_service::Service;
 
 /// Type alias for the Hyper client used across CalDAV/CardDAV modules.
-pub(crate) type HyperClient = Client<hyper_rustls::HttpsConnector<MaybeProxied>, Full<Bytes>>;
+///
+/// Public so callers of
+/// [`WebDavClientBuilder::with_hyper_client`](crate::webdav::WebDavClientBuilder::with_hyper_client)
+/// can build and inject a client of the exact expected shape. The connector
+/// type [`MaybeProxied`] is an implementation detail kept nameable for this
+/// alias.
+pub type HyperClient = Client<hyper_rustls::HttpsConnector<MaybeProxied>, Full<Bytes>>;
 
 /// Connector that is either direct or proxied via HTTP CONNECT tunnel.
+///
+/// Implementation detail, public so the [`HyperClient`] alias is nameable.
+/// The variants cannot be constructed outside this crate; use
+/// [`MaybeProxied::direct`] for the direct form (the internal builder
+/// constructs the tunneled form from proxy settings).
 ///
 /// Implements `tower_service::Service<Uri>` by delegating to the inner
 /// connector. The future is boxed since `HttpConnector` and
 /// `Tunnel<HttpConnector>` produce different future types.
 #[derive(Clone)]
-pub(crate) enum MaybeProxied {
+#[non_exhaustive]
+pub enum MaybeProxied {
     Direct(HttpConnector),
     Tunneled(Tunnel<HttpConnector>),
+}
+
+impl MaybeProxied {
+    /// Create a direct connector (no proxy) wrapping an `HttpConnector`.
+    ///
+    /// Configure the connector (e.g. `enforce_http(false)` to allow `https://`
+    /// URIs) before wrapping it.
+    pub fn direct(http: HttpConnector) -> Self {
+        Self::Direct(http)
+    }
 }
 
 impl Service<Uri> for MaybeProxied {

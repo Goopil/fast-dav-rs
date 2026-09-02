@@ -1,6 +1,15 @@
-use fast_dav_rs::{ContentEncoding, RequestCompressionMode, WebDavClient};
+use fast_dav_rs::common::http::MaybeProxied;
+use fast_dav_rs::{
+    CalDavClient, CardDavClient, ContentEncoding, HyperClient, RequestCompressionMode, WebDavClient,
+};
+use hyper::{HeaderMap, Method, StatusCode};
+use hyper_rustls::HttpsConnectorBuilder;
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::rt::TokioExecutor;
 use std::str::FromStr;
 use std::time::Duration;
+
+use crate::common::http_helpers::{response_head, serve_capture};
 
 const BASE: &str = "https://dav.example.com/user01/";
 
@@ -233,4 +242,115 @@ fn builder_proxy_basic_auth_without_proxy_errors() {
         .proxy_basic_auth("user", "pass")
         .build();
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn injected_hyper_client_drives_requests() {
+    let (base, captured) = serve_capture(response_head("", 5), b"hello".to_vec()).await;
+
+    let mut http = HttpConnector::new();
+    http.enforce_http(false);
+    let https = HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(MaybeProxied::direct(http));
+    let injected: HyperClient = Client::builder(TokioExecutor::new())
+        .pool_max_idle_per_host(1)
+        .build(https);
+
+    let client = WebDavClient::builder(base)
+        .with_hyper_client(injected)
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+    let resp = client
+        .send(Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.body().as_ref(), b"hello");
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(req.contains("GET / HTTP/1.1"), "captured request: {req}");
+}
+
+#[tokio::test]
+async fn injected_hyper_client_replaces_internal_transport() {
+    let (base, captured) = serve_capture(response_head("", 5), b"hello".to_vec()).await;
+
+    let https = HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(MaybeProxied::direct(HttpConnector::new()));
+    let injected: HyperClient = Client::builder(TokioExecutor::new()).build(https);
+
+    let https_base = base.replacen("http://", "https://", 1);
+    let client = WebDavClient::builder(https_base)
+        .with_hyper_client(injected)
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+
+    let result = client
+        .send(Method::GET, "", HeaderMap::new(), None, None)
+        .await;
+    assert!(result.is_err(), "injected connector must reject https URIs");
+    assert!(
+        captured.lock().unwrap().is_empty(),
+        "the mock must receive no bytes: the injected client, not the internal one, served the request"
+    );
+}
+
+fn injected_http1_client() -> HyperClient {
+    let https = HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(MaybeProxied::direct(HttpConnector::new()));
+    Client::builder(TokioExecutor::new()).build(https)
+}
+
+#[tokio::test]
+async fn injected_hyper_client_caldav_builder() {
+    let (base, captured) = serve_capture(response_head("", 5), b"hello".to_vec()).await;
+
+    let client = CalDavClient::builder(base)
+        .with_hyper_client(injected_http1_client())
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+    let resp = client
+        .send(Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.body().as_ref(), b"hello");
+    assert!(
+        String::from_utf8_lossy(&captured.lock().unwrap()).contains("GET / HTTP/1.1"),
+        "the injected client must serve the request"
+    );
+}
+
+#[tokio::test]
+async fn injected_hyper_client_carddav_builder() {
+    let (base, captured) = serve_capture(response_head("", 5), b"hello".to_vec()).await;
+
+    let client = CardDavClient::builder(base)
+        .with_hyper_client(injected_http1_client())
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+    let resp = client
+        .send(Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.body().as_ref(), b"hello");
+    assert!(
+        String::from_utf8_lossy(&captured.lock().unwrap()).contains("GET / HTTP/1.1"),
+        "the injected client must serve the request"
+    );
 }
