@@ -14,6 +14,7 @@ use crate::common::compression::{
     detect_encodings, detect_request_compression_preference,
 };
 use crate::common::http::HyperClient;
+use crate::common::{dav_debug, dav_trace};
 use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::retry::{is_idempotent_method, is_retryable_status, retry_delay};
@@ -625,11 +626,18 @@ impl WebDavClient {
                 let negotiated = detect_request_compression_preference(resp.headers())
                     .unwrap_or(AUTO_DEFAULT_ENCODING);
                 self.set_negotiated_encoding(Some(negotiated));
+                dav_debug!(
+                    encoding = negotiated.as_str(),
+                    "request compression probe succeeded"
+                );
                 true
             }
             // Transient failure: do not pin `Identity` — the next request
             // re-probes; the current one proceeds uncompressed.
-            _ => false,
+            _ => {
+                dav_debug!("request compression probe failed; re-probing on the next request");
+                false
+            }
         }
     }
 
@@ -653,6 +661,10 @@ impl WebDavClient {
                 | StatusCode::BAD_REQUEST
         ) {
             self.set_negotiated_encoding(Some(ContentEncoding::Identity));
+            dav_debug!(
+                status = %status,
+                "server rejected the compressed request body; pinning identity"
+            );
             return true;
         }
 
@@ -784,11 +796,29 @@ impl WebDavClient {
             };
 
             let limit = per_req_timeout.unwrap_or(self.default_timeout);
+            #[cfg(feature = "tracing")]
+            let started = std::time::Instant::now();
+            dav_debug!(method = %method, uri = %uri, "dav request start");
             let fut = self.client.request(req);
             let resp = timeout(limit, fut)
                 .await
-                .map_err(|_| Error::Timeout { limit })?
+                .map_err(|_| {
+                    dav_debug!(
+                        method = %method,
+                        uri = %uri,
+                        limit_ms = limit.as_millis() as u64,
+                        "dav request timed out"
+                    );
+                    Error::Timeout { limit }
+                })?
                 .map_err(Error::from_client)?;
+            dav_debug!(
+                method = %method,
+                uri = %uri,
+                status = %resp.status(),
+                duration_us = started.elapsed().as_micros() as u64,
+                "dav request finished"
+            );
 
             let should_retry =
                 self.handle_request_compression_outcome(attempted_encoding, resp.status());
@@ -801,10 +831,9 @@ impl WebDavClient {
             // 429, exponential backoff + jitter otherwise. The budget is
             // shared across the whole redirect chain; exhausted retries fall
             // through and the last response is returned as-is.
-            if retries < self.max_retries
-                && is_retryable_status(resp.status())
-                && (self.retry_all || is_idempotent_method(&method))
-            {
+            let retryable = is_retryable_status(resp.status())
+                && (self.retry_all || is_idempotent_method(&method));
+            if retryable && retries < self.max_retries {
                 let delay = retry_delay(
                     resp.status(),
                     resp.headers(),
@@ -813,8 +842,25 @@ impl WebDavClient {
                     self.retry_backoff_cap,
                 );
                 retries += 1;
+                dav_debug!(
+                    method = %method,
+                    uri = %uri,
+                    status = %resp.status(),
+                    delay_ms = delay.as_millis() as u64,
+                    attempt = retries,
+                    "retrying after transient failure"
+                );
                 sleep(delay).await;
                 continue;
+            }
+            if retryable && retries > 0 {
+                dav_debug!(
+                    method = %method,
+                    uri = %uri,
+                    status = %resp.status(),
+                    attempts = retries,
+                    "retry budget exhausted; returning last response as-is"
+                );
             }
 
             if !self.follow_redirects || !is_redirect_status(resp.status()) {
@@ -849,6 +895,13 @@ impl WebDavClient {
                 base_headers.remove(header::CONTENT_ENCODING);
             }
 
+            dav_debug!(
+                from = %uri,
+                to = %next,
+                status = %resp.status(),
+                hop = redirects as u64 + 1,
+                "following redirect"
+            );
             uri = next;
             redirects += 1;
         }
@@ -886,6 +939,7 @@ impl WebDavClient {
             .await
             .map_err(|_| Error::Timeout { limit })??;
         normalize_decompressed_headers(&mut parts.headers, &encodings, decompressed.len());
+        dav_trace!(bytes = decompressed.len(), "decompressed response body");
 
         Ok(Response::from_parts(parts, decompressed))
     }

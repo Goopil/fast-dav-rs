@@ -59,6 +59,7 @@ features, and major releases introduce breaking changes when needed.
 - [Error Handling & Migration](#error-handling--migration)
 - [Configuration](#configuration)
 - [Security](#security)
+- [Observability](#observability)
 - [Usage Examples](#usage-examples)
 - [Streaming & Sync](#streaming--sync)
 - [Batch Operations](#batch-operations)
@@ -94,6 +95,7 @@ features, and major releases introduce breaking changes when needed.
 - Streaming send APIs for custom workflows.
 - RFC 6764 `.well-known` service discovery (`discover_caldav`/`discover_carddav`).
 - Retry with exponential backoff for transient failures (429/503/504) with `Retry-After` support.
+- Optional `tracing` instrumentation behind the `tracing` feature (zero-cost when disabled).
 
 ## Requirements
 
@@ -663,6 +665,31 @@ cleartext and can be read by anyone on the network path. The connector intention
 `http://` and `https://` (plain HTTP is convenient for isolated test environments such as the
 bundled Docker setup), so the library does not reject `http://` at runtime — **always use
 `https://` outside isolated test environments**.
+
+## Observability
+
+The client optionally emits structured diagnostics through the [`tracing`](https://crates.io/crates/tracing)
+ecosystem standard. Enable it with a feature flag:
+
+```bash
+cargo add fast-dav-rs --features tracing
+```
+
+Everything (WebDAV, CalDAV, and CardDAV) is instrumented in the shared request pipeline, so one
+feature flag covers all three clients:
+
+| Level | Events |
+|---|---|
+| `DEBUG` | Request start (`method`, `uri`) and finish (`method`, `uri`, `status`, `duration_us`) per attempt; each redirect hop (source, target, status); transient retries (status, `delay_ms`, attempt number); exhausted retry budget; per-request timeout hit (`limit_ms`); compression-probe outcome and negotiated encoding |
+| `TRACE` | Decompressed response body size (`bytes`) after the aggregated `send` path |
+
+The feature is **disabled by default and zero-cost when off**: no `tracing` dependency is pulled
+in and no instrumentation code is compiled into your binary. When enabled, no subscriber is
+installed for you — plug in your own (`tracing-subscriber`'s `fmt()` layer, OpenTelemetry, …):
+
+```rust,ignore
+tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).init();
+```
 
 ## Usage Examples
 

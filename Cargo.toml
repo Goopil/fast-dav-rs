@@ -34,6 +34,7 @@ http-body-util = "0.1"
 zeroize = "1"
 thiserror = { version = "2" }
 percent-encoding = "2"
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -51,6 +52,7 @@ path = "tests/e2e/mod.rs"
 
 [features]
 default = []
+tracing = ["dep:tracing"]
 
 [profile.dev.package."*"]
 opt-level = 3

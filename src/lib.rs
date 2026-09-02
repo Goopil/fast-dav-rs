@@ -29,6 +29,16 @@
 //! - Streaming XML parsing with minimal memory footprint
 //! - CardDAV addressbook discovery and vCard operations
 //!
+//! ## Observability (optional `tracing` feature)
+//!
+//! With the `tracing` feature enabled (`features = ["tracing"]`), the client
+//! emits `tracing` events on the shared request pipeline: request start and
+//! finish (method, URI, status, duration), redirect hops, transient retries,
+//! timeouts, and compression-probe outcomes at `debug` level, plus the
+//! decompressed response body size at `trace` level. The feature is optional
+//! and disabled by default: without it, no `tracing` code is compiled in at
+//! all (zero runtime or binary-size cost).
+//!
 //! # Examples
 //!
 //! ## Basic Setup and Calendar Discovery
