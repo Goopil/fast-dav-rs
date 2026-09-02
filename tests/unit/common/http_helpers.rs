@@ -105,6 +105,43 @@ pub async fn serve_sequence(
     (format!("http://127.0.0.1:{port}/"), captured)
 }
 
+/// Serve one response per connection, handling connections concurrently:
+/// connection *n* receives response *n* (head + body) after `delay_ms`. Every
+/// request is captured in arrival order, and every step is appended to a
+/// shared event log — `"req"` when a full request has been read, `"resp"`
+/// when its response has been written — so tests can assert interleavings.
+pub async fn serve_parallel(
+    responses: Vec<(String, Vec<u8>, u64)>,
+) -> (String, Arc<Mutex<Vec<Vec<u8>>>>, Arc<Mutex<Vec<String>>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+    let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let ev = events.clone();
+    let cap = captured.clone();
+    tokio::spawn(async move {
+        for (head, body, delay_ms) in responses {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            let ev = ev.clone();
+            let cap = cap.clone();
+            tokio::spawn(async move {
+                let seen = read_request(&mut socket).await;
+                cap.lock().unwrap().push(seen);
+                ev.lock().unwrap().push("req".to_owned());
+                if delay_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+                ev.lock().unwrap().push("resp".to_owned());
+            });
+        }
+    });
+    (format!("http://127.0.0.1:{port}/"), captured, events)
+}
+
 /// Serve the same HTTP/1.1 response to every connection until the test ends.
 /// Unlike `serve_once`, supports requests that trigger additional probes
 /// (e.g. the request-compression probe) or sequential requests.
