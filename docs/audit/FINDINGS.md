@@ -360,6 +360,7 @@ In release builds, make `danger_accept_invalid_certs` require an explicit opt-in
 - **Confidence:** Confirmed
 - **Domain:** Reliability / Performance
 - **Location:** `src/webdav/client.rs:353-441` (probe, 5 s at :426), `client.rs:490-498` (Mutex held across probe), `client.rs:428-440` (failure → `Identity`)
+- **Status:** ✅ Fixed 2026-09-02 (v1.1 audit wave 2): failed probes no longer cache — the negotiation state stays unset so the next request re-probes while the current one proceeds uncompressed; the probe timeout now derives from the client's `default_timeout`; completed probes still cache the server's answer (including `Identity`).
 
 ### Problem
 On the first body-carrying request in `Auto` mode, all concurrent callers serialize behind a tokio `Mutex` held across a hidden PROPFIND probe (up to 5 s). Any transient probe failure (network, auth, timeout) silently sets `negotiated = Some(Identity)` **permanently** for the client and all clones; recovery requires the caller to know about `set_request_compression_auto()` (client.rs:231) — undocumented.
