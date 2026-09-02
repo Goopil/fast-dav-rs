@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `CalDavClient::calendar_multiget_many` (issue #105): batched concurrent
+  `calendar-multiget` — chunks the href list into `batch_size` slices, issues one
+  REPORT per chunk with `max_concurrency`-bounded parallelism (same
+  `Semaphore` + ordered futures machinery as `WebDavClient::report_many`),
+  and returns `Vec<BatchItem<CalendarObject>>` with deterministic ordering
+  (chunk index, then server order within the chunk). A failed chunk (transport
+  error, non-success status, unparsable body) yields exactly one error
+  `BatchItem`; sibling chunks are unaffected. `batch_size == 0` fails with
+  `Error::InvalidConfig` and empty `hrefs` returns an empty result — both
+  before any network I/O
+
 ## [0.10.0] - 2026-09-01
 
 ### Added

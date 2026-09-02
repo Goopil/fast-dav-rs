@@ -1058,12 +1058,12 @@ impl WebDavClient {
         xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
+        let requests = paths.into_iter().map(move |p| (p, xml_body.clone()));
         self.many(
             // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"PROPFIND").unwrap(),
-            paths,
+            requests,
             depth,
-            xml_body,
             max_concurrency,
         )
         .await
@@ -1077,12 +1077,30 @@ impl WebDavClient {
         xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
+        let requests = paths.into_iter().map(move |p| (p, xml_body.clone()));
         self.many(
             // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"REPORT").unwrap(),
-            paths,
+            requests,
             depth,
-            xml_body,
+            max_concurrency,
+        )
+        .await
+    }
+
+    /// Run many `REPORT`s to the same collection with per-request bodies,
+    /// concurrently bounded by a semaphore (same machinery as
+    /// [`Self::report_many`], used by the CalDAV batched multiget).
+    pub(crate) async fn report_many_bodies(
+        &self,
+        requests: impl IntoIterator<Item = (String, Arc<Bytes>)>,
+        max_concurrency: usize,
+    ) -> Vec<BatchItem<Response<Bytes>>> {
+        self.many(
+            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
+            Method::from_bytes(b"REPORT").unwrap(),
+            requests,
+            Depth::One,
             max_concurrency,
         )
         .await
@@ -1091,18 +1109,16 @@ impl WebDavClient {
     async fn many(
         &self,
         method: Method,
-        paths: impl IntoIterator<Item = String>,
+        requests: impl IntoIterator<Item = (String, Arc<Bytes>)>,
         depth: Depth,
-        xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         let sem = Arc::new(Semaphore::new(max_concurrency.max(1)));
         let mut tasks = FuturesOrdered::new();
 
-        for path in paths {
+        for (path, body) in requests {
             let sem_clone = sem.clone();
             let this = self.clone();
-            let body = xml_body.clone();
             let p = path.clone();
             let method = method.clone();
             tasks.push_back(async move {
