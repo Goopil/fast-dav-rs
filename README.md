@@ -457,9 +457,11 @@ requests while preserving input order in the result list.
 `CalDavClient::calendar_multiget_many` applies the same machinery to `calendar-multiget`: the href
 list is chunked into `batch_size` slices, one REPORT is issued per chunk with at most
 `max_concurrency` in flight, and results come back as `Vec<BatchItem<CalendarObject>>` ordered by
-chunk. A failed chunk is a single error `BatchItem`; sibling chunks are unaffected. Pick
-`batch_size` (e.g. 100 hrefs per REPORT) and `max_concurrency` (e.g. 4) to match your server's
-limits.
+chunk. A failed chunk is a single error `BatchItem`; sibling chunks are unaffected. Every
+`BatchItem` carries the request hrefs of its batch in `hrefs`, so a failed chunk is attributable
+to the hrefs to re-fetch. Multiget REPORTs are sent with `Depth: 0` (RFC 4791 §7.9, RFC 6352
+§8.7). Pick `batch_size` (e.g. 100 hrefs per REPORT) and `max_concurrency` (e.g. 4) to match your
+server's limits.
 
 ## Advanced Configuration
 
@@ -772,9 +774,14 @@ async fn main() -> Result<()> {
 - `sync_collection_with_level` (all clients) sends a configurable `sync-level` (RFC 6578 §3.3):
   `SyncLevel::One` restricts the sync to the collection members, `SyncLevel::Infinite` includes
   all descendants.
-- `sync_collection_resilient` (all clients) recovers automatically from `410 Gone` (stale sync
-  token, RFC 6578 §3.11) by re-issuing the report as an initial sync and returning the full
-  result set with the new token; any other error propagates unchanged.
+- `sync_collection_resilient` (all clients) recovers automatically from a stale sync token —
+  `410 Gone` (RFC 6578 §3.11) or `403 Forbidden` + `valid-sync-token` (§3.2) — by re-issuing the
+  report as an initial sync and returning the full result set with the new token; any other error
+  propagates unchanged. The response is flagged: the `WebDavClient` variant returns a 4-tuple whose
+  last element is the `resynced` flag, and `caldav::SyncResponse`/`carddav::SyncResponse` expose
+  `resynced == true`. Per RFC 6578 §3.4 an initial sync MUST NOT report deletions that predate the
+  stale token, so rebuild your caches from `items` instead of applying them incrementally when the
+  flag is set.
 - **Result truncation (RFC 6578 §3.6):** when the server truncates a sync result set it reports
   `507 Insufficient Storage` inside the 207 multistatus (normally on the request-URI).
   `caldav::SyncResponse`/`carddav::SyncResponse` expose this as `truncated == true`; the 507

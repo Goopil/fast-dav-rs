@@ -148,4 +148,12 @@ pub struct SyncResponse {
     /// `true` when the server truncated the result set (RFC 6578 §3.6, a
     /// `507 Insufficient Storage` status inside the multistatus).
     pub truncated: bool,
+    /// `true` when this response is the result of an initial sync triggered
+    /// by a stale sync token (`410 Gone` per RFC 6578 §3.11, or `403` +
+    /// `valid-sync-token` per §3.2) — i.e. the report was re-issued with an
+    /// empty token. Per RFC 6578 §3.4 such a response MUST NOT report
+    /// deletions that predate the stale token, so callers must rebuild their
+    /// caches from `items` instead of applying them incrementally. Always
+    /// `false` for incremental syncs.
+    pub resynced: bool,
 }

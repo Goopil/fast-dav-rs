@@ -149,6 +149,15 @@ pub fn normalize_sync_token(token: &str) -> String {
     token.trim().trim_matches('"').to_string()
 }
 
+/// Split a successful sync-collection response into its raw parts
+/// (headers, multistatus items, sync token).
+fn parse_sync_response(resp: Response<Bytes>) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
+    let headers = resp.headers().clone();
+    let body = resp.into_body();
+    let parsed = crate::webdav::streaming::parse_multistatus_bytes(&body)?;
+    Ok((headers, parsed.items, parsed.sync_token))
+}
+
 /// Extract the `ETag` from a response header map, if present.
 ///
 /// The returned value is **normalized**: surrounding double quotes are
@@ -1443,7 +1452,9 @@ impl WebDavClient {
 
     /// Run many `REPORT`s to the same collection with per-request bodies,
     /// concurrently bounded by a semaphore (same machinery as
-    /// [`Self::report_many`], used by the CalDAV batched multiget).
+    /// [`Self::report_many`], used by the CalDAV batched multiget). Sent with
+    /// `Depth: 0` (multiget REPORTs SHOULD NOT use `Depth: 1`, RFC 4791 §7.9 /
+    /// RFC 6352 §8.7).
     pub(crate) async fn report_many_bodies(
         &self,
         requests: impl IntoIterator<Item = (String, Arc<Bytes>)>,
@@ -1453,7 +1464,7 @@ impl WebDavClient {
             // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"REPORT").unwrap(),
             requests,
-            Depth::One,
+            Depth::Zero,
             max_concurrency,
         )
         .await
@@ -1490,7 +1501,8 @@ impl WebDavClient {
                 );
                 let res = this.send(method, &p, h, Some((*body).clone()), None).await;
                 BatchItem {
-                    pub_path: p,
+                    pub_path: p.clone(),
+                    hrefs: vec![p],
                     result: res,
                 }
             });
@@ -1629,9 +1641,16 @@ impl WebDavClient {
     /// 410-Gone-resilient variant of
     /// [`sync_collection_with_level`](Self::sync_collection_with_level)
     /// (RFC 6578 §3.11): when the server rejects the incremental request
-    /// with `410 Gone` (stale sync token), the report is re-issued with an
-    /// empty sync token (initial sync) and the full result set with the new
-    /// token is returned. Uses [`SyncLevel::One`].
+    /// with `410 Gone` (stale sync token), or with `403 Forbidden` plus the
+    /// `valid-sync-token` precondition (§3.2 alternative stale signal), the
+    /// report is re-issued with an empty sync token (initial sync), the full
+    /// result set with the new token is returned, and the last tuple element
+    /// (`resynced`) is `true`. Uses [`SyncLevel::One`].
+    ///
+    /// A `resynced == true` result is an **initial sync**: per RFC 6578 §3.4
+    /// it MUST NOT report deletions that predate the stale token, so callers
+    /// must rebuild their caches from the returned items instead of applying
+    /// them incrementally.
     ///
     /// Result-set truncation (RFC 6578 §3.6) surfaces as an item with a
     /// `HTTP/1.1 507 Insufficient Storage` status (see
@@ -1641,8 +1660,9 @@ impl WebDavClient {
     ///
     /// # Errors
     ///
-    /// Returns the error of the underlying report; a `410 Gone` triggers one
-    /// retry as an initial sync, and the second failure is returned as-is.
+    /// Returns the error of the underlying report; a `410 Gone` (or a `403`
+    /// with `valid-sync-token`) triggers one retry as an initial sync, and
+    /// the second failure is returned as-is.
     ///
     /// # Example
     ///
@@ -1651,7 +1671,7 @@ impl WebDavClient {
     ///
     /// # async fn run() -> fast_dav_rs::Result<()> {
     /// let client = WebDavClient::new("https://dav.example.com/cal/", None, None)?;
-    /// let (headers, items, sync_token) = client
+    /// let (headers, items, sync_token, resynced) = client
     ///     .sync_collection_resilient(
     ///         "calendars/user/work/",
     ///         Some("http://example.com/sync/stale"),
@@ -1661,7 +1681,11 @@ impl WebDavClient {
     ///         "calendar-data",
     ///     )
     ///     .await?;
-    /// println!("token: {sync_token:?}, items: {}", items.len());
+    /// if resynced {
+    ///     println!("stale token: rebuild caches from {} items", items.len());
+    /// } else {
+    ///     println!("token: {sync_token:?}, items: {}", items.len());
+    /// }
     /// # Ok(())
     /// # }
     /// ```
@@ -1673,7 +1697,7 @@ impl WebDavClient {
         include_data: bool,
         namespace: &str,
         data_element: &str,
-    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
+    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>, bool)> {
         self.sync_collection_resilient_report(path, sync_token, |token| {
             crate::webdav::xml::build_sync_collection_body(
                 token,
@@ -1704,31 +1728,45 @@ impl WebDavClient {
                 status: resp.status(),
             });
         }
-        let headers = resp.headers().clone();
-        let body = resp.into_body();
-        let parsed = crate::webdav::streaming::parse_multistatus_bytes(&body)?;
-        Ok((headers, parsed.items, parsed.sync_token))
+        parse_sync_response(resp)
     }
 
     /// Shared implementation behind `sync_collection_resilient`: issues the
-    /// report built by `build_body(sync_token)`; on `410 Gone` (stale sync
-    /// token, RFC 6578 §3.11) re-issues it once with an empty sync token
-    /// (initial sync). Any other error propagates unchanged.
+    /// report built by `build_body(sync_token)`; on a stale sync token
+    /// (RFC 6578 §3.11: `410 Gone`; §3.2 alternative: `403 Forbidden` +
+    /// `valid-sync-token` precondition) re-issues it once with an empty sync
+    /// token (initial sync) and sets the `resynced` flag. Any other error
+    /// propagates unchanged.
     pub(crate) async fn sync_collection_resilient_report(
         &self,
         path: &str,
         sync_token: Option<&str>,
         build_body: impl Fn(Option<&str>) -> String,
-    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
-        match self
-            .sync_collection_report(path, &build_body(sync_token))
-            .await
-        {
-            Err(Error::UnexpectedStatus { status, .. }) if status == StatusCode::GONE => {
-                self.sync_collection_report(path, &build_body(None)).await
+    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>, bool)> {
+        let resp = self
+            .report(path, Depth::Zero, &build_body(sync_token))
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let stale = status == StatusCode::GONE
+                || (status == StatusCode::FORBIDDEN && {
+                    let err =
+                        crate::webdav::streaming::parse_error_body(resp.body()).unwrap_or_default();
+                    err.precondition_code.as_deref() == Some("valid-sync-token")
+                });
+            if !stale {
+                return Err(Error::UnexpectedStatus {
+                    operation: Operation::ReportSyncCollection,
+                    status,
+                });
             }
-            other => other,
+            // Stale token: re-issue once as an initial sync (empty token);
+            // the second failure propagates unchanged.
+            let (headers, items, token) =
+                self.sync_collection_report(path, &build_body(None)).await?;
+            return Ok((headers, items, token, true));
         }
+        parse_sync_response(resp).map(|(headers, items, token)| (headers, items, token, false))
     }
 
     /// Discover the current user's principal URL via `current-user-principal`.
@@ -2238,10 +2276,17 @@ macro_rules! impl_dav_client_delegates {
 
             /// 410-Gone-resilient sync-collection (RFC 6578 §3.11): when the
             /// server rejects the incremental request with `410 Gone` (stale
-            /// sync token), the report is automatically re-issued with an
-            /// empty sync token (initial sync) and the full result set with
-            /// the new token is returned. Any other error propagates
-            /// unchanged.
+            /// sync token), or with `403 Forbidden` plus the
+            /// `valid-sync-token` precondition (§3.2 alternative stale
+            /// signal), the report is automatically re-issued with an empty
+            /// sync token (initial sync) and the full result set with the new
+            /// token is returned with the `resynced` field set to `true`.
+            /// Any other error propagates unchanged.
+            ///
+            /// A `resynced == true` response is an **initial sync**: per
+            /// RFC 6578 §3.4 it MUST NOT report deletions that predate the
+            /// stale token, so callers must rebuild their caches from the
+            /// returned items instead of applying them incrementally.
             ///
             /// Result-set truncation (RFC 6578 §3.6) sets `truncated == true`
             /// on the returned sync response; the returned token remains
@@ -2249,9 +2294,9 @@ macro_rules! impl_dav_client_delegates {
             ///
             /// # Errors
             ///
-            /// Returns the error of the underlying report; a `410 Gone`
-            /// triggers one retry as an initial sync, and the second failure
-            /// is returned as-is.
+            /// Returns the error of the underlying report; a `410 Gone` (or
+            /// a `403` with `valid-sync-token`) triggers one retry as an
+            /// initial sync, and the second failure is returned as-is.
             ///
             /// # Example
             ///
@@ -2262,7 +2307,11 @@ macro_rules! impl_dav_client_delegates {
             /// let sync = client
             ///     .sync_collection_resilient("calendars/user/work/", Some("stale-token"), None, true)
             ///     .await?;
-            /// println!("token: {:?}", sync.sync_token);
+            /// if sync.resynced {
+            ///     println!("stale token: rebuild caches from {} items", sync.items.len());
+            /// } else {
+            ///     println!("token: {:?}", sync.sync_token);
+            /// }
             /// # Ok(())
             /// # }
             /// ```
@@ -2273,11 +2322,13 @@ macro_rules! impl_dav_client_delegates {
                 limit: Option<u32>,
                 include_data: bool,
             ) -> $crate::Result<$sync_response> {
-                let (headers, items, token) = self
+                let (headers, items, token, resynced) = self
                     .webdav
                     .sync_collection_resilient(path, sync_token, limit, include_data, $namespace, $data_element)
                     .await?;
-                Ok($map_sync_response(&headers, items, token))
+                let mut response = $map_sync_response(&headers, items, token);
+                response.resynced = resynced;
+                Ok(response)
             }
         }
     };

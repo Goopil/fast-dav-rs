@@ -355,6 +355,9 @@ impl CalDavClient {
 
     /// Fetch specific calendar objects via `calendar-multiget`.
     ///
+    /// The REPORT is sent with `Depth: 0` (RFC 4791 §7.9) and answers with one
+    /// multistatus element per requested href.
+    ///
     /// `expand` asks the server to expand recurring components into their
     /// individual instances covering the given range (RFC 4791 §9.6,
     /// `<C:expand>`). When it is `Some`, `include_data` is implied `true`
@@ -388,7 +391,7 @@ impl CalDavClient {
             return Ok(Vec::new());
         };
 
-        let resp = self.report(calendar_path, Depth::One, &body).await?;
+        let resp = self.report(calendar_path, Depth::Zero, &body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
                 operation: Operation::ReportCalendarMultiget,
@@ -417,7 +420,8 @@ impl CalDavClient {
     ///
     /// Each item of the returned vector is one [`CalendarObject`] wrapped in a
     /// [`BatchItem`]: `pub_path` is the `calendar_path` the REPORT was sent
-    /// to, and the object's own URL is in [`CalendarObject::href`]. Results
+    /// to, `hrefs` holds the exact hrefs the chunk's REPORT requested, and
+    /// the object's own URL is in [`CalendarObject::href`]. Results
     /// are **deterministically ordered by chunk index first**, then by the
     /// order in which the server returned the objects within that chunk's
     /// multistatus (which matches the request href order for compliant
@@ -428,6 +432,8 @@ impl CalDavClient {
     /// A failed chunk (transport error, non-success status, or an
     /// unparsable response body) produces exactly **one** error [`BatchItem`];
     /// sibling chunks are unaffected and still contribute their results. The
+    /// failing chunk's `hrefs` field carries the requested hrefs, so callers
+    /// know exactly which objects to re-fetch. The
     /// method itself only fails before any network I/O (see below).
     ///
     /// # Errors
@@ -484,6 +490,7 @@ impl CalDavClient {
         }
 
         let mut requests = Vec::new();
+        let mut chunk_hrefs = Vec::new();
         for chunk in hrefs.chunks(batch_size) {
             let Some(xml) =
                 build_calendar_multiget_body(chunk.iter(), include_data, expand.as_ref())
@@ -491,12 +498,18 @@ impl CalDavClient {
                 continue;
             };
             requests.push((calendar_path.to_owned(), Arc::new(Bytes::from(xml))));
+            chunk_hrefs.push(chunk.to_vec());
         }
 
-        let batches = self
+        let mut batches = self
             .webdav
             .report_many_bodies(requests, max_concurrency)
             .await;
+        // `report_many_bodies` only knows the request path; stamp each batch
+        // with the hrefs its chunk requested so failures are attributable.
+        for (batch, hrefs) in batches.iter_mut().zip(chunk_hrefs) {
+            batch.hrefs = hrefs;
+        }
 
         let mut out = Vec::with_capacity(hrefs.len());
         for batch in batches {
@@ -514,10 +527,12 @@ impl CalDavClient {
             match result {
                 Ok(objects) => out.extend(objects.into_iter().map(|o| BatchItem {
                     pub_path: batch.pub_path.clone(),
+                    hrefs: batch.hrefs.clone(),
                     result: Ok(o),
                 })),
                 Err(e) => out.push(BatchItem {
                     pub_path: batch.pub_path,
+                    hrefs: batch.hrefs,
                     result: Err(e),
                 }),
             }
@@ -880,6 +895,7 @@ pub fn map_sync_response(
             })
             .collect(),
         truncated,
+        resynced: false,
     }
 }
 
