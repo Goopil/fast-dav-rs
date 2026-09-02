@@ -88,13 +88,72 @@ fn build_uri_preserves_escapes_in_base_path() {
 }
 
 #[test]
-fn build_uri_leaves_query_untouched() {
+fn build_uri_encodes_question_mark_and_hash_in_resource_names() {
+    // A `?`/`#` in a resource name is part of the path: it must be encoded,
+    // never interpreted as a query/fragment separator (issue #139).
     let client = make_client("http://127.0.0.1:8080/");
-    // `%zz` is not a valid escape: it would become `%25zz` if the path
-    // encoder ran over the query. It must survive verbatim.
+    let uri = client.build_uri("cal/report?q.ics").unwrap();
+    assert_eq!(uri.path(), "/cal/report%3Fq.ics");
+    assert!(uri.query().is_none(), "no query may be split off the path");
+
+    let uri = client.build_uri("cal/a#b.ics").unwrap();
+    assert_eq!(uri.path(), "/cal/a%23b.ics");
+
+    // Query-ish input keeps its characters encoded too.
     let uri = client.build_uri("cal/?a=b&c=%zz").unwrap();
-    assert_eq!(uri.path(), "/cal/");
-    assert_eq!(uri.query().unwrap(), "a=b&c=%zz");
+    assert_eq!(uri.path(), "/cal/%3Fa=b&c=%25zz");
+    assert!(uri.query().is_none());
+}
+
+#[test]
+fn build_uri_keeps_percent_escapes_verbatim() {
+    // `%41` is not decoded: pre-encoded input addresses the resource named
+    // by its encoded form (`a%41b` != `aAb`).
+    let client = make_client("http://127.0.0.1:8080/");
+    let uri = client.build_uri("a%41b.txt").unwrap();
+    assert_eq!(uri.path(), "/a%41b.txt");
+}
+
+#[tokio::test]
+async fn move_rejects_destination_without_absolute_uri() {
+    // Unroutable base: if validation passed, the request would fail with a
+    // connection error — never with InvalidInput.
+    let client = make_client("http://127.0.0.1:1/");
+
+    let err = client.r#move("src", "not a uri", true).await.unwrap_err();
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "bare relative string must be rejected, got: {err:?}"
+    );
+
+    // A root-relative reference has no scheme/authority: rejected.
+    let err = client.r#move("src", "/only/path", true).await.unwrap_err();
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "path-only reference must be rejected, got: {err:?}"
+    );
+
+    // Scheme without authority: rejected.
+    let err = client.copy("src", "http://", true).await.unwrap_err();
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "scheme-only reference must be rejected, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn move_with_valid_absolute_destination_passes_validation() {
+    // Unroutable origin: validation must let a well-formed absolute URL
+    // through and the failure must be a transport error, not InvalidInput.
+    let client = make_client("http://127.0.0.1:1/");
+    let err = client
+        .r#move("src", "http://other.example.com/dav/dest", true)
+        .await
+        .unwrap_err();
+    assert!(
+        !matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "a valid absolute Destination must not be rejected by validation, got: {err:?}"
+    );
 }
 
 #[test]

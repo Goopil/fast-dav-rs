@@ -225,6 +225,22 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
 /// `/` separators are preserved, already-valid `%XX` sequences are kept
 /// verbatim, bare `%` becomes `%25`, and everything in
 /// [`PATH_SEGMENT_ENCODE_SET`] (plus non-ASCII bytes) is percent-encoded.
+/// In particular `?` and `#` are encoded, so a resource name can never
+/// leak into the query or fragment position.
+///
+/// # `%XX` escapes are kept verbatim — know what you pass
+///
+/// Already-valid escapes are **never decoded or re-encoded**: the caller is
+/// expected to pass either raw text or a correctly pre-encoded path. A
+/// literal `%41` in the input therefore still addresses `A` on the server —
+/// this crate does not rewrite existing escapes, so passing pre-encoded
+/// input addresses exactly the resource named by the encoded form.
+///
+/// ```
+/// # use fast_dav_rs::webdav::client::encode_path_segments;
+/// assert_eq!(encode_path_segments("a%41b.txt"), "a%41b.txt");
+/// assert_eq!(encode_path_segments("report?q.ics"), "report%3Fq.ics");
+/// ```
 #[doc(hidden)]
 pub fn encode_path_segments(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
@@ -251,6 +267,10 @@ fn is_redirect_status(status: StatusCode) -> bool {
 }
 
 /// Compare the origins (scheme + host + effective port) of two URIs.
+///
+/// The host comparison is ASCII-case-insensitive (RFC 3986 §3.2.2: host
+/// names are case-insensitive; `Uri` hosts are already punycode/ASCII), so
+/// a redirect that merely re-cases the host stays same-origin.
 #[doc(hidden)]
 pub fn same_origin(a: &Uri, b: &Uri) -> bool {
     let effective_port = |u: &Uri| {
@@ -260,20 +280,37 @@ pub fn same_origin(a: &Uri, b: &Uri) -> bool {
             _ => 0,
         })
     };
-    a.scheme_str() == b.scheme_str()
-        && a.host() == b.host()
-        && effective_port(a) == effective_port(b)
+    let host = |u: &Uri| u.host().map(str::to_ascii_lowercase);
+    a.scheme_str() == b.scheme_str() && host(a) == host(b) && effective_port(a) == effective_port(b)
 }
 
 /// Resolve a `Location` header value against the URI that produced it.
 ///
-/// Supports absolute URLs, root-relative paths, bare query references, and
-/// relative segment references (merged against the current directory, RFC
-/// 3986 §5). Returns `None` when the reference cannot be resolved.
+/// Supports absolute URLs with case-insensitive schemes (RFC 3986 §3.1 —
+/// `HTTPS://…` is absolute just like `https://…`), network-path references
+/// (`//host/path`, RFC 3986 §4.2 — resolved against the current scheme),
+/// root-relative paths, bare query references, and relative segment
+/// references (merged against the current directory, RFC 3986 §5). The
+/// merged path is normalized with the RFC 3986 §5.2.4 `remove_dot_segments`
+/// algorithm, so the resolved URI never contains `.` or `..` segments
+/// (`../caldav/` against `/.well-known/` yields `/caldav/`). Returns `None`
+/// when the reference cannot be resolved.
 #[doc(hidden)]
 pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
-    if location.starts_with("http://") || location.starts_with("https://") {
-        return location.parse().ok();
+    if let Some((scheme, rest)) = location.split_once(':') {
+        if rest.starts_with("//") && is_uri_scheme(scheme) {
+            // Absolute URL: the `Uri` parser canonicalizes `http`/`https`
+            // schemes to lowercase, so case differences (RFC 3986 §3.1)
+            // need no special handling here.
+            return location.parse().ok();
+        }
+    }
+
+    // Network-path reference (RFC 3986 §4.2): `//host/path` reuses the
+    // current scheme.
+    if location.starts_with("//") {
+        let scheme = current.scheme_str()?;
+        return format!("{scheme}:{location}").parse().ok();
     }
 
     let scheme = current.scheme_str()?;
@@ -285,7 +322,7 @@ pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
         None => (path_q, None),
     };
 
-    let resolved = if path.is_empty() {
+    let merged = if path.is_empty() {
         current.path().to_owned()
     } else if path.starts_with('/') {
         path.to_owned()
@@ -293,6 +330,9 @@ pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
         let dir = current.path().rsplit_once('/').map_or("", |(d, _)| d);
         format!("{dir}/{path}")
     };
+
+    // RFC 3986 §5.2.4: the resolution output must not contain dot-segments.
+    let resolved = remove_dot_segments(&merged);
 
     let path_and_query = match query {
         Some(q) => format!("{resolved}?{q}"),
@@ -305,6 +345,55 @@ pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
         .path_and_query(path_and_query)
         .build()
         .ok()
+}
+
+/// True when `s` is a valid URI scheme (RFC 3986 §3.1): an ASCII letter
+/// followed by ASCII letters, digits, `+`, `-`, or `.`.
+fn is_uri_scheme(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// RFC 3986 §5.2.4 `remove_dot_segments`: collapse `.` and `..` segments.
+///
+/// Empty segments (`//` inside the path) are preserved verbatim — the
+/// algorithm only removes dot-segments. A `..` climbing past the root is
+/// ignored (the leading `/` of an absolute path is never consumed), and a
+/// trailing `.`/`..` keeps the trailing slash (`/a/./` → `/a/`,
+/// `/a/..` → `/`).
+fn remove_dot_segments(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let mut segments: Vec<&str> = Vec::with_capacity(8);
+    let segs: Vec<&str> = path.split('/').collect();
+    let last = segs.len() - 1;
+    for (i, segment) in segs.iter().enumerate() {
+        match *segment {
+            "." => {
+                if i == last {
+                    segments.push("");
+                }
+            }
+            ".." => {
+                if segments.len() > usize::from(absolute) {
+                    segments.pop();
+                }
+                if i == last {
+                    segments.push("");
+                }
+            }
+            other => segments.push(other),
+        }
+    }
+    segments.join("/")
+}
+
+/// True when following `next` would downgrade the connection from HTTPS to
+/// plain HTTP. Such redirects are never followed (RFC 6764 §6 is
+/// TLS-first); the redirect response is returned to the caller instead.
+#[doc(hidden)]
+pub fn is_https_to_http_downgrade(current: &Uri, next: &Uri) -> bool {
+    next.scheme_str() == Some("http") && current.scheme_str() == Some("https")
 }
 
 fn normalize_decompressed_headers(
@@ -500,6 +589,20 @@ impl WebDavClient {
         self.resolve_request_encoding()
     }
 
+    /// Build the full request URI for `path` against the client's base URL.
+    ///
+    /// `path` may be empty, absolute (`/…`), or relative (merged into the
+    /// base path's directory). The whole input is treated as a **path**:
+    /// `?` and `#` inside a resource name are percent-encoded (`%3F` /
+    /// `%23`) so they cannot change resource identity — a query string is
+    /// not part of the path contract. Already-valid `%XX` escapes pass
+    /// through verbatim (see [`encode_path_segments`]). An absolute URL
+    /// (`http://`/`https://…`) is parsed as-is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidUrl`](crate::Error::InvalidUrl) when the
+    /// resulting URI is malformed.
     pub fn build_uri(&self, path: &str) -> Result<Uri> {
         if path.starts_with("http://") || path.starts_with("https://") {
             return path
@@ -514,16 +617,10 @@ impl WebDavClient {
             .map(|pq| pq.path())
             .unwrap_or("/");
 
-        let (path_only, query) = if let Some((p, q)) = path.split_once('?') {
-            (p, Some(q))
-        } else {
-            (path, None)
-        };
-
-        let mut combined = if path_only.is_empty() {
+        let mut combined = if path.is_empty() {
             existing_path.to_string()
-        } else if path_only.starts_with('/') {
-            path_only.to_string()
+        } else if path.starts_with('/') {
+            path.to_string()
         } else {
             let mut base = existing_path.trim_end_matches('/').to_string();
             if base.is_empty() {
@@ -532,7 +629,7 @@ impl WebDavClient {
             if !base.ends_with('/') {
                 base.push('/');
             }
-            base.push_str(path_only);
+            base.push_str(path);
             base
         };
 
@@ -540,19 +637,14 @@ impl WebDavClient {
             combined.push('/');
         }
 
-        // Percent-encode the path (per segment, preserving valid `%XX`);
-        // the query string is forwarded untouched.
+        // Percent-encode the path (per segment, preserving valid `%XX`).
+        // `?` and `#` are encoded too, so a resource name can never be
+        // mistaken for a query or fragment.
         let encoded = encode_path_segments(&combined);
 
-        let path_and_query = if let Some(q) = query {
-            format!("{}?{}", encoded, q)
-                .parse()
-                .map_err(|source| Error::invalid_url(path, source))?
-        } else {
-            encoded
-                .parse()
-                .map_err(|source| Error::invalid_url(path, source))?
-        };
+        let path_and_query = encoded
+            .parse::<hyper::http::uri::PathAndQuery>()
+            .map_err(|source| Error::invalid_url(path, source))?;
 
         parts.path_and_query = Some(path_and_query);
         Uri::from_parts(parts).map_err(|source| Error::invalid_url(path, source))
@@ -734,8 +826,12 @@ impl WebDavClient {
     /// Redirect handling (301/302/303/307/308): the request is re-sent to the
     /// `Location` target up to `max_redirects` times. On 303 the method
     /// switches to `GET` and the body is dropped. When a hop crosses origins
-    /// (scheme, host, or port change), `Authorization` and `Cookie` headers
-    /// are stripped for the remainder of the chain.
+    /// (scheme, host, or port change), `Authorization`, `Cookie`,
+    /// `If-Match`, and `If-None-Match` headers are stripped for the
+    /// remainder of the chain. An `https`→`http` downgrade is **never**
+    /// followed (RFC 6764 §6 is TLS-first): the 3xx response is returned
+    /// as-is so the caller can observe it, mirroring the
+    /// unresolvable-`Location` behavior.
     ///
     /// Transient-failure retry (429/503/504): when `max_retries` > 0 and the
     /// method is retryable per the idempotency policy, the request is re-sent
@@ -897,10 +993,22 @@ impl WebDavClient {
                 return Ok((uri, resp));
             };
 
+            // Never follow an https→http downgrade (RFC 6764 §6 is
+            // TLS-first): return the 3xx so the caller observes the redirect
+            // instead of silently sending the request — body included —
+            // over plaintext.
+            if is_https_to_http_downgrade(&uri, &next) {
+                return Ok((uri, resp));
+            }
+
             if !strip_credentials && !same_origin(&uri, &next) {
                 strip_credentials = true;
                 base_headers.remove(header::AUTHORIZATION);
                 base_headers.remove(header::COOKIE);
+                // Conditional validators are bound to the origin's resource
+                // (RFC 9110 §13.1.1) and must not leak to a new origin.
+                base_headers.remove(header::IF_MATCH);
+                base_headers.remove(header::IF_NONE_MATCH);
             }
             if resp.status() == StatusCode::SEE_OTHER {
                 method = Method::GET;
@@ -926,8 +1034,10 @@ impl WebDavClient {
     ///
     /// Follows HTTP redirects (301/302/303/307/308) up to the configured
     /// `max_redirects` when `follow_redirects` is enabled; on 303 the request
-    /// is re-sent as `GET` without a body, and `Authorization`/`Cookie`
-    /// headers are stripped when a hop crosses origins. Exceeding the limit
+    /// is re-sent as `GET` without a body, and `Authorization`/`Cookie`/
+    /// `If-Match`/`If-None-Match` headers are stripped when a hop crosses
+    /// origins. An `https`→`http` downgrade is never followed — the 3xx
+    /// response is returned as-is. Exceeding the limit
     /// fails with [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
     ///
     /// Transient failures (`429`/`503`/`504`) are retried up to
@@ -1083,6 +1193,15 @@ impl WebDavClient {
     }
 
     /// Send a WebDAV `COPY` from `src_path` to an absolute `Destination` URL.
+    ///
+    /// `dest_absolute_url` must be an **absolute URI with scheme and
+    /// authority, already percent-encoded** (RFC 4918 §10.3 Simple-ref): the
+    /// value is validated and sent verbatim as the `Destination` header —
+    /// resource names containing spaces, non-ASCII characters, `?`, or `#`
+    /// must be encoded by the caller beforehand (e.g. with
+    /// [`encode_path_segments`]). It is **not** percent-encoded here. Any
+    /// other value fails with [`Error::InvalidInput`](crate::Error::InvalidInput)
+    /// before any network I/O.
     pub async fn copy(
         &self,
         src_path: &str,
@@ -1094,6 +1213,11 @@ impl WebDavClient {
     }
 
     /// Send a WebDAV `MOVE` from `src_path` to an absolute `Destination` URL.
+    ///
+    /// `dest_absolute_url` follows the same contract as
+    /// [`copy`](Self::copy): an absolute, already percent-encoded URI with
+    /// scheme and authority, validated before any network I/O
+    /// ([`Error::InvalidInput`](crate::Error::InvalidInput) otherwise).
     pub async fn r#move(
         &self,
         src_path: &str,
@@ -1111,6 +1235,19 @@ impl WebDavClient {
         dest_absolute_url: &str,
         overwrite: bool,
     ) -> Result<Response<Bytes>> {
+        // RFC 4918 §10.3 Simple-ref: the Destination is an absolute URI.
+        // It is sent verbatim (no percent-encoding here), so reject values
+        // that are not absolute URIs up front.
+        let dest = dest_absolute_url
+            .parse::<Uri>()
+            .map_err(|_| Error::InvalidInput(format!(
+                "Destination must be an absolute, already percent-encoded URI, got {dest_absolute_url:?}"
+            )))?;
+        if dest.scheme_str().is_none() || dest.host().is_none() {
+            return Err(Error::InvalidInput(format!(
+                "Destination must be an absolute URI with scheme and authority, got {dest_absolute_url:?}"
+            )));
+        }
         let mut h = HeaderMap::new();
         h.insert(
             "Destination",
@@ -2676,11 +2813,13 @@ mod tests {
     }
 
     #[test]
-    fn build_uri_empty_combined_with_query() {
+    fn build_uri_question_mark_is_part_of_the_path() {
+        // Query strings are not part of the path contract: a `?` is a
+        // resource-name character and must not change resource identity.
         let client = make_client("http://127.0.0.1:8080/");
         let uri = client.build_uri("?query").unwrap();
-        assert_eq!(uri.path(), "/");
-        assert_eq!(uri.query().unwrap(), "query");
+        assert_eq!(uri.path(), "/%3Fquery");
+        assert!(uri.query().is_none());
     }
 
     #[test]

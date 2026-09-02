@@ -83,6 +83,40 @@ async fn discover_caldav_direct_success_returns_base_url() {
 }
 
 #[tokio::test]
+async fn discover_caldav_redirect_with_follow_disabled_fails_with_clear_error() {
+    // RFC 6764 §5 requires clients to handle .well-known redirects: with
+    // `follow_redirects(false)` the probe returns the 3xx and discovery
+    // must fail with an error that points at the cause (issue #139).
+    let (base, captured) = serve_capture(redirect_head(REDIRECT_301, "/cal/"), Vec::new()).await;
+    let client = WebDavClient::builder(&base)
+        .follow_redirects(false)
+        .build()
+        .unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let err = discover_caldav(&client).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Other { .. }),
+        "an unfollowed redirect must surface as a descriptive error, got: {err:?}"
+    );
+    assert!(
+        !matches!(err, Error::UnexpectedStatus { .. }),
+        "a followable 3xx must not surface as a bare UnexpectedStatus, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("follow_redirects"),
+        "the error should point at follow_redirects, got: {err}"
+    );
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(
+        !req.contains("PROPFIND /cal/"),
+        "the redirect target must not be requested: {req}"
+    );
+}
+
+#[tokio::test]
 async fn discover_caldav_connection_refused_yields_typed_error() {
     let base = unreachable_base().await;
     let client = make_client(&base);

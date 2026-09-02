@@ -555,8 +555,10 @@ The method is available on `WebDavClientBuilder`, `CalDavClientBuilder`, and
 
 HTTP redirects (301/302/303/307/308) are followed automatically in `send`/`send_stream`,
 up to a configurable limit. On 303 the request is re-sent as `GET` without a body, and
-when a redirect crosses origins (scheme, host, or port change) the `Authorization` and
-`Cookie` headers are stripped for the remainder of the chain. Exceeding the limit fails
+when a redirect crosses origins (scheme, host, or port change) the `Authorization`,
+`Cookie`, `If-Match`, and `If-None-Match` headers are stripped for the remainder of the
+chain. An `https`→`http` downgrade is never followed (RFC 6764 §6 is TLS-first): the 3xx
+response is returned as-is so the caller can observe it. Exceeding the limit fails
 with `Error::TooManyRedirects`:
 
 ```rust
@@ -571,10 +573,14 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
 `discover_caldav` and `discover_carddav` (free functions taking `&WebDavClient`) locate the
 service "context path" for a base URL per RFC 6764 §5: a `PROPFIND` with `Depth: 0` and a
 `DAV:current-user-principal` body is sent to `{base}/.well-known/caldav` (or `/carddav`).
-Redirects are followed by the client's redirect pipeline, so the **final** request URL is the
-discovered service URL. A `404` (or a success answered directly on the `.well-known` URI)
-returns the base URL unchanged as a documented fallback; any other non-success status fails
-with `Error::UnexpectedStatus`. Client credentials are attached to the probe and stripped
+Redirects are followed by the client's redirect pipeline when `follow_redirects` is
+enabled (the builder default — RFC 6764 §5 requires clients to handle `.well-known`
+redirects), so the **final** request URL is the discovered service URL. A `404` (or a
+success answered directly on the `.well-known` URI) returns the base URL unchanged as a
+documented fallback; any other non-success status fails with `Error::UnexpectedStatus`,
+except a 3xx that could not be followed (redirect following disabled, unresolvable
+`Location`, or an https→http downgrade), which fails with a descriptive error. Client
+credentials are attached to the probe and stripped
 automatically on cross-origin redirect hops. DNS SRV record lookup (RFC 6764 §3) is not
 implemented:
 
