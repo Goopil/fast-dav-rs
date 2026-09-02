@@ -1510,6 +1510,16 @@ impl WebDavClient {
     /// `namespace` and `data_element` select the CalDAV/CardDAV data
     /// property requested alongside `getetag` (e.g. `calendar-data`).
     ///
+    /// # Truncation
+    ///
+    /// When the server truncates the result set (RFC 6578 §3.6), it reports
+    /// `507 Insufficient Storage` inside the 207 multistatus — normally on
+    /// the request-URI. That response element surfaces as an ordinary item
+    /// with `status: Some("HTTP/1.1 507 Insufficient Storage")`; inspect
+    /// `items` for a 507 status (or use the CalDAV/CardDAV `sync_collection`
+    /// wrappers, which set `SyncResponse.truncated`) and use the returned
+    /// sync token to fetch the next page.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::UnexpectedStatus`] (operation
@@ -1568,6 +1578,10 @@ impl WebDavClient {
     /// with `410 Gone` (stale sync token), the report is re-issued with an
     /// empty sync token (initial sync) and the full result set with the new
     /// token is returned. Uses [`SyncLevel::One`].
+    ///
+    /// Result-set truncation (RFC 6578 §3.6) surfaces as an item with a
+    /// `HTTP/1.1 507 Insufficient Storage` status (see
+    /// [`sync_collection_with_level`](Self::sync_collection_with_level)).
     ///
     /// Any other error propagates unchanged.
     ///
@@ -2119,6 +2133,14 @@ macro_rules! impl_dav_client_delegates {
             /// all descendants. The existing `sync_collection` keeps the
             /// `SyncLevel::One` behavior.
             ///
+            /// # Truncation
+            ///
+            /// If the server truncates the result set (RFC 6578 §3.6), the
+            /// returned sync response has `truncated == true` and the
+            /// request-URI appears in `items` with a `HTTP/1.1 507
+            /// Insufficient Storage` status. The returned sync token is valid
+            /// for fetching the next page of changes.
+            ///
             /// # Errors
             ///
             /// Returns an error if the REPORT request fails or the server
@@ -2166,6 +2188,10 @@ macro_rules! impl_dav_client_delegates {
             /// empty sync token (initial sync) and the full result set with
             /// the new token is returned. Any other error propagates
             /// unchanged.
+            ///
+            /// Result-set truncation (RFC 6578 §3.6) sets `truncated == true`
+            /// on the returned sync response; the returned token remains
+            /// valid for fetching the next page.
             ///
             /// # Errors
             ///

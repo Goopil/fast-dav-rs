@@ -423,6 +423,7 @@ Fold these types into `webdav` (or a shared `types` module) and re-export once. 
 - **Confidence:** Confirmed (parse_error_body, 507 shape) / Needs verification (per-item propstat failures)
 - **Domain:** Data integrity
 - **Location:** `src/webdav/streaming.rs:399-407`, `src/caldav/client.rs:837-841` / `src/carddav/client.rs:881-885`, `src/webdav/client.rs:1032` pattern
+- **Status:** ✅ Fixed 2026-09-02 (v1.1 audit wave 2, batch 2): both `SyncResponse` types (CalDAV/CardDAV, kept distinct per AUDIT-006 scope) gain `truncated: bool`, set by the shared `map_sync_rows` when any response element carries a `507` status — detection runs before the collection heuristic so the flag is never suppressed; per-item statuses pass through unchanged. `parse_error_body` reports malformed error bodies via the new `webdav::WebDavError::parse_failed` flag instead of a silent default. The part-3 collection heuristic is documented on `map_sync_response`/`SyncResponse` (behavior intentionally unchanged, per audit).
 
 ### Problem
 Three related silent-degradation paths:

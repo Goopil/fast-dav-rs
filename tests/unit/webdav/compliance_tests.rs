@@ -113,12 +113,14 @@ fn parse_error_body_no_child_element() {
 </D:error>"#;
     let err = fast_dav_rs::webdav::parse_error_body(xml).expect("parse succeeds");
     assert!(err.precondition_code.is_none());
+    assert!(!err.parse_failed);
 }
 
 #[test]
 fn parse_error_body_empty_body_returns_none() {
     let err = fast_dav_rs::webdav::parse_error_body(b"").expect("parse succeeds");
     assert!(err.precondition_code.is_none());
+    assert!(!err.parse_failed);
 }
 
 #[test]
@@ -126,6 +128,22 @@ fn parse_error_body_non_xml_body_returns_none() {
     let err =
         fast_dav_rs::webdav::parse_error_body(b"Internal Server Error").expect("parse succeeds");
     assert!(err.precondition_code.is_none());
+    assert!(!err.parse_failed);
+}
+
+#[test]
+fn parse_error_body_malformed_xml_sets_parse_failed() {
+    // AUDIT-015: a malformed error body must be distinguishable from "no
+    // error body" — a hostile server must not be able to silently suppress
+    // precondition diagnostics with garbage markup.
+    let truncated = b"<D:error xmlns:D=\"DAV:\"><C:no-uid-conflict";
+    let err = fast_dav_rs::webdav::parse_error_body(truncated).expect("parse succeeds");
+    assert!(err.parse_failed, "truncated markup must set parse_failed");
+    assert!(err.precondition_code.is_none());
+
+    let mismatched = br#"<D:error xmlns:D="DAV:"><C:no-uid-conflict/></C:error>"#;
+    let err = fast_dav_rs::webdav::parse_error_body(mismatched).expect("parse succeeds");
+    assert!(err.parse_failed, "mismatched tags must set parse_failed");
 }
 
 #[test]

@@ -748,6 +748,12 @@ async fn main() -> Result<()> {
 - `sync_collection_resilient` (all clients) recovers automatically from `410 Gone` (stale sync
   token, RFC 6578 §3.11) by re-issuing the report as an initial sync and returning the full
   result set with the new token; any other error propagates unchanged.
+- **Result truncation (RFC 6578 §3.6):** when the server truncates a sync result set it reports
+  `507 Insufficient Storage` inside the 207 multistatus (normally on the request-URI).
+  `caldav::SyncResponse`/`carddav::SyncResponse` expose this as `truncated == true`; the 507
+  element still appears in `items` with its per-item status, and the returned `sync_token`
+  stays valid for fetching the next page. At the `WebDavClient` level, inspect `items` for a
+  `HTTP/1.1 507 …` status.
 - The sync types and helpers (`SyncItem`, `SyncResponse`, `build_sync_collection_body`,
   `map_sync_response`) are **module-qualified**: CalDAV and CardDAV define distinct same-named
   items, so they are only available as `fast_dav_rs::caldav::{SyncItem, SyncResponse, …}` and

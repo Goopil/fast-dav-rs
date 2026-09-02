@@ -49,10 +49,23 @@ pub struct SyncItem {
 }
 
 /// Complete response to a `sync-collection` REPORT.
+///
+/// `truncated` is `true` when the server truncated the result set
+/// (RFC 6578 §3.6): the multistatus then carries a `507 Insufficient Storage`
+/// status — normally on the request-URI, which also surfaces in `items` with
+/// that status. The returned `sync_token` remains valid for fetching the next
+/// page of changes. Note the collection heuristic in
+/// [`map_sync_response`](crate::caldav::map_sync_response): response elements
+/// that echo a sync token without an etag/data payload are treated as the
+/// collection entry and skipped, so a non-compliant server can hide member
+/// changes that way (observable via the token, not via `truncated`).
 #[derive(Debug, Clone)]
 pub struct SyncResponse {
     pub sync_token: Option<String>,
     pub items: Vec<SyncItem>,
+    /// `true` when the server truncated the result set (RFC 6578 §3.6, a
+    /// `507 Insufficient Storage` status inside the multistatus).
+    pub truncated: bool,
 }
 
 /// One free/busy period reported by a `free-busy-query` REPORT (RFC 4791 §9.7).
