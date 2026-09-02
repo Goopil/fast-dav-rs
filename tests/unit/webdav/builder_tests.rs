@@ -1,5 +1,7 @@
 use fast_dav_rs::common::http::MaybeProxied;
-use fast_dav_rs::{ContentEncoding, HyperClient, RequestCompressionMode, WebDavClient};
+use fast_dav_rs::{
+    CalDavClient, CardDavClient, ContentEncoding, HyperClient, RequestCompressionMode, WebDavClient,
+};
 use hyper::{HeaderMap, Method, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
@@ -299,5 +301,56 @@ async fn injected_hyper_client_replaces_internal_transport() {
     assert!(
         captured.lock().unwrap().is_empty(),
         "the mock must receive no bytes: the injected client, not the internal one, served the request"
+    );
+}
+
+fn injected_http1_client() -> HyperClient {
+    let https = HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(MaybeProxied::direct(HttpConnector::new()));
+    Client::builder(TokioExecutor::new()).build(https)
+}
+
+#[tokio::test]
+async fn injected_hyper_client_caldav_builder() {
+    let (base, captured) = serve_capture(response_head("", 5), b"hello".to_vec()).await;
+
+    let client = CalDavClient::builder(base)
+        .with_hyper_client(injected_http1_client())
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+    let resp = client
+        .send(Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.body().as_ref(), b"hello");
+    assert!(
+        String::from_utf8_lossy(&captured.lock().unwrap()).contains("GET / HTTP/1.1"),
+        "the injected client must serve the request"
+    );
+}
+
+#[tokio::test]
+async fn injected_hyper_client_carddav_builder() {
+    let (base, captured) = serve_capture(response_head("", 5), b"hello".to_vec()).await;
+
+    let client = CardDavClient::builder(base)
+        .with_hyper_client(injected_http1_client())
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+    let resp = client
+        .send(Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.body().as_ref(), b"hello");
+    assert!(
+        String::from_utf8_lossy(&captured.lock().unwrap()).contains("GET / HTTP/1.1"),
+        "the injected client must serve the request"
     );
 }
