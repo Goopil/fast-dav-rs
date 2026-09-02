@@ -90,6 +90,7 @@ features, and major releases introduce breaking changes when needed.
 - Bounded parallelism for batch PROPFIND/REPORT operations.
 - Automatic request compression negotiation (br, zstd, gzip) with overrides.
 - Streaming send APIs for custom workflows.
+- Retry with exponential backoff for transient failures (429/503/504) with `Retry-After` support.
 
 ## Requirements
 
@@ -505,6 +506,28 @@ with `Error::TooManyRedirects`:
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .follow_redirects(true) // default
     .max_redirects(5)       // default
+    .build()?;
+```
+
+### Retry & backoff
+
+Transient failures are retried automatically in `send`/`send_stream` once you opt in with
+`max_retries` (default **0** — no retry, each request is sent exactly once). Retries apply
+to `429`, `503`, and `504` responses: a `429` honors the server's `Retry-After` header
+(integer seconds or HTTP-date; absent → exponential backoff), while `503`/`504` always use
+an exponential backoff (base 2, initial ~250 ms, doubling per attempt, capped at ~8 s) with
+±25 % jitter. Only idempotent methods (`GET`, `HEAD`, `OPTIONS`, `PROPFIND`, `REPORT`) are
+retried by default; `retry_all(true)` extends retrying to every method (`PUT`, `POST`,
+`DELETE`, `MKCOL`, `COPY`, `MOVE`, `LOCK`, …). When retries are exhausted, the **last
+response is returned as-is** — callers see the real status through the existing error
+handling. The retry budget counts every HTTP attempt across the whole redirect chain
+(total attempts = `1 + max_retries`), and each attempt — retries included — runs under the
+same per-request timeout:
+
+```rust
+let client = CalDavClient::builder("https://cal.example.com/dav/")
+    .max_retries(3)     // default 0 — no retry
+    .retry_all(false)   // default — only idempotent methods are retried
     .build()?;
 ```
 

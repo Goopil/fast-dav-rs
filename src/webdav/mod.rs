@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod client;
+pub mod retry;
 pub mod streaming;
 pub mod types;
 pub mod xml;
