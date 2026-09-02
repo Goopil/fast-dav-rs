@@ -194,6 +194,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LOCK/UNLOCK error responses carrying a `<D:error>` body now surface the failed
   precondition instead of dropping it (issue #136, RFC 4918 §16): see the new
   `Error::UnexpectedStatusWithDav` variant under Changed
+- RFC 3986-conformant redirect resolution and URI handling (issue #139):
+  `Location` references are now normalized with the RFC 3986 §5.2.4
+  `remove_dot_segments` algorithm (`../caldav/` against `/.well-known/caldav`
+  resolves to `/caldav/` instead of the literal `/.well-known/../caldav/`);
+  network-path references (`Location: //mirror/dav/`, RFC 3986 §4.2) are
+  resolved scheme-relatively instead of being requested as a garbage path
+  from the current host; absolute schemes are matched case-insensitively
+  (RFC 3986 §3.1, `HTTPS://…` is absolute and `Uri` canonicalizes the
+  scheme); `same_origin` compares hosts ASCII-case-insensitively (RFC 3986
+  §3.2.2), so a re-cased host no longer triggers needless credential
+  stripping; cross-origin redirects additionally strip `If-Match` and
+  `If-None-Match` (RFC 9110 §13.1.1) alongside `Authorization`/`Cookie`;
+  and the WebDAV `Destination` header (`copy`/`move`) is validated as an
+  absolute URI with scheme and authority (RFC 4918 §10.3 Simple-ref) before
+  any network I/O — `Error::InvalidInput` otherwise; the value must already
+  be percent-encoded by the caller and is sent verbatim
+- **Behavior change:** an `https`→`http` redirect downgrade is never followed
+  (issue #139; RFC 6764 §6 is TLS-first): the 3xx response is returned as-is
+  so the caller can observe the redirect, instead of silently re-sending the
+  request — body included — over plaintext
+- `build_uri`/`encode_path_segments` now encode `?` and `#` inside resource
+  names (`%3F`/`%23`), so a literal `?` can no longer change resource identity
+  by acting as a query separator (issue #139); a query string is not part of
+  the path contract, and already-valid `%XX` escapes keep passing through
+  verbatim (documented loudly: pre-encoded input addresses the resource named
+  by its encoded form)
+- Service discovery (`discover_caldav`/`discover_carddav`) docs no longer
+  claim redirects are always followed: with `follow_redirects(false)` the
+  probe returns the 3xx and discovery fails with a descriptive error naming
+  the cause (RFC 6764 §5 requires clients to handle `.well-known` redirects,
+  so leave the builder default enabled) (issue #139)
 
 ## [0.10.0] - 2026-09-01
 

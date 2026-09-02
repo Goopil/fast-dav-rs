@@ -39,7 +39,9 @@ fn test_build_uri_absolute() {
 }
 
 #[test]
-fn test_build_uri_with_query() {
+fn test_build_uri_encodes_question_mark_in_path() {
+    // A query string is not part of the path contract (issue #139): a `?`
+    // is a resource-name character and must be percent-encoded.
     let client = CardDavClient::new("https://example.com/dav/user/", None, None)
         .expect("Failed to create client");
 
@@ -48,8 +50,9 @@ fn test_build_uri_with_query() {
         .expect("Failed to build URI");
     assert_eq!(
         uri.to_string(),
-        "https://example.com/dav/user/addressbook/?param=value"
+        "https://example.com/dav/user/addressbook/%3Fparam=value"
     );
+    assert!(uri.query().is_none());
 }
 
 #[test]
