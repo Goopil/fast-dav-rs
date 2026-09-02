@@ -116,6 +116,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Collation`/`MatchType` enums and their defaults are unchanged
 
 ### Fixed
+- `Retry-After` handling on transient retries (issue #137): the honored delay
+  is now clamped to the retry backoff cap (a hostile or overloaded server
+  answering `429` with a huge `Retry-After` could previously park the request
+  future indefinitely, holding its batch semaphore permit), and the header is
+  now also honored on `503`/`504` (its canonical carriers per RFC 9110
+  §10.2.1), not only on `429`
 - **RFC 4791 request-XML validity (issue #138):** `calendar_query_timerange`,
   `calendar_multiget`, `calendar_multiget_many`, and the CalDAV `sync_collection`
   now reject an `expand` without an `end` **before any network I/O** with

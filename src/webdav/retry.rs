@@ -4,9 +4,10 @@
 //! ([`WebDavClient::build_and_send`](crate::webdav::client::WebDavClient)):
 //! when a response arrives with a retryable status, retry budget remains,
 //! and the method is retryable per the configured policy, the request is
-//! re-sent after a delay. A `429` honors the server's `Retry-After` header
-//! (integer seconds or HTTP-date); every other case uses an exponential
-//! backoff (base 2, initial 250 ms, capped at 8 s) with ±25 % jitter.
+//! re-sent after a delay. On `429`/`503`/`504` the server's `Retry-After`
+//! header is honored when parseable (integer seconds or HTTP-date), clamped
+//! to the backoff cap; every other case uses an exponential backoff
+//! (base 2, initial 250 ms, capped at 8 s) with ±25 % jitter.
 
 use hyper::{HeaderMap, Method, StatusCode, header};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -35,23 +36,25 @@ pub fn is_idempotent_method(method: &Method) -> bool {
 
 /// Delay to wait before the next attempt.
 ///
-/// On `429`, the `Retry-After` header is honored verbatim when parseable
-/// (integer seconds or HTTP-date); otherwise — and for `503`/`504` — an
-/// exponential backoff with jitter is used.
-pub(crate) fn retry_delay(
+/// On `429`/`503`/`504`, the `Retry-After` header is honored when parseable
+/// (integer seconds or HTTP-date), clamped to `cap` (a hostile or overloaded
+/// server must not be able to park the caller indefinitely); otherwise — and
+/// for every other status — an exponential backoff with jitter is used.
+#[doc(hidden)]
+pub fn retry_delay(
     status: StatusCode,
     headers: &HeaderMap,
     attempt: usize,
     initial: Duration,
     cap: Duration,
 ) -> Duration {
-    if status == StatusCode::TOO_MANY_REQUESTS {
+    if matches!(status.as_u16(), 429 | 503 | 504) {
         if let Some(value) = headers
             .get(header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
         {
             if let Some(delay) = retry_after_delay(value) {
-                return delay;
+                return delay.min(cap);
             }
         }
     }
