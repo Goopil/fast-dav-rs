@@ -328,6 +328,10 @@ pub enum Operation {
     ReportAddressbookMultiget,
     /// `REPORT` sync-collection.
     ReportSyncCollection,
+    /// `LOCK` to acquire or refresh a WebDAV lock (RFC 4918 §9.10).
+    Lock,
+    /// `UNLOCK` to remove a WebDAV lock (RFC 4918 §9.11).
+    Unlock,
     /// `PROPFIND` against `/.well-known/caldav` (RFC 6764 §5 service discovery).
     DiscoverWellKnownCaldav,
     /// `PROPFIND` against `/.well-known/carddav` (RFC 6764 §5 service discovery).
@@ -347,6 +351,8 @@ impl std::fmt::Display for Operation {
             Self::ReportAddressbookQuery => "REPORT addressbook-query",
             Self::ReportAddressbookMultiget => "REPORT addressbook-multiget",
             Self::ReportSyncCollection => "REPORT sync-collection",
+            Self::Lock => "LOCK",
+            Self::Unlock => "UNLOCK",
             Self::DiscoverWellKnownCaldav => "PROPFIND .well-known/caldav",
             Self::DiscoverWellKnownCarddav => "PROPFIND .well-known/carddav",
         };

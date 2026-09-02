@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use bytes::Bytes;
 use hyper::{HeaderMap, Method, Response, header};
 
+use crate::BatchItem;
 use crate::Depth;
 use crate::caldav::builder::CalDavClientBuilder;
 use crate::caldav::streaming::parse_multistatus_bytes;
@@ -394,6 +397,132 @@ impl CalDavClient {
         }
         let body = resp.into_body();
         Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
+    }
+
+    /// Fetch specific calendar objects via `calendar-multiget`, split into
+    /// concurrent batches.
+    ///
+    /// `hrefs` is chunked into slices of `batch_size`; one `calendar-multiget`
+    /// REPORT is issued per chunk, with at most `max_concurrency` REPORTs in
+    /// flight at any time (a `max_concurrency` of 0 is treated as 1). This
+    /// avoids the single huge request/response pair of
+    /// [`calendar_multiget`](Self::calendar_multiget) for large fetch lists
+    /// and parallelizes the server-side work.
+    ///
+    /// `expand` asks the server to expand recurring components into their
+    /// individual instances covering the given range (RFC 4791 §9.6,
+    /// `<C:expand>`). When it is `Some`, `include_data` is implied `true`.
+    ///
+    /// # Result shape and ordering
+    ///
+    /// Each item of the returned vector is one [`CalendarObject`] wrapped in a
+    /// [`BatchItem`]: `pub_path` is the `calendar_path` the REPORT was sent
+    /// to, and the object's own URL is in [`CalendarObject::href`]. Results
+    /// are **deterministically ordered by chunk index first**, then by the
+    /// order in which the server returned the objects within that chunk's
+    /// multistatus (which matches the request href order for compliant
+    /// servers). A chunk that yields no objects contributes no items.
+    ///
+    /// # Partial failure
+    ///
+    /// A failed chunk (transport error, non-success status, or an
+    /// unparsable response body) produces exactly **one** error [`BatchItem`];
+    /// sibling chunks are unaffected and still contribute their results. The
+    /// method itself only fails before any network I/O (see below).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfig`] **before any network I/O** if
+    /// `batch_size` is 0. Returns [`Error::InvalidDateTime`] **before any
+    /// network I/O** if `expand` is provided but its start/end are not valid
+    /// iCalendar UTC date-times.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::CalDavClient;
+    ///
+    /// # async fn example(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+    /// let hrefs: Vec<String> = (0..250)
+    ///     .map(|i| format!("/calendars/user/work/event-{i}.ics"))
+    ///     .collect();
+    /// // 100 hrefs per REPORT, at most 4 REPORTs in flight.
+    /// let items = client
+    ///     .calendar_multiget_many("calendars/user/work/", &hrefs, true, None, 100, 4)
+    ///     .await?;
+    /// for item in &items {
+    ///     match &item.result {
+    ///         Ok(obj) => println!("{} -> {:?}", obj.href, obj.etag),
+    ///         Err(e) => eprintln!("batch failed: {e}"),
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn calendar_multiget_many(
+        &self,
+        calendar_path: &str,
+        hrefs: &[String],
+        include_data: bool,
+        expand: Option<TimeRange>,
+        batch_size: usize,
+        max_concurrency: usize,
+    ) -> Result<Vec<BatchItem<CalendarObject>>> {
+        if batch_size == 0 {
+            return Err(Error::InvalidConfig(
+                "calendar_multiget_many: batch_size must be greater than zero".to_owned(),
+            ));
+        }
+        if let Some(tr) = &expand {
+            validate_utc_datetime(&tr.start, "invalid calendar-multiget expand start")?;
+            if let Some(e) = &tr.end {
+                validate_utc_datetime(e, "invalid calendar-multiget expand end")?;
+            }
+        }
+        if hrefs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut requests = Vec::new();
+        for chunk in hrefs.chunks(batch_size) {
+            let Some(xml) =
+                build_calendar_multiget_body(chunk.iter(), include_data, expand.as_ref())
+            else {
+                continue;
+            };
+            requests.push((calendar_path.to_owned(), Arc::new(Bytes::from(xml))));
+        }
+
+        let batches = self
+            .webdav
+            .report_many_bodies(requests, max_concurrency)
+            .await;
+
+        let mut out = Vec::with_capacity(hrefs.len());
+        for batch in batches {
+            let result = match batch.result {
+                Ok(resp) if !resp.status().is_success() => Err(Error::UnexpectedStatus {
+                    operation: Operation::ReportCalendarMultiget,
+                    status: resp.status(),
+                }),
+                Ok(resp) => {
+                    let body = resp.into_body();
+                    parse_multistatus_bytes(&body).map(|ms| map_calendar_objects(ms.items))
+                }
+                Err(e) => Err(e),
+            };
+            match result {
+                Ok(objects) => out.extend(objects.into_iter().map(|o| BatchItem {
+                    pub_path: batch.pub_path.clone(),
+                    result: Ok(o),
+                })),
+                Err(e) => out.push(BatchItem {
+                    pub_path: batch.pub_path,
+                    result: Err(e),
+                }),
+            }
+        }
+        Ok(out)
     }
 
     /// Incrementally synchronise a calendar collection using `sync-collection`.

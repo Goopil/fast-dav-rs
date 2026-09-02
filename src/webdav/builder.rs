@@ -62,6 +62,8 @@ pub struct WebDavClientBuilder {
     follow_redirects: bool,
     max_redirects: u8,
     prefer: Option<Prefer>,
+    max_retries: usize,
+    retry_all: bool,
 }
 
 /// Manual implementation so held Basic/Bearer credentials are never printed.
@@ -97,6 +99,8 @@ impl std::fmt::Debug for WebDavClientBuilder {
         .field("follow_redirects", &self.follow_redirects)
         .field("max_redirects", &self.max_redirects)
         .field("prefer", &self.prefer)
+        .field("max_retries", &self.max_retries)
+        .field("retry_all", &self.retry_all)
         .finish()
     }
 }
@@ -123,6 +127,8 @@ impl Default for WebDavClientBuilder {
             follow_redirects: true,
             max_redirects: 5,
             prefer: None,
+            max_retries: 0,
+            retry_all: false,
         }
     }
 }
@@ -303,6 +309,62 @@ impl WebDavClientBuilder {
         self
     }
 
+    /// Maximum number of retries for **transient failures** (`429`, `503`,
+    /// `504`) before the last response is returned as-is. Default: **0**
+    /// (retrying disabled — each request is sent exactly once).
+    ///
+    /// A `429` honors the server's `Retry-After` header (integer seconds or
+    /// HTTP-date); absent or unparsable values — and all `503`/`504` — use an
+    /// exponential backoff (base 2, initial ~250 ms, doubling per attempt,
+    /// capped at ~8 s) with ±25 % jitter. Only idempotent methods (`GET`,
+    /// `HEAD`, `OPTIONS`, `PROPFIND`, `REPORT`) are retried unless
+    /// [`retry_all`](Self::retry_all) is enabled. The budget counts every
+    /// HTTP attempt across the whole redirect chain (total attempts =
+    /// `1 + max_retries`), and each attempt runs under the same per-request
+    /// timeout. When retries are exhausted, the **last response is returned
+    /// as-is** — callers see the real status through the existing error
+    /// handling.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::WebDavClient;
+    ///
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .max_retries(3)
+    ///     .build()?;
+    /// # Ok::<(), fast_dav_rs::Error>(())
+    /// ```
+    pub fn max_retries(mut self, max: usize) -> Self {
+        self.max_retries = max;
+        self
+    }
+
+    /// Retry **every** method on transient failures, including
+    /// non-idempotent ones (`PUT`, `POST`, `DELETE`, `MKCOL`, `COPY`, `MOVE`,
+    /// `LOCK`, …). Default: **false** — only idempotent methods (`GET`,
+    /// `HEAD`, `OPTIONS`, `PROPFIND`, `REPORT`) are retried, so a failed
+    /// write is never silently re-sent (the write may have been applied
+    /// before the failure).
+    ///
+    /// Only meaningful when [`max_retries`](Self::max_retries) > 0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::WebDavClient;
+    ///
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .max_retries(2)
+    ///     .retry_all(true)
+    ///     .build()?;
+    /// # Ok::<(), fast_dav_rs::Error>(())
+    /// ```
+    pub fn retry_all(mut self, all: bool) -> Self {
+        self.retry_all = all;
+        self
+    }
+
     /// Set the HTTP `Prefer` header (RFC 7240) sent on **every** request.
     /// Default: **none**.
     ///
@@ -422,6 +484,10 @@ impl WebDavClientBuilder {
             self.follow_redirects,
             self.max_redirects,
             self.prefer,
+            self.max_retries,
+            self.retry_all,
+            crate::webdav::retry::RETRY_BACKOFF_INITIAL,
+            crate::webdav::retry::RETRY_BACKOFF_CAP,
         ))
     }
 }
@@ -763,6 +829,27 @@ macro_rules! impl_dav_builder {
                 self
             }
 
+            /// Maximum number of retries for transient failures (`429`,
+            /// `503`, `504`) before the last response is returned as-is.
+            /// Default: **0** (retrying disabled). A `429` honors
+            /// `Retry-After`; otherwise an exponential backoff with jitter is
+            /// used. Only idempotent methods are retried unless
+            /// [`retry_all`](Self::retry_all) is enabled.
+            pub fn max_retries(mut self, max: usize) -> Self {
+                self.inner = self.inner.max_retries(max);
+                self
+            }
+
+            /// Retry **every** method on transient failures, including
+            /// non-idempotent ones (`PUT`, `POST`, `DELETE`, `MKCOL`, `COPY`,
+            /// `MOVE`, `LOCK`, …). Default: **false** — only idempotent
+            /// methods (`GET`, `HEAD`, `OPTIONS`, `PROPFIND`, `REPORT`) are
+            /// retried.
+            pub fn retry_all(mut self, all: bool) -> Self {
+                self.inner = self.inner.retry_all(all);
+                self
+            }
+
             /// Set the HTTP `Prefer` header (RFC 7240) sent on **every**
             /// request. Default: **none**. An explicit `Prefer` header passed
             /// per request to `send`/`send_stream` wins over this default.
@@ -797,6 +884,8 @@ mod tests {
         assert!(builder.bearer_token.is_none());
         assert!(!builder.force_http1);
         assert!(!builder.danger_accept_invalid_certs);
+        assert_eq!(builder.max_retries, 0);
+        assert!(!builder.retry_all);
     }
 
     #[test]
