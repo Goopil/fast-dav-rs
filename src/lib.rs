@@ -730,7 +730,7 @@ pub use common::compression::{
 };
 pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
-    DavCapabilities, Prefer, PropStat, RequestCompressionMode, SyncCapability, SyncLevel,
-    WebDavClient, WebDavError, etag_from_headers, normalize_etag, normalize_sync_token,
+    DavCapabilities, LockInfo, LockScope, Prefer, PropStat, RequestCompressionMode, SyncCapability,
+    SyncLevel, WebDavClient, WebDavError, etag_from_headers, normalize_etag, normalize_sync_token,
     preference_applied_from_headers,
 };

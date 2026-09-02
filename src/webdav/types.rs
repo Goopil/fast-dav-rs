@@ -85,6 +85,64 @@ impl Prefer {
     }
 }
 
+/// Scope of a WebDAV lock (RFC 4918 §10.6 / §14.14).
+///
+/// `Exclusive` allows a single lock on a resource; `Shared` allows multiple
+/// coexisting locks. Parsed from `<D:lockscope>` in a `<D:activelock>` and
+/// used to build the `<D:lockinfo>` body of a `LOCK` request.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::LockScope;
+///
+/// assert_eq!(LockScope::Exclusive.as_str(), "exclusive");
+/// assert_eq!(LockScope::Shared.as_str(), "shared");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LockScope {
+    /// `<D:exclusive/>` — only one lock may hold the resource.
+    Exclusive,
+    /// `<D:shared/>` — multiple shared locks may coexist.
+    Shared,
+}
+
+impl LockScope {
+    /// Returns the local element name used inside `<D:lockscope>`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Exclusive => "exclusive",
+            Self::Shared => "shared",
+        }
+    }
+}
+
+/// A parsed WebDAV `<D:activelock>` (RFC 4918 §14.1), returned by
+/// [`lock`](crate::webdav::WebDavClient::lock) and
+/// [`refresh_lock`](crate::webdav::WebDavClient::refresh_lock) and produced
+/// from `lockdiscovery` bodies by
+/// [`parse_lock_discovery_bytes`](crate::webdav::parse_lock_discovery_bytes).
+///
+/// The client keeps **no implicit lock state**: callers keep the `token` and
+/// pass it to [`unlock`](crate::webdav::WebDavClient::unlock),
+/// [`refresh_lock`](crate::webdav::WebDavClient::refresh_lock), or an `If`
+/// header (via the low-level `send`) on conditional writes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LockInfo {
+    /// Lock token from `<D:locktoken><D:href>` (e.g. `opaquelocktoken:…`);
+    /// empty when the server did not return one.
+    pub token: String,
+    /// Granted lock timeout in seconds (parsed from `<D:timeout>` or the
+    /// `Timeout` response header); `None` when absent or `Infinite`.
+    pub timeout_secs: Option<u64>,
+    /// Lock scope; `None` when `<D:lockscope>` is absent or unrecognized.
+    pub scope: Option<LockScope>,
+    /// Lock owner (text of `<D:owner>` or its `<D:href>`); `None` when absent.
+    pub owner: Option<String>,
+}
+
 /// Collation algorithm for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
 ///
 /// Determines how string comparisons are performed in calendar-query and
