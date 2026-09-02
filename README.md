@@ -434,6 +434,14 @@ client.set_request_compression_mode(RequestCompressionMode::Auto);
 client.set_request_compression_mode(RequestCompressionMode::Disabled);
 ```
 
+In `Auto` mode the client sends one extra compressed `PROPFIND` probe per client
+instance until the server's answer is cached (clones share the cache). Short-lived
+clients — e.g. one built per request in serverless setups — pay that probe every
+time; prefer reusing a client, or pin `Disabled`/`Force` to skip the probe. A
+transient probe failure is not cached: the current request proceeds uncompressed
+and the next request re-probes. Re-selecting `Auto` with
+`set_request_compression_mode` resets the cached answer.
+
 ### Per-request timeouts
 
 The low-level `send` and `send_stream` methods accept an optional `per_req_timeout: Option<Duration>`

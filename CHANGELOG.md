@@ -54,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout, and exhausted retries return the last response as-is (no synthetic error).
   Compression-retry semantics are unchanged.
 
+### Fixed
+- The request-compression probe (AUDIT-012) no longer permanently pins `Identity`
+  after a transient failure: a failed probe (transport error, timeout, non-success
+  status) leaves the negotiation state unset so the next body-carrying request
+  re-probes, while the current request proceeds uncompressed. A completed probe
+  still caches the server's answer — including `Identity` when the server
+  advertises no compression support. The probe timeout now derives from the
+  client's `timeout(...)` setting instead of a hardcoded 5 s
+
 ## [0.10.0] - 2026-09-01
 
 ### Added

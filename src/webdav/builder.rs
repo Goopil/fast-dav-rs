@@ -221,6 +221,12 @@ impl WebDavClientBuilder {
 
     /// Choose the request-body compression strategy. Default:
     /// [`RequestCompressionMode::Auto`].
+    ///
+    /// `Auto` runs one extra compressed `PROPFIND` probe per client instance
+    /// (clones share the cached answer) before the first body-carrying
+    /// request; clients built per request — e.g. serverless patterns — pay
+    /// that probe every time. Pin [`RequestCompressionMode::Disabled`] or
+    /// [`RequestCompressionMode::Force`] to skip it.
     pub fn request_compression(mut self, mode: RequestCompressionMode) -> Self {
         self.request_compression = mode;
         self

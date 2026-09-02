@@ -28,7 +28,9 @@ use crate::{Error, Operation, Result};
 pub enum RequestCompressionMode {
     /// Negotiate automatically: attempt gzip on first use, honor the server's advertised
     /// `Accept-Encoding` preference on success, and cache the result; fall back to identity
-    /// on 415/501.
+    /// on 415/501. A transient probe failure (transport error, timeout, other non-success
+    /// status) is not cached — the next body-carrying request re-probes, while the current
+    /// request proceeds uncompressed.
     #[default]
     Auto,
     Disabled,
@@ -439,6 +441,20 @@ impl WebDavClient {
     }
 
     /// Configure the request compression strategy.
+    ///
+    /// Switching back to [`RequestCompressionMode::Auto`] clears the cached
+    /// negotiation so the next body-carrying request re-probes the server;
+    /// `Disabled` and `Force` pin their encoding immediately. This is also the
+    /// manual recovery path after unusual server behavior.
+    ///
+    /// # Performance
+    ///
+    /// In `Auto` mode each client instance runs one extra compressed
+    /// `PROPFIND` probe (until the server's answer is cached) before its first
+    /// body-carrying request. Clones share the cache, but short-lived clients
+    /// — e.g. one built per request in serverless setups — pay the probe every
+    /// time; prefer reusing a client or pinning [`RequestCompressionMode::Disabled`]
+    /// / [`RequestCompressionMode::Force`] to skip the probe.
     pub fn set_request_compression_mode(&self, mode: RequestCompressionMode) {
         *self.request_compression_mode.write() = mode;
         match mode {
@@ -551,31 +567,30 @@ impl WebDavClient {
     /// Sends a small gzip-compressed `PROPFIND` to the base URL. On success,
     /// the cached encoding honors the server's advertised `Accept-Encoding`
     /// preference (q-factors applied, `br` > `zstd` > `gzip`) when present,
-    /// and keeps gzip — proven to work by the probe — otherwise. On failure,
-    /// request compression is disabled (identity).
-    async fn probe_request_compression_support(&self) {
+    /// and keeps gzip — proven to work by the probe — otherwise.
+    ///
+    /// Returns `true` when a definitive answer was cached (including
+    /// `Identity` when the server advertises no compression support), and
+    /// `false` when the probe failed: nothing is cached then, so the next
+    /// body-carrying request re-probes. The caller sends the current request
+    /// uncompressed in that case.
+    async fn probe_request_compression_support(&self) -> bool {
         if !self.request_compression_mode.read().is_auto() {
-            return;
+            return true;
         }
 
         if self.negotiated_request_compression.read().is_some() {
-            return;
+            return true;
         }
 
         let propfind = match Method::from_bytes(b"PROPFIND") {
             Ok(m) => m,
-            Err(_) => {
-                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
-                return;
-            }
+            Err(_) => return false,
         };
 
         let uri = match self.build_uri("") {
             Ok(u) => u,
-            Err(_) => {
-                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
-                return;
-            }
+            Err(_) => return false,
         };
 
         let mut headers = HeaderMap::new();
@@ -606,14 +621,11 @@ impl WebDavClient {
 
         let req = match req_builder.body(Full::new(encoded_body)) {
             Ok(r) => r,
-            Err(_) => {
-                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
-                return;
-            }
+            Err(_) => return false,
         };
 
         let fut = self.client.request(req);
-        let result = timeout(Duration::from_secs(5), fut).await;
+        let result = timeout(self.default_timeout, fut).await;
 
         match result {
             Ok(Ok(resp)) if resp.status().is_success() => {
@@ -623,10 +635,11 @@ impl WebDavClient {
                 let negotiated = detect_request_compression_preference(resp.headers())
                     .unwrap_or(AUTO_DEFAULT_ENCODING);
                 self.set_negotiated_encoding(Some(negotiated));
+                true
             }
-            _ => {
-                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
-            }
+            // Transient failure: do not pin `Identity` — the next request
+            // re-probes; the current one proceeds uncompressed.
+            _ => false,
         }
     }
 
@@ -662,6 +675,8 @@ impl WebDavClient {
         payload: Bytes,
         headers: &mut HeaderMap,
     ) -> (Bytes, Option<ContentEncoding>) {
+        headers.remove(header::CONTENT_ENCODING);
+
         let mode = *self.request_compression_mode.read();
 
         if mode.is_auto() {
@@ -669,13 +684,13 @@ impl WebDavClient {
             if negotiated.is_none() {
                 let _probe_guard = self.request_compression_probe.lock().await;
                 let negotiated = *self.negotiated_request_compression.read();
-                if negotiated.is_none() {
-                    self.probe_request_compression_support().await;
+                if negotiated.is_none() && !self.probe_request_compression_support().await {
+                    // Probe failed: send this request uncompressed without
+                    // caching anything, so the next request re-probes.
+                    return (payload, None);
                 }
             }
         }
-
-        headers.remove(header::CONTENT_ENCODING);
 
         let encoding = self.resolve_request_encoding_with_mode(&mode);
         if encoding == ContentEncoding::Identity {
