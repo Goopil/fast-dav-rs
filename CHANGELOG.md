@@ -109,6 +109,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or update them)
 
 ### Fixed
+- `send` no longer feeds empty response bodies to a decompressor (issue #142):
+  a conforming `HEAD` response may carry `Content-Encoding` with an empty body
+  (RFC 9110 §9.3.2), which previously failed with a decoder error; empty
+  bodies (`HEAD`, `204`, `304`) are now returned as-is with their headers
+  untouched (no `Content-Length` rewrite)
+- A caller-supplied `Content-Encoding` on a request is now honored as-is
+  (issue #142): the body is forwarded verbatim and automatic compression (and
+  its probe) is skipped. Previously the header was stripped and the body
+  re-compressed on top of the caller's encoding — silent double encoding
+  behind a 2xx. Documented on `send`/`send_stream`
+- The request-compression probe pins `Identity` when the base URL answers it
+  with a redirect (issue #142): a 3xx is a stable property of the deployment,
+  not a transient failure, so the probe no longer re-runs (and fails) before
+  every body-carrying request
+- The request-compression probe caches only proven encodings (issue #142):
+  gzip is kept when the server's advertised `Accept-Encoding` preference names
+  it; anything else (`br`/`zstd` picks included) caches `Identity`, so later
+  PUTs cannot fail with `415` on an encoding the server never accepted
+- An unrelated `400` no longer permanently disables request compression
+  (issue #142): only compression-specific rejections (`415`, and `501`)
+  pin `Identity` — a `400` can come from a malformed body and previously
+  silenced compression for the client's lifetime
+- The request-compression probe sends the configured `User-Agent`
+  (issue #142, RFC 9110 §10.1.5), so User-Agent-aware servers do not treat it
+  differently from real requests
+- Documented on `send_stream`/`propfind_stream`/`report_stream` (and their
+  CalDAV/CardDAV delegate copies) that streaming bodies may still be encoded
+  (issue #142): the client advertises `Accept-Encoding` (RFC 9110 §12.5.3) but
+  leaves response decoding to the caller — check `Content-Encoding` (e.g.
+  `detect_encoding`) and wrap the body before parsing
 - **Behavior change:** weak ETags (`W/"abc"`) are now rejected client-side by
   `put_if_match`, `put_if_match_prefer`, and `delete_if_match` (AUDIT-008) with
   `Error::InvalidEtag` and the new `EtagReason::Weak`, **before any network
