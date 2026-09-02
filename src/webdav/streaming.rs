@@ -1,6 +1,6 @@
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{normalize_etag, normalize_sync_token};
-use crate::webdav::types::{DavItemCommon, PropStat, WebDavError};
+use crate::webdav::types::{DavItemCommon, LockInfo, LockScope, PropStat, WebDavError};
 use crate::{Error, Result};
 use quick_xml::escape::unescape;
 use std::time::Duration;
@@ -900,6 +900,140 @@ pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<S
     }
 
     Ok(principal)
+}
+
+/// Parse a `Timeout` value (RFC 4918 §10.7): `Second-N` (a comma-separated
+/// list is tolerated, the first `Second-N` wins). `Infinite` or anything
+/// unparseable yields `None`.
+pub(crate) fn parse_lock_timeout(value: &str) -> Option<u64> {
+    value.split(',').find_map(|part| {
+        let part = part.trim();
+        let seconds = part
+            .strip_prefix("Second-")
+            .or_else(|| part.strip_prefix("second-"))?;
+        seconds.parse().ok()
+    })
+}
+
+/// Parse the first `<D:activelock>` of a `<D:lockdiscovery>` body (RFC 4918
+/// §14.1) into a [`LockInfo`].
+///
+/// Lenient by design: missing `<D:locktoken>`, `<D:timeout>`,
+/// `<D:lockscope>`, and `<D:owner>` elements leave the corresponding
+/// [`LockInfo`] fields empty or `None` rather than failing. A body without
+/// any `<D:activelock>` (or an empty body) yields a default (empty)
+/// [`LockInfo`]. Useful on `LOCK` responses and on `PROPFIND` responses that
+/// request the `lockdiscovery` property (RFC 4918 §8.10.9).
+///
+/// ```
+/// use fast_dav_rs::webdav::{LockScope, parse_lock_discovery_bytes};
+///
+/// let xml = br#"<D:prop xmlns:D="DAV:">
+///   <D:lockdiscovery>
+///     <D:activelock>
+///       <D:lockscope><D:exclusive/></D:lockscope>
+///       <D:owner><D:href>https://example.com/alice</D:href></D:owner>
+///       <D:timeout>Second-300</D:timeout>
+///       <D:locktoken><D:href>opaquelocktoken:abc</D:href></D:locktoken>
+///     </D:activelock>
+///   </D:lockdiscovery>
+/// </D:prop>"#;
+/// let lock = parse_lock_discovery_bytes(xml).unwrap();
+/// assert_eq!(lock.token, "opaquelocktoken:abc");
+/// assert_eq!(lock.timeout_secs, Some(300));
+/// assert_eq!(lock.scope, Some(LockScope::Exclusive));
+/// assert_eq!(lock.owner.as_deref(), Some("https://example.com/alice"));
+/// ```
+pub fn parse_lock_discovery_bytes(body: &[u8]) -> Result<LockInfo> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+    use std::io::Cursor;
+
+    let trimmed = body.trim_ascii();
+    if trimmed.is_empty() {
+        return Ok(LockInfo::default());
+    }
+    let cursor = Cursor::new(trimmed);
+    let mut xml = Reader::from_reader(cursor);
+    xml.config_mut().trim_text(false);
+
+    let mut info = LockInfo::default();
+    let mut buf = Vec::with_capacity(4 * 1024);
+    let mut stack: Vec<Vec<u8>> = Vec::new();
+    let mut text = String::new();
+
+    let in_activelock = |stack: &[Vec<u8>]| {
+        stack
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(b"activelock"))
+    };
+
+    loop {
+        match xml.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let local = local_name(e.name().as_ref()).to_vec();
+                if in_activelock(&stack) {
+                    if local.eq_ignore_ascii_case(b"exclusive") {
+                        info.scope = Some(LockScope::Exclusive);
+                    } else if local.eq_ignore_ascii_case(b"shared") {
+                        info.scope = Some(LockScope::Shared);
+                    }
+                }
+                stack.push(local);
+                text.clear();
+            }
+            Ok(Event::Empty(e)) => {
+                let local = local_name(e.name().as_ref()).to_vec();
+                if in_activelock(&stack) {
+                    if local.eq_ignore_ascii_case(b"exclusive") {
+                        info.scope = Some(LockScope::Exclusive);
+                    } else if local.eq_ignore_ascii_case(b"shared") {
+                        info.scope = Some(LockScope::Shared);
+                    }
+                }
+            }
+            Ok(Event::Text(e)) => text.push_str(&decode_text(e.as_ref())?),
+            Ok(Event::End(e)) => {
+                let local = local_name(e.name().as_ref()).to_vec();
+                if local.eq_ignore_ascii_case(b"activelock") {
+                    break; // first activelock wins
+                }
+                if in_activelock(&stack) {
+                    if local.eq_ignore_ascii_case(b"timeout") {
+                        info.timeout_secs = parse_lock_timeout(text.trim());
+                    } else if local.eq_ignore_ascii_case(b"href") {
+                        if stack
+                            .iter()
+                            .any(|name| name.eq_ignore_ascii_case(b"locktoken"))
+                        {
+                            info.token = text.trim().to_string();
+                        } else if stack.iter().any(|name| name.eq_ignore_ascii_case(b"owner")) {
+                            let owner = text.trim();
+                            info.owner = if owner.is_empty() {
+                                None
+                            } else {
+                                Some(owner.to_string())
+                            };
+                        }
+                    } else if local.eq_ignore_ascii_case(b"locktoken") && info.token.is_empty() {
+                        info.token = text.trim().to_string();
+                    } else if local.eq_ignore_ascii_case(b"owner")
+                        && info.owner.is_none()
+                        && !text.trim().is_empty()
+                    {
+                        info.owner = Some(text.trim().to_string());
+                    }
+                }
+                stack.pop();
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => return Err(Error::from_quick_xml(error)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(info)
 }
 
 /// Parse a `<D:error>` body (RFC 4918 §14.12) into [`WebDavError`].

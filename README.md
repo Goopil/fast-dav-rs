@@ -86,6 +86,8 @@ features, and major releases introduce breaking changes when needed.
 
 ### Advanced Features
 
+- WebDAV locking (RFC 4918 class 2): `LOCK`/`UNLOCK`, lock refresh via the `If` header,
+  and `lockdiscovery` parsing (`LockInfo`, `LockScope`).
 - WebDAV-Sync (RFC 6578) for incremental sync.
 - Bounded parallelism for batch PROPFIND/REPORT operations.
 - Automatic request compression negotiation (br, zstd, gzip) with overrides.
@@ -213,7 +215,8 @@ fn is_retryable(error: &Error) -> bool {
 | `Other`                | User callback error or error that doesn't fit another variant         |
 
 The `Operation` enum identifies which DAV operation produced an
-`UnexpectedStatus` (e.g. `PropfindCollections`, `ReportCalendarQuery`). The
+`UnexpectedStatus` (e.g. `PropfindCollections`, `ReportCalendarQuery`,
+`Lock`, `Unlock`). The
 `EtagReason` enum describes why an ETag was rejected (`Empty`,
 `InvalidFormat`, `InvalidCharacters`, `InvalidHeaderValue`).
 
@@ -440,6 +443,13 @@ so you can override the default timeout for specific requests.
 `propfind_many` and `report_many` accept a `max_concurrency` parameter to bound the number of in-flight
 requests while preserving input order in the result list.
 
+`CalDavClient::calendar_multiget_many` applies the same machinery to `calendar-multiget`: the href
+list is chunked into `batch_size` slices, one REPORT is issued per chunk with at most
+`max_concurrency` in flight, and results come back as `Vec<BatchItem<CalendarObject>>` ordered by
+chunk. A failed chunk is a single error `BatchItem`; sibling chunks are unaffected. Pick
+`batch_size` (e.g. 100 hrefs per REPORT) and `max_concurrency` (e.g. 4) to match your server's
+limits.
+
 ## Advanced Configuration
 
 For production use, use the builder pattern to configure auth, timeouts,
@@ -658,6 +668,54 @@ async fn main() -> Result<()> {
 - `sync_collection_resilient` (all clients) recovers automatically from `410 Gone` (stale sync
   token, RFC 6578 §3.11) by re-issuing the report as an initial sync and returning the full
   result set with the new token; any other error propagates unchanged.
+
+### WebDAV locking (class 2)
+
+All clients (`WebDavClient`, `CalDavClient`, `CardDavClient`) support WebDAV locking (RFC 4918
+class 2). `lock` sends `LOCK` with a `Timeout: Second-N` header and a `<D:lockinfo>` body and
+returns the parsed `<D:activelock>` (`LockInfo`: token, timeout, scope, owner); `refresh_lock`
+re-issues the `LOCK` with the token in an `If` header (RFC 4918 §9.10.7); `unlock` sends `UNLOCK`
+with the token in a `Lock-Token` header. Non-success statuses — including `423 Locked` — surface
+as `Error::UnexpectedStatus` with `Operation::Lock`/`Operation::Unlock`.
+
+The client keeps **no implicit lock state**: callers keep the token and pass it to
+`refresh_lock`/`unlock`, or send it in an `If` header via the low-level `send` on conditional
+writes. Check `capabilities()` (`class2`) to confirm the server supports locking. `PROPFIND`
+responses containing the `lockdiscovery` property can be parsed with
+`webdav::parse_lock_discovery_bytes`.
+
+```rust
+use fast_dav_rs::webdav::LockScope;
+use fast_dav_rs::{CalDavClient, Result};
+
+async fn edit_shared_doc(client: &CalDavClient) -> Result<()> {
+    let lock = client
+        .lock(
+            "docs/plan.txt",
+            LockScope::Exclusive,
+            "<D:href>https://example.com/alice</D:href>",
+            Some(300),
+        )
+        .await?;
+
+    // Write while holding the lock: the token goes in an If header.
+    let mut headers = hyper::HeaderMap::new();
+    headers.insert("If", format!("(<{}>)", lock.token).parse().unwrap());
+    client
+        .send(
+            hyper::Method::PUT,
+            "docs/plan.txt",
+            headers,
+            Some(bytes::Bytes::from_static(b"updated content")),
+            None,
+        )
+        .await?;
+
+    client.refresh_lock("docs/plan.txt", &lock.token, Some(300)).await?;
+    client.unlock("docs/plan.txt", &lock.token).await?;
+    Ok(())
+}
+```
 
 ### Resilient sync example
 

@@ -18,7 +18,8 @@ use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::retry::{is_idempotent_method, is_retryable_status, retry_delay};
 use crate::webdav::types::{
-    BatchItem, DavCapabilities, DavItem, Depth, Prefer, SyncCapability, SyncLevel,
+    BatchItem, DavCapabilities, DavItem, Depth, LockInfo, LockScope, Prefer, SyncCapability,
+    SyncLevel,
 };
 use crate::{Error, Operation, Result};
 
@@ -1113,6 +1114,204 @@ impl WebDavClient {
             .await
     }
 
+    // ----------- WebDAV locking (RFC 4918 class 2) -----------
+
+    /// Shared LOCK pipeline behind [`lock`](Self::lock) and
+    /// [`refresh_lock`](Self::refresh_lock): sends the request, maps a
+    /// non-success status (including `423 Locked`) to
+    /// [`Error::UnexpectedStatus`], parses the `lockdiscovery`/`activelock`
+    /// response, and fills `timeout_secs` from the `Timeout` response header
+    /// when the body omits `<D:timeout>`.
+    async fn lock_request(
+        &self,
+        path: &str,
+        headers: HeaderMap,
+        body: Option<Bytes>,
+    ) -> Result<LockInfo> {
+        let resp = self
+            .send(Method::from_bytes(b"LOCK")?, path, headers, body, None)
+            .await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::Lock,
+                status: resp.status(),
+            });
+        }
+        let header_timeout = resp
+            .headers()
+            .get("Timeout")
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::webdav::streaming::parse_lock_timeout);
+        let mut info = crate::webdav::streaming::parse_lock_discovery_bytes(&resp.into_body())?;
+        if info.timeout_secs.is_none() {
+            info.timeout_secs = header_timeout;
+        }
+        Ok(info)
+    }
+
+    /// Acquire a WebDAV lock on a resource (RFC 4918 §9.10).
+    ///
+    /// Sends `LOCK` with a `Timeout: Second-N` header (when `timeout_secs`
+    /// is given) and a `<D:lockinfo>` body built from `scope` and
+    /// `owner_xml`. `owner_xml` is a raw XML fragment inserted inside
+    /// `<D:owner>` (e.g. `<D:href>https://example.com/alice</D:href>`) — it
+    /// is **not** escaped; escape plain-text owners with
+    /// [`escape_xml`](crate::webdav::escape_xml). Pass an empty string to
+    /// omit the `<D:owner>` element. No `Depth` header is sent (resource
+    /// locking; collection locking with `Depth: infinity` is out of scope).
+    ///
+    /// Returns the parsed `<D:activelock>`: the server-assigned lock `token`
+    /// (send it in an `If` header on subsequent conditional writes — this
+    /// client keeps **no implicit lock state**), the granted `timeout_secs`,
+    /// `scope`, and `owner`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnexpectedStatus`] (operation
+    /// [`Operation::Lock`](crate::Operation::Lock)) when the server rejects
+    /// the lock — notably `423 Locked` when an incompatible lock already
+    /// exists.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::webdav::{LockScope, WebDavClient};
+    ///
+    /// # async fn run() -> fast_dav_rs::Result<()> {
+    /// let client = WebDavClient::new("https://dav.example.com/", None, None)?;
+    /// let lock = client
+    ///     .lock(
+    ///         "docs/plan.txt",
+    ///         LockScope::Exclusive,
+    ///         "<D:href>https://example.com/alice</D:href>",
+    ///         Some(300),
+    ///     )
+    ///     .await?;
+    /// println!("lock token: {}", lock.token);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn lock(
+        &self,
+        path: &str,
+        scope: LockScope,
+        owner_xml: &str,
+        timeout_secs: Option<u64>,
+    ) -> Result<LockInfo> {
+        let mut h = HeaderMap::new();
+        if let Some(secs) = timeout_secs {
+            h.insert(
+                "Timeout",
+                header::HeaderValue::from_str(&format!("Second-{secs}"))?,
+            );
+        }
+        h.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/xml; charset=utf-8"),
+        );
+        let owner = owner_xml.trim();
+        let owner_el = if owner.is_empty() {
+            String::new()
+        } else {
+            format!("\n  <D:owner>{owner}</D:owner>")
+        };
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<D:lockinfo xmlns:D="DAV:">
+  <D:lockscope><D:{}/></D:lockscope>
+  <D:locktype><D:write/></D:locktype>{}
+</D:lockinfo>"#,
+            scope.as_str(),
+            owner_el,
+        );
+        self.lock_request(path, h, Some(Bytes::from(body))).await
+    }
+
+    /// Refresh an existing WebDAV lock (RFC 4918 §7.7 / §9.10.7): the `LOCK`
+    /// request is re-issued **without a body**, carrying the lock token in an
+    /// `If` header and the requested `Timeout` (when `timeout_secs` is
+    /// given). Returns the refreshed `<D:activelock>` — the server may grant
+    /// a new timeout and may rotate the token, so use the returned `LockInfo`
+    /// afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnexpectedStatus`] (operation
+    /// [`Operation::Lock`](crate::Operation::Lock)) on non-success statuses,
+    /// including `412 Precondition Failed` when the lock no longer exists,
+    /// and [`Error::InvalidInput`] for an empty token.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::webdav::WebDavClient;
+    ///
+    /// # async fn run(client: &WebDavClient, token: &str) -> fast_dav_rs::Result<()> {
+    /// let refreshed = client.refresh_lock("docs/plan.txt", token, Some(300)).await?;
+    /// println!("refreshed, timeout: {:?}", refreshed.timeout_secs);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn refresh_lock(
+        &self,
+        path: &str,
+        token: &str,
+        timeout_secs: Option<u64>,
+    ) -> Result<LockInfo> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(Error::InvalidInput(
+                "lock token cannot be empty".to_string(),
+            ));
+        }
+        let mut h = HeaderMap::new();
+        h.insert(
+            "If",
+            header::HeaderValue::from_str(&format!("(<{token}>)"))?,
+        );
+        if let Some(secs) = timeout_secs {
+            h.insert(
+                "Timeout",
+                header::HeaderValue::from_str(&format!("Second-{secs}"))?,
+            );
+        }
+        self.lock_request(path, h, None).await
+    }
+
+    /// Remove a WebDAV lock (RFC 4918 §9.11): sends `UNLOCK` with the lock
+    /// token in a `Lock-Token` header. Succeeds on any 2xx status (typically
+    /// `204 No Content`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnexpectedStatus`] (operation
+    /// [`Operation::Unlock`](crate::Operation::Unlock)) on non-success
+    /// statuses — e.g. `409 Conflict` when the lock token does not match an
+    /// existing lock — and [`Error::InvalidInput`] for an empty token.
+    pub async fn unlock(&self, path: &str, token: &str) -> Result<()> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(Error::InvalidInput(
+                "lock token cannot be empty".to_string(),
+            ));
+        }
+        let mut h = HeaderMap::new();
+        h.insert(
+            "Lock-Token",
+            header::HeaderValue::from_str(&format!("<{token}>"))?,
+        );
+        let resp = self
+            .send(Method::from_bytes(b"UNLOCK")?, path, h, None, None)
+            .await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::Unlock,
+                status: resp.status(),
+            });
+        }
+        Ok(())
+    }
+
     /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.
     pub async fn propfind_many(
         &self,
@@ -1121,12 +1320,12 @@ impl WebDavClient {
         xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
+        let requests = paths.into_iter().map(move |p| (p, xml_body.clone()));
         self.many(
             // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"PROPFIND").unwrap(),
-            paths,
+            requests,
             depth,
-            xml_body,
             max_concurrency,
         )
         .await
@@ -1140,12 +1339,30 @@ impl WebDavClient {
         xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
+        let requests = paths.into_iter().map(move |p| (p, xml_body.clone()));
         self.many(
             // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"REPORT").unwrap(),
-            paths,
+            requests,
             depth,
-            xml_body,
+            max_concurrency,
+        )
+        .await
+    }
+
+    /// Run many `REPORT`s to the same collection with per-request bodies,
+    /// concurrently bounded by a semaphore (same machinery as
+    /// [`Self::report_many`], used by the CalDAV batched multiget).
+    pub(crate) async fn report_many_bodies(
+        &self,
+        requests: impl IntoIterator<Item = (String, Arc<Bytes>)>,
+        max_concurrency: usize,
+    ) -> Vec<BatchItem<Response<Bytes>>> {
+        self.many(
+            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
+            Method::from_bytes(b"REPORT").unwrap(),
+            requests,
+            Depth::One,
             max_concurrency,
         )
         .await
@@ -1154,18 +1371,16 @@ impl WebDavClient {
     async fn many(
         &self,
         method: Method,
-        paths: impl IntoIterator<Item = String>,
+        requests: impl IntoIterator<Item = (String, Arc<Bytes>)>,
         depth: Depth,
-        xml_body: Arc<Bytes>,
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         let sem = Arc::new(Semaphore::new(max_concurrency.max(1)));
         let mut tasks = FuturesOrdered::new();
 
-        for path in paths {
+        for (path, body) in requests {
             let sem_clone = sem.clone();
             let this = self.clone();
-            let body = xml_body.clone();
             let p = path.clone();
             let method = method.clone();
             tasks.push_back(async move {
@@ -1742,6 +1957,52 @@ macro_rules! impl_dav_client_delegates {
                 xml_body: Option<&str>,
             ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
                 self.webdav.mkcol(path, xml_body).await
+            }
+
+            /// Acquire a WebDAV lock on a resource (`LOCK`, RFC 4918 §9.10).
+            ///
+            /// `owner_xml` is a raw XML fragment inserted inside `<D:owner>`
+            /// (e.g. `<D:href>https://example.com/alice</D:href>`); an empty
+            /// string omits the element. Returns the parsed `<D:activelock>`
+            /// with the server-assigned lock token. The client keeps no
+            /// implicit lock state — pass the token to
+            /// [`refresh_lock`](Self::refresh_lock) /
+            /// [`unlock`](Self::unlock), and send it in an `If` header (via
+            /// the low-level `send`) on conditional writes. Check
+            /// `capabilities().class2` to confirm the server supports locking.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`Error::UnexpectedStatus`] (operation
+            /// [`Operation::Lock`](crate::Operation::Lock)) on non-success
+            /// statuses, including `423 Locked`.
+            pub async fn lock(
+                &self,
+                path: &str,
+                scope: $crate::webdav::LockScope,
+                owner_xml: &str,
+                timeout_secs: Option<u64>,
+            ) -> $crate::Result<$crate::webdav::LockInfo> {
+                self.webdav
+                    .lock(path, scope, owner_xml, timeout_secs)
+                    .await
+            }
+
+            /// Refresh an existing WebDAV lock (`LOCK` re-issued with the
+            /// lock token in an `If` header, RFC 4918 §9.10.7).
+            pub async fn refresh_lock(
+                &self,
+                path: &str,
+                token: &str,
+                timeout_secs: Option<u64>,
+            ) -> $crate::Result<$crate::webdav::LockInfo> {
+                self.webdav.refresh_lock(path, token, timeout_secs).await
+            }
+
+            /// Remove a WebDAV lock (`UNLOCK`, RFC 4918 §9.11) with the token
+            /// in a `Lock-Token` header. Succeeds on any 2xx (typically `204`).
+            pub async fn unlock(&self, path: &str, token: &str) -> $crate::Result<()> {
+                self.webdav.unlock(path, token).await
             }
 
             /// Discover the current user's principal URL via `current-user-principal`.

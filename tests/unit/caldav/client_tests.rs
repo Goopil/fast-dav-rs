@@ -1097,3 +1097,290 @@ async fn delegate_request_compression_mode_getter_roundtrips() {
         RequestCompressionMode::Force(fast_dav_rs::ContentEncoding::Gzip)
     );
 }
+
+// ---------------------------------------------------------------------------
+// calendar_multiget_many
+// ---------------------------------------------------------------------------
+
+/// One `calendar-multiget` REPORT response listing `hrefs` (optionally with
+/// `calendar-data`), as a `(head, body)` pair for the wire helpers.
+fn multiget_report_response(hrefs: &[&str], with_data: bool) -> (String, Vec<u8>) {
+    let mut responses = String::new();
+    for (i, href) in hrefs.iter().enumerate() {
+        let data = if with_data {
+            format!("<C:calendar-data>BEGIN:VCALENDAR\r\nEND:VCALENDAR-{i}</C:calendar-data>")
+        } else {
+            String::new()
+        };
+        responses.push_str(&format!(
+            "<D:response><D:href>{href}</D:href><D:propstat><D:prop>\
+             <D:getetag>\"etag-{i}\"</D:getetag>{data}</D:prop>\
+             <D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
+        ));
+    }
+    let body = format!(
+        "<?xml version=\"1.0\"?>\
+         <D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\
+         {responses}</D:multistatus>"
+    );
+    (
+        crate::common::http_helpers::response_head("", body.len()),
+        body.into_bytes(),
+    )
+}
+
+#[tokio::test]
+async fn multiget_many_chunks_hrefs_and_orders_results() {
+    let hrefs: Vec<String> = (0..5).map(|i| format!("/cal/e{i}.ics")).collect();
+    let responses = vec![
+        multiget_report_response(&["/cal/e0.ics", "/cal/e1.ics"], true),
+        multiget_report_response(&["/cal/e2.ics", "/cal/e3.ics"], true),
+        multiget_report_response(&["/cal/e4.ics"], true),
+    ];
+    let (base, captured) = crate::common::http_helpers::serve_sequence(responses).await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .calendar_multiget_many("cal/", &hrefs, true, None, 2, 1)
+        .await
+        .unwrap();
+
+    // 5 hrefs / batch 2 -> exactly 3 REPORTs, each carrying only its chunk.
+    let requests = captured.lock().unwrap();
+    assert_eq!(requests.len(), 3, "expected one REPORT per chunk");
+    let req1 = String::from_utf8_lossy(&requests[0]);
+    assert!(
+        req1.contains("calendar-multiget"),
+        "expected calendar-multiget report root: {req1}"
+    );
+    assert!(req1.contains("<D:href>/cal/e0.ics</D:href>"), "{req1}");
+    assert!(req1.contains("<D:href>/cal/e1.ics</D:href>"), "{req1}");
+    assert!(
+        !req1.contains("/cal/e2.ics"),
+        "chunk 1 leaked hrefs: {req1}"
+    );
+    let req2 = String::from_utf8_lossy(&requests[1]);
+    assert!(
+        req2.contains("/cal/e2.ics") && req2.contains("/cal/e3.ics"),
+        "{req2}"
+    );
+    assert!(
+        !req2.contains("/cal/e0.ics"),
+        "chunk 2 leaked hrefs: {req2}"
+    );
+    let req3 = String::from_utf8_lossy(&requests[2]);
+    assert!(req3.contains("/cal/e4.ics"), "{req3}");
+    drop(requests);
+
+    // Deterministic ordering: chunk index first, then server order in-chunk.
+    assert_eq!(items.len(), 5);
+    for item in &items {
+        assert_eq!(item.pub_path, "cal/");
+        assert!(
+            item.result.is_ok(),
+            "expected Ok item: {:?}",
+            item.result.as_ref().err()
+        );
+    }
+    let got: Vec<String> = items
+        .iter()
+        .map(|i| i.result.as_ref().unwrap().href.clone())
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            "/cal/e0.ics",
+            "/cal/e1.ics",
+            "/cal/e2.ics",
+            "/cal/e3.ics",
+            "/cal/e4.ics"
+        ]
+    );
+    assert!(items[0].result.as_ref().unwrap().calendar_data.is_some());
+}
+
+#[tokio::test]
+async fn multiget_many_propagates_expand() {
+    let hrefs = vec!["/cal/a.ics".to_string(), "/cal/b.ics".to_string()];
+    let (_, body) = multiget_report_response(&["/cal/a.ics", "/cal/b.ics"], false);
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let expand = TimeRange::new("20240101T000000Z").with_end("20240201T000000Z");
+    client
+        .calendar_multiget_many("cal/", &hrefs, true, Some(expand), 10, 4)
+        .await
+        .unwrap();
+
+    let guard = captured.lock().unwrap();
+    let raw = String::from_utf8_lossy(&guard);
+    assert!(
+        raw.contains(
+            "<C:calendar-data><C:expand start=\"20240101T000000Z\" end=\"20240201T000000Z\"/></C:calendar-data>"
+        ),
+        "expected expand element in request body: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn multiget_many_partial_failure_isolated() {
+    let hrefs: Vec<String> = (0..3).map(|i| format!("/cal/e{i}.ics")).collect();
+    let ok500 =
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_string();
+    let responses = vec![
+        multiget_report_response(&["/cal/e0.ics"], true),
+        (ok500, Vec::new()),
+        multiget_report_response(&["/cal/e2.ics"], true),
+    ];
+    let (base, _captured) = crate::common::http_helpers::serve_sequence(responses).await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .calendar_multiget_many("cal/", &hrefs, true, None, 1, 1)
+        .await
+        .unwrap();
+
+    assert_eq!(items.len(), 3, "one BatchItem per chunk result");
+    assert!(items[0].result.is_ok());
+    assert!(
+        matches!(
+            &items[1].result,
+            Err(Error::UnexpectedStatus {
+                operation,
+                status,
+                ..
+            })
+                if *operation == fast_dav_rs::Operation::ReportCalendarMultiget
+                    && status.as_u16() == 500
+        ),
+        "expected UnexpectedStatus(500) for the failed chunk, got: {:?}",
+        items[1].result
+    );
+    assert!(items[2].result.is_ok(), "sibling chunk must be unaffected");
+}
+
+#[tokio::test]
+async fn multiget_many_unparsable_chunk_is_one_batch_error() {
+    let hrefs = vec!["/cal/a.ics".to_string(), "/cal/b.ics".to_string()];
+    let (head, body) = multiget_report_response(&["/cal/a.ics"], true);
+    let garbage = b"<D:multistatus><D:response>".to_vec();
+    let responses = vec![
+        (head, body),
+        (
+            crate::common::http_helpers::response_head("", garbage.len()),
+            garbage,
+        ),
+    ];
+    let (base, _captured) = crate::common::http_helpers::serve_sequence(responses).await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .calendar_multiget_many("cal/", &hrefs, true, None, 1, 1)
+        .await
+        .unwrap();
+
+    assert_eq!(items.len(), 2);
+    assert!(items[0].result.is_ok());
+    assert!(
+        items[1].result.is_err(),
+        "unparsable chunk must be an error"
+    );
+}
+
+#[tokio::test]
+async fn multiget_many_runs_batches_concurrently() {
+    let hrefs = vec!["/cal/a.ics".to_string(), "/cal/b.ics".to_string()];
+    // Chunk 1 is delayed; chunk 2 answers immediately. With real concurrency
+    // (2 permits) both requests must be in flight before any response is
+    // written; a serialized client would answer chunk 1 first.
+    let (head1, body1) = multiget_report_response(&["/cal/a.ics"], true);
+    let (head2, body2) = multiget_report_response(&["/cal/b.ics"], true);
+    let responses = vec![(head1, body1, 300), (head2, body2, 0)];
+    let (base, _captured, events) = crate::common::http_helpers::serve_parallel(responses).await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .calendar_multiget_many("cal/", &hrefs, true, None, 1, 2)
+        .await
+        .unwrap();
+
+    let log = events.lock().unwrap();
+    let first_resp = log
+        .iter()
+        .position(|e| e == "resp")
+        .expect("server wrote at least one response");
+    assert_eq!(
+        log[..first_resp].iter().filter(|e| *e == "req").count(),
+        2,
+        "both REPORTs must be in flight before the first response: {log:?}"
+    );
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().all(|i| i.result.is_ok()));
+}
+
+#[tokio::test]
+async fn multiget_many_rejects_zero_batch_size_before_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let Err(err) = client
+        .calendar_multiget_many("cal/", &["/cal/a.ics".to_string()], true, None, 0, 4)
+        .await
+    else {
+        panic!("expected batch_size=0 to fail before any network I/O");
+    };
+
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("batch_size")),
+        "expected InvalidConfig for batch_size=0, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn multiget_many_empty_hrefs_returns_empty_without_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let items = client
+        .calendar_multiget_many("cal/", &[], true, None, 10, 4)
+        .await
+        .unwrap();
+
+    assert!(items.is_empty());
+}
+
+#[tokio::test]
+async fn multiget_many_rejects_invalid_expand_before_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let Err(err) = client
+        .calendar_multiget_many(
+            "cal/",
+            &["/cal/a.ics".to_string()],
+            true,
+            Some(TimeRange::new("nope")),
+            10,
+            4,
+        )
+        .await
+    else {
+        panic!("expected invalid expand to fail before any network I/O");
+    };
+
+    assert!(
+        matches!(err, Error::InvalidDateTime { ref context, .. }
+            if context.contains("calendar-multiget expand")),
+        "expected InvalidDateTime for expand, got: {err:?}"
+    );
+}

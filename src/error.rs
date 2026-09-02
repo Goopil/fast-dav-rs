@@ -328,6 +328,10 @@ pub enum Operation {
     ReportAddressbookMultiget,
     /// `REPORT` sync-collection.
     ReportSyncCollection,
+    /// `LOCK` to acquire or refresh a WebDAV lock (RFC 4918 §9.10).
+    Lock,
+    /// `UNLOCK` to remove a WebDAV lock (RFC 4918 §9.11).
+    Unlock,
 }
 
 impl std::fmt::Display for Operation {
@@ -343,6 +347,8 @@ impl std::fmt::Display for Operation {
             Self::ReportAddressbookQuery => "REPORT addressbook-query",
             Self::ReportAddressbookMultiget => "REPORT addressbook-multiget",
             Self::ReportSyncCollection => "REPORT sync-collection",
+            Self::Lock => "LOCK",
+            Self::Unlock => "UNLOCK",
         };
         f.write_str(s)
     }
