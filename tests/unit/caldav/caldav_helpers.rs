@@ -1,7 +1,8 @@
-use fast_dav_rs::{
+use fast_dav_rs::caldav::{
     build_calendar_multiget_body, build_calendar_query_body, build_sync_collection_body,
-    map_calendar_list, map_calendar_objects, map_sync_response, parse_multistatus_bytes,
+    map_calendar_list, map_calendar_objects, map_sync_response,
 };
+use fast_dav_rs::parse_multistatus_bytes;
 use hyper::http::HeaderMap;
 
 #[test]
