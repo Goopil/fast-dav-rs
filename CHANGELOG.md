@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- WebDAV locking (RFC 4918 class 2, issue #90): `lock` (LOCK with a `Timeout: Second-N`
+  header and a `<D:lockinfo>` body), `refresh_lock` (LOCK re-issued without a body with the
+  lock token in an `If` header, RFC 4918 §9.10.7), and `unlock` (UNLOCK with the token in a
+  `Lock-Token` header) on `WebDavClient`, `CalDavClient`, and `CardDavClient`. New
+  `#[non_exhaustive]` types `webdav::LockInfo` (parsed `<D:activelock>`: token, timeout,
+  scope, owner) and `webdav::LockScope` (`Exclusive`/`Shared`), re-exported from
+  `fast_dav_rs::webdav` and the crate root, plus the public `webdav::parse_lock_discovery_bytes`
+  helper for `PROPFIND lockdiscovery` bodies. Non-success statuses — including `423 Locked` —
+  surface as `Error::UnexpectedStatus` with the new `Operation::Lock`/`Operation::Unlock`
+  variants. The client keeps no implicit lock state: callers pass the token where needed.
+
 ## [0.10.0] - 2026-09-01
 
 ### Added
