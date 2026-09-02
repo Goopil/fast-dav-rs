@@ -205,6 +205,7 @@ fn is_retryable(error: &Error) -> bool {
 | `Connection`           | The TCP/TLS handshake failed (DNS, refused, TLS)                      |
 | `Transport`            | A request was sent but the response stream broke                      |
 | `UnexpectedStatus`     | The server returned an unexpected HTTP status code                    |
+| `UnexpectedStatusWithDav` | Unexpected status with a `<D:error>` body (e.g. `423` + `no-conflicting-lock`) |
 | `Timeout`              | An operation exceeded its configured time limit                      |
 | `BodyTooLarge`         | A decompressed response body exceeded the 256 MiB limit              |
 | `Xml`                  | Parsing or decoding XML failed                                        |
@@ -789,11 +790,17 @@ async fn main() -> Result<()> {
 ### WebDAV locking (class 2)
 
 All clients (`WebDavClient`, `CalDavClient`, `CardDavClient`) support WebDAV locking (RFC 4918
-class 2). `lock` sends `LOCK` with a `Timeout: Second-N` header and a `<D:lockinfo>` body and
-returns the parsed `<D:activelock>` (`LockInfo`: token, timeout, scope, owner); `refresh_lock`
-re-issues the `LOCK` with the token in an `If` header (RFC 4918 §9.10.7); `unlock` sends `UNLOCK`
-with the token in a `Lock-Token` header. Non-success statuses — including `423 Locked` — surface
-as `Error::UnexpectedStatus` with `Operation::Lock`/`Operation::Unlock`.
+class 2). `lock` sends `LOCK` with an explicit `Depth: 0` header (RFC 4918 §9.10.4), a
+`Timeout: Second-N` header (clamped to `u32::MAX` seconds, RFC 4918 §10.7) and a `<D:lockinfo>`
+body and returns the parsed `<D:activelock>` (`LockInfo`: token, timeout, scope, owner, lockroot,
+depth); `refresh_lock` re-issues the `LOCK` with the token in an `If` header (RFC 4918 §9.10.7)
+and falls back to the request token when the server omits `<D:locktoken>` in the response;
+`unlock` sends `UNLOCK` with the token in a `Lock-Token` header. Tokens are validated
+(RFC 4918 §10.5 Coded-URL grammar) before being embedded in a header. Non-success statuses
+surface as `Error::UnexpectedStatus` with `Operation::Lock`/`Operation::Unlock` — or as
+`Error::UnexpectedStatusWithDav` when the error body carries a `<D:error>` precondition (e.g.
+`423 Locked` + `no-conflicting-lock`, RFC 4918 §16). A successful `LOCK` response without a lock
+token fails with `Error::InvalidInput` (RFC 4918 §9.10.9).
 
 The client keeps **no implicit lock state**: callers keep the token and pass it to
 `refresh_lock`/`unlock`, or send it in an `If` header via the low-level `send` on conditional

@@ -107,6 +107,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sync_token` remains valid for fetching the next page of changes. Additive but
   constructor-visible: struct literals must add the field (prefer `..Default::default()`
   or update them)
+- New `#[non_exhaustive]` error variant `Error::UnexpectedStatusWithDav {
+  operation, status, dav }` (issue #136): LOCK/UNLOCK error responses with a
+  `<D:error>` body (e.g. `423 Locked` + `<D:no-conflicting-lock/>`, RFC 4918 §16)
+  now carry the parsed precondition (`dav.precondition_code`); bodies without a
+  `<D:error>` element keep surfacing as the unchanged `Error::UnexpectedStatus`.
+  `webdav::WebDavError` gains a `Display` impl used in the variant's message
+- `webdav::LockInfo` (issue #136) gains `lockroot: Option<String>` (text of the
+  REQUIRED `<D:lockroot><D:href>`, RFC 4918 §14.2) and `depth: Option<Depth>`
+  (from `<D:depth>`, RFC 4918 §14.3), parsed by `webdav::parse_lock_discovery_bytes`;
+  `webdav::Depth` gains `Debug`/`PartialEq`/`Eq` to support the new field
 
 ### Fixed
 - **Behavior change:** weak ETags (`W/"abc"`) are now rejected client-side by
@@ -131,6 +141,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   present but could not be parsed as XML — a hostile server can no longer suppress
   precondition diagnostics with garbage markup (`parse_failed == false, precondition_code == None`
   remains a well-formed response with no error body)
+- Locking conformance (RFC 4918 class 2, issue #136): `lock` now sends an explicit
+  `Depth: 0` header (previously omitted, which defaults to `Depth: infinity` per
+  §9.10.4 — locking a collection silently locked its whole subtree); `Timeout: Second-N`
+  values are clamped to `u32::MAX` seconds (§10.7); a successful `LOCK` response without
+  a lock token fails with `Error::InvalidInput` (§9.10.9) instead of returning an empty
+  token; `refresh_lock` falls back to the request token when the refreshed activelock
+  omits `<D:locktoken>` (§9.10.2); lock tokens are validated before being embedded in a
+  Coded-URL `If`/`Lock-Token` header (§10.5)
+- LOCK/UNLOCK error responses carrying a `<D:error>` body now surface the failed
+  precondition instead of dropping it (issue #136, RFC 4918 §16): see the new
+  `Error::UnexpectedStatusWithDav` variant under Changed
 
 ## [0.10.0] - 2026-09-01
 
