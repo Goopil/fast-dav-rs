@@ -1045,6 +1045,10 @@ pub fn parse_lock_discovery_bytes(body: &[u8]) -> Result<LockInfo> {
 /// None` when the body is empty, not valid XML, or has no `<D:error>`
 /// element with a child.
 ///
+/// A malformed (unparsable) error body is reported via
+/// [`WebDavError::parse_failed`] (`true`): a hostile server cannot silently
+/// suppress precondition diagnostics by sending garbage markup.
+///
 /// ```
 /// use fast_dav_rs::webdav::parse_error_body;
 ///
@@ -1053,6 +1057,7 @@ pub fn parse_lock_discovery_bytes(body: &[u8]) -> Result<LockInfo> {
 /// </D:error>"#;
 /// let err = parse_error_body(xml).unwrap();
 /// assert_eq!(err.precondition_code.as_deref(), Some("no-uid-conflict"));
+/// assert!(!err.parse_failed);
 /// ```
 pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
     use quick_xml::Reader;
@@ -1097,7 +1102,10 @@ pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
                     error,
                     quick_xml::Error::Syntax(_) | quick_xml::Error::IllFormed(_)
                 ) {
-                    return Ok(WebDavError::default());
+                    return Ok(WebDavError {
+                        precondition_code: None,
+                        parse_failed: true,
+                    });
                 }
                 return Err(Error::from_quick_xml(error));
             }

@@ -383,6 +383,12 @@ pub struct WebDavError {
     /// the XML namespace prefix. `None` when the `<D:error>` body has no
     /// child element or no error body was present.
     pub precondition_code: Option<String>,
+    /// `true` when an error body was present but could not be parsed as XML
+    /// (malformed or truncated markup). Distinguishes a hostile server
+    /// suppressing precondition diagnostics (`parse_failed == true`,
+    /// `precondition_code == None`) from a well-formed body with no
+    /// `<D:error>` child (`parse_failed == false`, `precondition_code == None`).
+    pub parse_failed: bool,
 }
 
 /// Parse a `DAV` response header value (RFC 4918 §10.1) into
@@ -589,13 +595,26 @@ pub(crate) struct SyncRow {
 
 /// Shared `sync-collection` mapping logic (RFC 6578): resolve the sync token
 /// (top-level, then `Sync-Token` header, then first per-item token), skip
-/// collection entries, and flag 404/410 items as deleted.
+/// collection entries, flag 404/410 items as deleted, and detect result-set
+/// truncation.
+///
+/// Truncation (RFC 6578 §3.6) is reported by the server as a `507 Insufficient
+/// Storage` status inside the 207 multistatus — normally on the request-URI
+/// itself. Any response element carrying a 507 status marks the result as
+/// truncated; per-item statuses are passed through unchanged.
+///
+/// Collection heuristic: a response element is treated as the collection entry
+/// (skipped) when `is_collection` is set, or when it echoes a sync token
+/// without an etag and without a data payload — per RFC 6578 only members are
+/// reported, so a token-only element is the collection, not a member. A
+/// non-compliant server can abuse this to hide member changes; the
+/// `truncated` flag and the returned token are the observable signals.
 pub(crate) fn map_sync_rows(
     headers: &HeaderMap,
     items: Vec<DavItem>,
     top_level_sync_token: Option<String>,
     data_of: impl FnMut(&mut DavItem) -> Option<String>,
-) -> (Option<String>, Vec<SyncRow>) {
+) -> (Option<String>, Vec<SyncRow>, bool) {
     let mut data_of = data_of;
     let mut sync_token = top_level_sync_token.or_else(|| {
         headers
@@ -604,6 +623,7 @@ pub(crate) fn map_sync_rows(
             .map(crate::webdav::client::normalize_sync_token)
     });
     let mut out = Vec::new();
+    let mut truncated = false;
 
     for mut item in items {
         // Per-item tokens are already normalized by the streaming parser.
@@ -611,13 +631,17 @@ pub(crate) fn map_sync_rows(
             sync_token = item.sync_token.clone();
         }
 
+        let status = item.status.clone();
+        let code = status.as_deref().and_then(http_status_code);
+        if code == Some(507) {
+            truncated = true;
+        }
+
         let is_collection = item.is_collection
             || (item.sync_token.is_some() && item.etag.is_none() && data_of(&mut item).is_none());
         if is_collection {
             continue;
         }
-        let status = item.status.clone();
-        let code = status.as_deref().and_then(http_status_code);
         let is_deleted = matches!(code, Some(404) | Some(410));
 
         let data = data_of(&mut item);
@@ -630,5 +654,5 @@ pub(crate) fn map_sync_rows(
         });
     }
 
-    (sync_token, out)
+    (sync_token, out, truncated)
 }
