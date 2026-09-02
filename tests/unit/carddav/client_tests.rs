@@ -704,3 +704,60 @@ async fn carddav_put_never_validates_body_as_icalendar() {
     let req = String::from_utf8_lossy(&guard);
     assert!(req.starts_with("PUT "), "request must be sent: {req}");
 }
+
+#[tokio::test]
+async fn carddav_put_derives_content_type_version_from_body() {
+    use bytes::Bytes;
+
+    let responses = vec![
+        (
+            crate::common::http_helpers::response_head("", 0),
+            Vec::new(),
+        );
+        3
+    ];
+    let (base, captured) = crate::common::http_helpers::serve_sequence(responses).await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    client
+        .put(
+            "a.vcf",
+            Bytes::from_static(b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:A\r\nEND:VCARD\r\n"),
+        )
+        .await
+        .unwrap();
+    client
+        .put(
+            "b.vcf",
+            Bytes::from_static(b"BEGIN:VCARD\r\nversion:4.0\r\nFN:B\r\nEND:VCARD\r\n"),
+        )
+        .await
+        .unwrap();
+    // No VERSION property: falls back to the default version=4.0.
+    client
+        .put(
+            "c.vcf",
+            Bytes::from_static(b"BEGIN:VCARD\r\nFN:C\r\nEND:VCARD\r\n"),
+        )
+        .await
+        .unwrap();
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 3, "one PUT per body");
+    let req3 = String::from_utf8_lossy(&reqs[0]).to_ascii_lowercase();
+    assert!(
+        req3.contains("content-type: text/vcard; charset=utf-8; version=3.0"),
+        "a vCard 3.0 body must carry version=3.0: {req3}"
+    );
+    let req4 = String::from_utf8_lossy(&reqs[1]).to_ascii_lowercase();
+    assert!(
+        req4.contains("content-type: text/vcard; charset=utf-8; version=4.0"),
+        "a vCard 4.0 body must carry version=4.0: {req4}"
+    );
+    let reqd = String::from_utf8_lossy(&reqs[2]).to_ascii_lowercase();
+    assert!(
+        reqd.contains("content-type: text/vcard; charset=utf-8; version=4.0"),
+        "a body without VERSION must default to version=4.0: {reqd}"
+    );
+}

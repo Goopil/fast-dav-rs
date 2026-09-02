@@ -107,8 +107,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sync_token` remains valid for fetching the next page of changes. Additive but
   constructor-visible: struct literals must add the field (prefer `..Default::default()`
   or update them)
+- New `#[non_exhaustive]` error variant `Error::UnexpectedStatusWithDav {
+  operation, status, dav }` (issue #136): LOCK/UNLOCK error responses with a
+  `<D:error>` body (e.g. `423 Locked` + `<D:no-conflicting-lock/>`, RFC 4918 §16)
+  now carry the parsed precondition (`dav.precondition_code`); bodies without a
+  `<D:error>` element keep surfacing as the unchanged `Error::UnexpectedStatus`.
+  `webdav::WebDavError` gains a `Display` impl used in the variant's message
+- `webdav::LockInfo` (issue #136) gains `lockroot: Option<String>` (text of the
+  REQUIRED `<D:lockroot><D:href>`, RFC 4918 §14.2) and `depth: Option<Depth>`
+  (from `<D:depth>`, RFC 4918 §14.3), parsed by `webdav::parse_lock_discovery_bytes`;
+  `webdav::Depth` gains `Debug`/`PartialEq`/`Eq` to support the new field
+- CalDAV `text-match` serialization is now protocol-correct (RFC 4791 §9.7.5):
+  CalDAV `prop-filter`/`param-filter` children no longer emit `match-type` (the
+  attribute does not exist in the CalDAV DTD) and omit the `collation` attribute
+  when it is the CalDAV default `i;ascii-casemap` (an explicitly selected
+  non-default collation is still sent). CardDAV serialization is unchanged
+  (`match-type` and `collation` always present, RFC 6352 §10.4). The
+  `Collation`/`MatchType` enums and their defaults are unchanged
 
 ### Fixed
+- `Retry-After` handling on transient retries (issue #137): the honored delay
+  is now clamped to the retry backoff cap (a hostile or overloaded server
+  answering `429` with a huge `Retry-After` could previously park the request
+  future indefinitely, holding its batch semaphore permit), and the header is
+  now also honored on `503`/`504` (its canonical carriers per RFC 9110
+  §10.2.1), not only on `429`
+- **RFC 4791 request-XML validity (issue #138):** `calendar_query_timerange`,
+  `calendar_multiget`, `calendar_multiget_many`, and the CalDAV `sync_collection`
+  now reject an `expand` without an `end` **before any network I/O** with
+  `Error::InvalidInput` — RFC 4791 §9.6.5 makes both `start` and `end`
+  `#REQUIRED` attributes of `<C:expand>`, so the previously emitted start-only
+  expand was invalid against conforming servers. Wherever expand/time-range
+  `start`+`end` are both set, `end <= start` is rejected with
+  `Error::InvalidDateTime` ("end must be after start", RFC 4791 §9.9) — also on
+  `calendar_query` time-ranges and `free_busy_query`
+- **RFC 4791 §9.7.2 / RFC 6352 §10.5.1 filter exclusivity (issue #138):**
+  `CalDavClient::calendar_query` rejects `prop-filter`s violating the child
+  exclusivity DTD before any network I/O with `Error::InvalidInput`
+  (`is-not-defined` excludes `text-match`, `time-range`, and `param-filter`;
+  `text-match` and `time-range` are mutually exclusive). `PropFilter::to_xml`
+  and `CardDavFilter::to_filter_xml` enforce the same exclusivity by
+  serialization precedence (`is-not-defined` alone; `text-match` wins over
+  `time-range`), so direct `to_xml` callers can no longer emit invalid XML
+- **Behavior change:** `CalDavClient::calendar_query` with a
+  `prop-filter` that sets `is_not_defined` together with a `text-match`,
+  `time-range`, or `param-filter` — or both `text_match` and `time_range` —
+  now fails with `Error::InvalidInput` before any network I/O instead of
+  sending a request conforming servers must reject
+- CardDAV `put`/`put_if_none_match` no longer hardcode `version=4.0` in the
+  `Content-Type` (issue #138): the version parameter is derived from the
+  body's `VERSION` property (case-insensitive simple line scan, e.g. a vCard
+  3.0 body is sent as `text/vcard; charset=utf-8; version=3.0`), falling back
+  to `version=4.0` when the body declares none or a malformed one — a lying
+  `Content-Type` could make `valid-address-data` reject the write
+  (RFC 6352 §5.3.2.1)
 - **Behavior change:** weak ETags (`W/"abc"`) are now rejected client-side by
   `put_if_match`, `put_if_match_prefer`, and `delete_if_match` (AUDIT-008) with
   `Error::InvalidEtag` and the new `EtagReason::Weak`, **before any network
@@ -131,6 +183,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   present but could not be parsed as XML — a hostile server can no longer suppress
   precondition diagnostics with garbage markup (`parse_failed == false, precondition_code == None`
   remains a well-formed response with no error body)
+- Locking conformance (RFC 4918 class 2, issue #136): `lock` now sends an explicit
+  `Depth: 0` header (previously omitted, which defaults to `Depth: infinity` per
+  §9.10.4 — locking a collection silently locked its whole subtree); `Timeout: Second-N`
+  values are clamped to `u32::MAX` seconds (§10.7); a successful `LOCK` response without
+  a lock token fails with `Error::InvalidInput` (§9.10.9) instead of returning an empty
+  token; `refresh_lock` falls back to the request token when the refreshed activelock
+  omits `<D:locktoken>` (§9.10.2); lock tokens are validated before being embedded in a
+  Coded-URL `If`/`Lock-Token` header (§10.5)
+- LOCK/UNLOCK error responses carrying a `<D:error>` body now surface the failed
+  precondition instead of dropping it (issue #136, RFC 4918 §16): see the new
+  `Error::UnexpectedStatusWithDav` variant under Changed
 - RFC 3986-conformant redirect resolution and URI handling (issue #139):
   `Location` references are now normalized with the RFC 3986 §5.2.4
   `remove_dot_segments` algorithm (`../caldav/` against `/.well-known/caldav`
