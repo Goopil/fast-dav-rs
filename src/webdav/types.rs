@@ -141,6 +141,12 @@ pub struct LockInfo {
     pub scope: Option<LockScope>,
     /// Lock owner (text of `<D:owner>` or its `<D:href>`); `None` when absent.
     pub owner: Option<String>,
+    /// The resource the lock applies to, from `<D:lockroot><D:href>`
+    /// (RFC 4918 §14.2); `None` when the server omitted it.
+    pub lockroot: Option<String>,
+    /// Lock depth parsed from `<D:depth>` (`0`, `1`, or `infinity`,
+    /// RFC 4918 §14.3); `None` when absent or unrecognized.
+    pub depth: Option<Depth>,
 }
 
 /// Collation algorithm for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
@@ -310,7 +316,7 @@ impl ParamFilter {
 }
 
 /// WebDAV Depth
-#[derive(Copy, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Depth {
     Zero,
@@ -404,6 +410,18 @@ pub struct WebDavError {
     /// `precondition_code == None`) from a well-formed body with no
     /// `<D:error>` child (`parse_failed == false`, `precondition_code == None`).
     pub parse_failed: bool,
+}
+
+impl std::fmt::Display for WebDavError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(code) = &self.precondition_code {
+            f.write_str(code)
+        } else if self.parse_failed {
+            f.write_str("unparseable <D:error> body")
+        } else {
+            f.write_str("no precondition reported")
+        }
+    }
 }
 
 /// Parse a `DAV` response header value (RFC 4918 §10.1) into

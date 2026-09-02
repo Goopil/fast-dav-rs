@@ -1208,26 +1208,71 @@ impl WebDavClient {
 
     // ----------- WebDAV locking (RFC 4918 class 2) -----------
 
+    /// Map a non-success response to an error, surfacing a `<D:error>`
+    /// precondition body (RFC 4918 §16, §14.12) when the body carries one.
+    fn status_error(operation: Operation, resp: Response<Bytes>) -> Error {
+        let status = resp.status();
+        match crate::webdav::streaming::parse_error_body(&resp.into_body()) {
+            Ok(dav) if dav.precondition_code.is_some() => Error::UnexpectedStatusWithDav {
+                operation,
+                status,
+                dav,
+            },
+            _ => Error::UnexpectedStatus { operation, status },
+        }
+    }
+
+    /// Reject lock tokens that cannot appear in a Coded-URL (RFC 4918
+    /// §10.5): empty, `<`, `>`, `(`, `)`, or any non-visible-ASCII
+    /// character.
+    fn validate_lock_token(token: &str) -> Result<()> {
+        if token.is_empty() {
+            return Err(Error::InvalidInput(
+                "lock token cannot be empty".to_string(),
+            ));
+        }
+        if !token
+            .chars()
+            .all(|c| c.is_ascii_graphic() && !matches!(c, '<' | '>' | '(' | ')'))
+        {
+            return Err(Error::InvalidInput(format!(
+                "lock token contains characters invalid in a Coded-URL (RFC 4918 §10.5): {token:?}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// `Timeout: Second-N` header value, clamped to `u32::MAX` seconds
+    /// (RFC 4918 §10.7: the value MUST NOT exceed 2^32-1).
+    fn timeout_header_value(secs: u64) -> Result<header::HeaderValue> {
+        Ok(header::HeaderValue::from_str(&format!(
+            "Second-{}",
+            secs.min(u64::from(u32::MAX))
+        ))?)
+    }
+
     /// Shared LOCK pipeline behind [`lock`](Self::lock) and
     /// [`refresh_lock`](Self::refresh_lock): sends the request, maps a
     /// non-success status (including `423 Locked`) to
-    /// [`Error::UnexpectedStatus`], parses the `lockdiscovery`/`activelock`
-    /// response, and fills `timeout_secs` from the `Timeout` response header
-    /// when the body omits `<D:timeout>`.
+    /// [`Error::UnexpectedStatus`] — or [`Error::UnexpectedStatusWithDav`]
+    /// when the body carries a `<D:error>` precondition — parses the
+    /// `lockdiscovery`/`activelock` response, and fills `timeout_secs` from
+    /// the `Timeout` response header when the body omits `<D:timeout>`.
+    /// A successful response without a lock token falls back to
+    /// `fallback_token` (refresh path, RFC 4918 §9.10.2) or fails with
+    /// [`Error::InvalidInput`] when there is none to fall back to.
     async fn lock_request(
         &self,
         path: &str,
         headers: HeaderMap,
         body: Option<Bytes>,
+        fallback_token: Option<&str>,
     ) -> Result<LockInfo> {
         let resp = self
             .send(Method::from_bytes(b"LOCK")?, path, headers, body, None)
             .await?;
         if !resp.status().is_success() {
-            return Err(Error::UnexpectedStatus {
-                operation: Operation::Lock,
-                status: resp.status(),
-            });
+            return Err(Self::status_error(Operation::Lock, resp));
         }
         let header_timeout = resp
             .headers()
@@ -1238,31 +1283,47 @@ impl WebDavClient {
         if info.timeout_secs.is_none() {
             info.timeout_secs = header_timeout;
         }
+        if info.token.is_empty() {
+            match fallback_token {
+                Some(token) if !token.is_empty() => info.token = token.to_string(),
+                _ => {
+                    return Err(Error::InvalidInput(
+                        "server returned no lock token for the LOCK response".to_string(),
+                    ));
+                }
+            }
+        }
         Ok(info)
     }
 
     /// Acquire a WebDAV lock on a resource (RFC 4918 §9.10).
     ///
-    /// Sends `LOCK` with a `Timeout: Second-N` header (when `timeout_secs`
-    /// is given) and a `<D:lockinfo>` body built from `scope` and
+    /// Sends `LOCK` with a `Depth: 0` header (RFC 4918 §9.10.4 — without it
+    /// a collection lock would default to `infinity` and silently lock the
+    /// whole subtree), a `Timeout: Second-N` header (when `timeout_secs` is
+    /// given; the value is clamped to `u32::MAX` seconds per RFC 4918
+    /// §10.7), and a `<D:lockinfo>` body built from `scope` and
     /// `owner_xml`. `owner_xml` is a raw XML fragment inserted inside
     /// `<D:owner>` (e.g. `<D:href>https://example.com/alice</D:href>`) — it
     /// is **not** escaped; escape plain-text owners with
     /// [`escape_xml`](crate::webdav::escape_xml). Pass an empty string to
-    /// omit the `<D:owner>` element. No `Depth` header is sent (resource
-    /// locking; collection locking with `Depth: infinity` is out of scope).
+    /// omit the `<D:owner>` element. Collection locking with
+    /// `Depth: infinity` is out of scope.
     ///
     /// Returns the parsed `<D:activelock>`: the server-assigned lock `token`
     /// (send it in an `If` header on subsequent conditional writes — this
     /// client keeps **no implicit lock state**), the granted `timeout_secs`,
-    /// `scope`, and `owner`.
+    /// `scope`, `owner`, `lockroot`, and `depth`.
     ///
     /// # Errors
     ///
     /// Returns [`Error::UnexpectedStatus`] (operation
     /// [`Operation::Lock`](crate::Operation::Lock)) when the server rejects
     /// the lock — notably `423 Locked` when an incompatible lock already
-    /// exists.
+    /// exists — or [`Error::UnexpectedStatusWithDav`] when the error body
+    /// carries a `<D:error>` precondition (e.g. `no-conflicting-lock`,
+    /// RFC 4918 §16). A 2xx response without a lock token fails with
+    /// [`Error::InvalidInput`] (RFC 4918 §9.10.9).
     ///
     /// # Example
     ///
@@ -1291,11 +1352,9 @@ impl WebDavClient {
         timeout_secs: Option<u64>,
     ) -> Result<LockInfo> {
         let mut h = HeaderMap::new();
+        h.insert("Depth", header::HeaderValue::from_static("0"));
         if let Some(secs) = timeout_secs {
-            h.insert(
-                "Timeout",
-                header::HeaderValue::from_str(&format!("Second-{secs}"))?,
-            );
+            h.insert("Timeout", Self::timeout_header_value(secs)?);
         }
         h.insert(
             header::CONTENT_TYPE,
@@ -1316,22 +1375,28 @@ impl WebDavClient {
             scope.as_str(),
             owner_el,
         );
-        self.lock_request(path, h, Some(Bytes::from(body))).await
+        self.lock_request(path, h, Some(Bytes::from(body)), None)
+            .await
     }
 
     /// Refresh an existing WebDAV lock (RFC 4918 §7.7 / §9.10.7): the `LOCK`
     /// request is re-issued **without a body**, carrying the lock token in an
     /// `If` header and the requested `Timeout` (when `timeout_secs` is
-    /// given). Returns the refreshed `<D:activelock>` — the server may grant
+    /// given; the value is clamped to `u32::MAX` seconds per RFC 4918
+    /// §10.7). Returns the refreshed `<D:activelock>` — the server may grant
     /// a new timeout and may rotate the token, so use the returned `LockInfo`
-    /// afterwards.
+    /// afterwards. A conforming server may omit `<D:locktoken>` on refresh
+    /// (RFC 4918 §9.10.2), in which case the request token is returned
+    /// unchanged.
     ///
     /// # Errors
     ///
     /// Returns [`Error::UnexpectedStatus`] (operation
     /// [`Operation::Lock`](crate::Operation::Lock)) on non-success statuses,
-    /// including `412 Precondition Failed` when the lock no longer exists,
-    /// and [`Error::InvalidInput`] for an empty token.
+    /// [`Error::UnexpectedStatusWithDav`] when the error body carries a
+    /// `<D:error>` precondition, `412 Precondition Failed` when the lock no
+    /// longer exists, and [`Error::InvalidInput`] for an empty token or a
+    /// token containing characters invalid in a Coded-URL (RFC 4918 §10.5).
     ///
     /// # Example
     ///
@@ -1351,23 +1416,16 @@ impl WebDavClient {
         timeout_secs: Option<u64>,
     ) -> Result<LockInfo> {
         let token = token.trim();
-        if token.is_empty() {
-            return Err(Error::InvalidInput(
-                "lock token cannot be empty".to_string(),
-            ));
-        }
+        Self::validate_lock_token(token)?;
         let mut h = HeaderMap::new();
         h.insert(
             "If",
             header::HeaderValue::from_str(&format!("(<{token}>)"))?,
         );
         if let Some(secs) = timeout_secs {
-            h.insert(
-                "Timeout",
-                header::HeaderValue::from_str(&format!("Second-{secs}"))?,
-            );
+            h.insert("Timeout", Self::timeout_header_value(secs)?);
         }
-        self.lock_request(path, h, None).await
+        self.lock_request(path, h, None, Some(token)).await
     }
 
     /// Remove a WebDAV lock (RFC 4918 §9.11): sends `UNLOCK` with the lock
@@ -1379,14 +1437,13 @@ impl WebDavClient {
     /// Returns [`Error::UnexpectedStatus`] (operation
     /// [`Operation::Unlock`](crate::Operation::Unlock)) on non-success
     /// statuses — e.g. `409 Conflict` when the lock token does not match an
-    /// existing lock — and [`Error::InvalidInput`] for an empty token.
+    /// existing lock — [`Error::UnexpectedStatusWithDav`] when the error
+    /// body carries a `<D:error>` precondition, and [`Error::InvalidInput`]
+    /// for an empty token or a token containing characters invalid in a
+    /// Coded-URL (RFC 4918 §10.5).
     pub async fn unlock(&self, path: &str, token: &str) -> Result<()> {
         let token = token.trim();
-        if token.is_empty() {
-            return Err(Error::InvalidInput(
-                "lock token cannot be empty".to_string(),
-            ));
-        }
+        Self::validate_lock_token(token)?;
         let mut h = HeaderMap::new();
         h.insert(
             "Lock-Token",
@@ -1396,10 +1453,7 @@ impl WebDavClient {
             .send(Method::from_bytes(b"UNLOCK")?, path, h, None, None)
             .await?;
         if !resp.status().is_success() {
-            return Err(Error::UnexpectedStatus {
-                operation: Operation::Unlock,
-                status: resp.status(),
-            });
+            return Err(Self::status_error(Operation::Unlock, resp));
         }
         Ok(())
     }
