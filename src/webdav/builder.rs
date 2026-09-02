@@ -64,6 +64,7 @@ pub struct WebDavClientBuilder {
     prefer: Option<Prefer>,
     max_retries: usize,
     retry_all: bool,
+    hyper_client: Option<HyperClient>,
 }
 
 /// Manual implementation so held Basic/Bearer credentials are never printed.
@@ -129,6 +130,7 @@ impl Default for WebDavClientBuilder {
             prefer: None,
             max_retries: 0,
             retry_all: false,
+            hyper_client: None,
         }
     }
 }
@@ -389,6 +391,54 @@ impl WebDavClientBuilder {
         self
     }
 
+    /// Use a **pre-built Hyper client** instead of the internally constructed
+    /// one (custom transports, wiremock-style test harnesses, tailored TLS or
+    /// pool settings).
+    ///
+    /// # Ownership semantics
+    ///
+    /// When a client is injected, the builder **skips its own transport
+    /// construction entirely**: `force_http1`, `connect_timeout`,
+    /// `pool_max_idle_per_host`, `pool_idle_timeout`, TLS options
+    /// (`extra_root_certs_pem`, `danger_accept_invalid_certs`) and proxy
+    /// settings (`proxy`, `proxy_basic_auth`) are **not** applied — the
+    /// injected client is used as-is and the caller owns all transport
+    /// configuration (TLS, connection pool, HTTP/2, proxying).
+    ///
+    /// Request-level options (auth, timeout, compression, redirects, `Prefer`,
+    /// retries) still apply on top of the injected client.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::common::http::MaybeProxied;
+    /// use fast_dav_rs::webdav::{HyperClient, WebDavClient};
+    /// use hyper_rustls::HttpsConnectorBuilder;
+    /// use hyper_util::client::legacy::{Client, connect::HttpConnector};
+    /// use hyper_util::rt::TokioExecutor;
+    ///
+    /// let mut http = HttpConnector::new();
+    /// http.enforce_http(false);
+    /// let https = HttpsConnectorBuilder::new()
+    ///     .with_webpki_roots()
+    ///     .https_or_http()
+    ///     .enable_http1()
+    ///     .enable_http2()
+    ///     .wrap_connector(MaybeProxied::direct(http));
+    /// let hyper_client: HyperClient = Client::builder(TokioExecutor::new())
+    ///     .pool_max_idle_per_host(8)
+    ///     .build(https);
+    ///
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .with_hyper_client(hyper_client)
+    ///     .build()?;
+    /// # Ok::<(), fast_dav_rs::Error>(())
+    /// ```
+    pub fn with_hyper_client(mut self, client: HyperClient) -> Self {
+        self.hyper_client = Some(client);
+        self
+    }
+
     /// Validate the configuration and construct the [`WebDavClient`].
     ///
     /// # Errors
@@ -472,7 +522,10 @@ impl WebDavClientBuilder {
             None => None,
         };
 
-        let hyper_client = build_hyper_client(&self)?;
+        let hyper_client = match self.hyper_client.take() {
+            Some(client) => client,
+            None => build_hyper_client(&self)?,
+        };
 
         Ok(WebDavClient::from_parts(
             base,
@@ -855,6 +908,15 @@ macro_rules! impl_dav_builder {
             /// per request to `send`/`send_stream` wins over this default.
             pub fn prefer(mut self, prefer: Option<$crate::webdav::Prefer>) -> Self {
                 self.inner = self.inner.prefer(prefer);
+                self
+            }
+
+            /// Use a **pre-built Hyper client** instead of the internally
+            /// constructed one. All transport options (`force_http1`, pool,
+            /// TLS, proxy) are ignored — the caller owns the transport. See
+            /// [`WebDavClientBuilder::with_hyper_client`](crate::webdav::WebDavClientBuilder::with_hyper_client).
+            pub fn with_hyper_client(mut self, client: $crate::webdav::HyperClient) -> Self {
+                self.inner = self.inner.with_hyper_client(client);
                 self
             }
 
