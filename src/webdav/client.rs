@@ -40,7 +40,10 @@ impl RequestCompressionMode {
 }
 
 const AUTO_DEFAULT_ENCODING: ContentEncoding = ContentEncoding::Gzip;
-const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+/// Canonical bootstrap PROPFIND body: requests `DAV:current-user-principal`
+/// (RFC 6764 §6 step 5) — shared by the compression probe and the
+/// `.well-known` service discovery.
+pub(crate) const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:propfind xmlns:D="DAV:">
   <D:prop>
     <D:current-user-principal/>
@@ -409,6 +412,11 @@ impl WebDavClient {
         self.auth_header.as_ref()
     }
 
+    /// Get the base URI this client was constructed with.
+    pub(crate) fn base(&self) -> &Uri {
+        &self.base
+    }
+
     /// Configure the request compression strategy.
     pub fn set_request_compression_mode(&self, mode: RequestCompressionMode) {
         *self.request_compression_mode.write() = mode;
@@ -658,21 +666,22 @@ impl WebDavClient {
 
     /// Shared request pipeline: builds the request (auth, UA, compression),
     /// sends it with the compression-retry loop, follows HTTP redirects, and
-    /// returns the raw (still-encoded) response.
+    /// returns the **final request URI** (after redirect resolution) together
+    /// with the raw (still-encoded) response.
     ///
     /// Redirect handling (301/302/303/307/308): the request is re-sent to the
     /// `Location` target up to `max_redirects` times. On 303 the method
     /// switches to `GET` and the body is dropped. When a hop crosses origins
     /// (scheme, host, or port change), `Authorization` and `Cookie` headers
     /// are stripped for the remainder of the chain.
-    async fn build_and_send(
+    pub(crate) async fn build_and_send(
         &self,
         method: Method,
         path: &str,
         headers: HeaderMap,
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
-    ) -> Result<Response<Incoming>> {
+    ) -> Result<(Uri, Response<Incoming>)> {
         let mut method = method;
         let mut body = body_bytes;
         let mut base_headers = headers;
@@ -745,7 +754,7 @@ impl WebDavClient {
             }
 
             if !self.follow_redirects || !is_redirect_status(resp.status()) {
-                return Ok(resp);
+                return Ok((uri, resp));
             }
 
             if redirects >= self.max_redirects {
@@ -760,7 +769,7 @@ impl WebDavClient {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|loc| resolve_location(&uri, loc));
             let Some(next) = next else {
-                return Ok(resp);
+                return Ok((uri, resp));
             };
 
             if !strip_credentials && !same_origin(&uri, &next) {
@@ -796,7 +805,7 @@ impl WebDavClient {
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
     ) -> Result<Response<Bytes>> {
-        let resp = self
+        let (_, resp) = self
             .build_and_send(method, path, headers, body_bytes, per_req_timeout)
             .await?;
 
@@ -828,8 +837,10 @@ impl WebDavClient {
         body_bytes: Option<Bytes>,
         per_req_timeout: Option<Duration>,
     ) -> Result<Response<Incoming>> {
-        self.build_and_send(method, path, headers, body_bytes, per_req_timeout)
-            .await
+        let (_, resp) = self
+            .build_and_send(method, path, headers, body_bytes, per_req_timeout)
+            .await?;
+        Ok(resp)
     }
 
     // ----------- HTTP/WebDAV Verbs -----------

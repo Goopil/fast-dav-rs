@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod client;
+pub mod discovery;
 pub mod streaming;
 pub mod types;
 pub mod xml;
@@ -9,6 +10,7 @@ pub use client::{
     RequestCompressionMode, WebDavClient, etag_from_headers, normalize_etag, normalize_sync_token,
     preference_applied_from_headers,
 };
+pub use discovery::{discover_caldav, discover_carddav};
 pub use streaming::parse_error_body;
 pub use types::{
     BatchItem, DavCapabilities, DavItem, DavItemCommon, Depth, Prefer, PropStat, SyncCapability,

@@ -1,5 +1,6 @@
 pub mod builder_tests;
 pub mod compliance_tests;
+pub mod discovery_tests;
 pub mod prefer_tests;
 pub mod protocol_tests;
 pub mod redirect_tests;

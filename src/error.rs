@@ -328,6 +328,10 @@ pub enum Operation {
     ReportAddressbookMultiget,
     /// `REPORT` sync-collection.
     ReportSyncCollection,
+    /// `PROPFIND` against `/.well-known/caldav` (RFC 6764 §5 service discovery).
+    DiscoverWellKnownCaldav,
+    /// `PROPFIND` against `/.well-known/carddav` (RFC 6764 §5 service discovery).
+    DiscoverWellKnownCarddav,
 }
 
 impl std::fmt::Display for Operation {
@@ -343,6 +347,8 @@ impl std::fmt::Display for Operation {
             Self::ReportAddressbookQuery => "REPORT addressbook-query",
             Self::ReportAddressbookMultiget => "REPORT addressbook-multiget",
             Self::ReportSyncCollection => "REPORT sync-collection",
+            Self::DiscoverWellKnownCaldav => "PROPFIND .well-known/caldav",
+            Self::DiscoverWellKnownCarddav => "PROPFIND .well-known/carddav",
         };
         f.write_str(s)
     }

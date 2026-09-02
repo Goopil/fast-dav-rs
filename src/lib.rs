@@ -731,6 +731,6 @@ pub use common::compression::{
 pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
     DavCapabilities, Prefer, PropStat, RequestCompressionMode, SyncCapability, SyncLevel,
-    WebDavClient, WebDavError, etag_from_headers, normalize_etag, normalize_sync_token,
-    preference_applied_from_headers,
+    WebDavClient, WebDavError, discover_caldav, discover_carddav, etag_from_headers,
+    normalize_etag, normalize_sync_token, preference_applied_from_headers,
 };
