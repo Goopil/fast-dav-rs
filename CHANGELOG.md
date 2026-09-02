@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Optional `tracing` instrumentation behind the new `tracing` feature
+  (issue #91, audit AUDIT-010): with `features = ["tracing"]`, the shared
+  request pipeline emits `tracing` events at `debug` level — request start and
+  finish (method, URI, status, duration), redirect hops, transient retries
+  (status + computed delay), exhausted retry budget, per-request timeout, and
+  compression-probe outcome + negotiated encoding — and the decompressed
+  response body size at `trace` level. Zero-cost when disabled: the feature is
+  off by default and compiles out every `tracing` reference (no dependency, no
+  binary-size or compile-time cost). No public API changes; the `tracing`
+  crate is not re-exported
 - Custom hyper client injection (issue #91): new `with_hyper_client(HyperClient)`
   builder method on `WebDavClientBuilder`, `CalDavClientBuilder`, and
   `CardDavClientBuilder`. When a client is injected, the builder skips its own
