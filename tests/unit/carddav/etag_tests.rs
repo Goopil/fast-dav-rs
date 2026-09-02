@@ -1,4 +1,3 @@
-#![allow(deprecated)] // deliberately exercises the deprecated helpers
 use bytes::Bytes;
 use fast_dav_rs::CardDavClient;
 use hyper::http::{HeaderMap, HeaderValue};
@@ -46,7 +45,6 @@ fn test_etag_from_headers_present() {
     let mut headers = HeaderMap::new();
     headers.insert("ETag", HeaderValue::from_static("\"abc123\""));
 
-    #[allow(deprecated)]
     let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, Some("abc123".to_string()));
 }
@@ -54,7 +52,6 @@ fn test_etag_from_headers_present() {
 #[test]
 fn test_etag_from_headers_missing() {
     let headers = HeaderMap::new();
-    #[allow(deprecated)]
     let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, None);
 }
@@ -66,7 +63,6 @@ fn test_etag_from_headers_invalid_utf8() {
     let invalid_value = HeaderValue::from_bytes(b"\xFF\xFE").unwrap();
     headers.insert("ETag", invalid_value);
 
-    #[allow(deprecated)]
     let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, None);
 }
@@ -77,7 +73,6 @@ fn test_etag_from_headers_multiple_values() {
     headers.insert("ETag", HeaderValue::from_static("\"first\""));
     headers.append("ETag", HeaderValue::from_static("\"second\""));
 
-    #[allow(deprecated)]
     let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     // Should return the first value
     assert_eq!(etag, Some("first".to_string()));
@@ -88,7 +83,6 @@ fn test_etag_from_headers_weak_etag() {
     let mut headers = HeaderMap::new();
     headers.insert("ETag", HeaderValue::from_static("W/\"weak123\""));
 
-    #[allow(deprecated)]
     let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, Some("W/weak123".to_string()));
 }
@@ -97,7 +91,6 @@ fn test_etag_from_headers_weak_etag() {
 fn test_etag_from_headers_strips_quotes_and_returns_none_if_empty() {
     let mut headers = HeaderMap::new();
     headers.insert("ETag", HeaderValue::from_static("\"\""));
-    #[allow(deprecated)]
     let etag = fast_dav_rs::webdav::etag_from_headers(&headers);
     assert_eq!(etag, None);
 }
@@ -113,8 +106,7 @@ async fn test_conditional_operations_normalize_if_match() {
     ] {
         let (base_url, request) = capture_request().await;
         let client = CardDavClient::new(&base_url, None, None).unwrap();
-        #[allow(deprecated)]
-        client.disable_request_compression();
+        client.set_request_compression_mode(fast_dav_rs::webdav::RequestCompressionMode::Disabled);
         client
             .put_if_match("contact.vcf", Bytes::from_static(b"BEGIN:VCARD"), etag)
             .await
@@ -125,8 +117,7 @@ async fn test_conditional_operations_normalize_if_match() {
 
         let (base_url, request) = capture_request().await;
         let client = CardDavClient::new(&base_url, None, None).unwrap();
-        #[allow(deprecated)]
-        client.disable_request_compression();
+        client.set_request_compression_mode(fast_dav_rs::webdav::RequestCompressionMode::Disabled);
         client.delete_if_match("contact.vcf", etag).await.unwrap();
         let request = request.await.unwrap();
         assert!(request.starts_with("DELETE "));
@@ -165,8 +156,7 @@ async fn test_if_match_rejects_bare_weak_prefix() {
 async fn test_etag_round_trip_from_headers_to_if_match() {
     let (base_url, request) = capture_request().await;
     let client = CardDavClient::new(&base_url, None, None).unwrap();
-    #[allow(deprecated)]
-    client.disable_request_compression();
+    client.set_request_compression_mode(fast_dav_rs::webdav::RequestCompressionMode::Disabled);
 
     let mut headers = HeaderMap::new();
     headers.insert("ETag", HeaderValue::from_static("\"etag-from-server\""));
@@ -183,28 +173,31 @@ async fn test_etag_round_trip_from_headers_to_if_match() {
 
 #[test]
 fn test_normalize_etag_strips_double_quotes_strong() {
-    assert_eq!(CardDavClient::normalize_etag(r#""abc123""#), "abc123");
+    assert_eq!(fast_dav_rs::webdav::normalize_etag(r#""abc123""#), "abc123");
 }
 
 #[test]
 fn test_normalize_etag_strips_double_quotes_weak() {
-    assert_eq!(CardDavClient::normalize_etag(r#"W/"weak123""#), "W/weak123");
+    assert_eq!(
+        fast_dav_rs::webdav::normalize_etag(r#"W/"weak123""#),
+        "W/weak123"
+    );
 }
 
 #[test]
 fn test_normalize_etag_bare_value_unchanged() {
-    assert_eq!(CardDavClient::normalize_etag("abc123"), "abc123");
+    assert_eq!(fast_dav_rs::webdav::normalize_etag("abc123"), "abc123");
 }
 
 #[test]
 fn test_normalize_etag_empty_string() {
-    assert_eq!(CardDavClient::normalize_etag(""), "");
+    assert_eq!(fast_dav_rs::webdav::normalize_etag(""), "");
 }
 
 #[test]
 fn test_normalize_sync_token_strips_double_quotes() {
     assert_eq!(
-        CardDavClient::normalize_sync_token(r#""token-123""#),
+        fast_dav_rs::webdav::normalize_sync_token(r#""token-123""#),
         "token-123"
     );
 }
@@ -212,7 +205,7 @@ fn test_normalize_sync_token_strips_double_quotes() {
 #[test]
 fn test_normalize_sync_token_bare_unchanged() {
     assert_eq!(
-        CardDavClient::normalize_sync_token("http://example.com/sync/42"),
+        fast_dav_rs::webdav::normalize_sync_token("http://example.com/sync/42"),
         "http://example.com/sync/42"
     );
 }

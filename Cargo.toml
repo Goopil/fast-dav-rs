@@ -51,7 +51,6 @@ path = "tests/e2e/mod.rs"
 
 [features]
 default = []
-legacy = []
 
 [profile.dev.package."*"]
 opt-level = 3
