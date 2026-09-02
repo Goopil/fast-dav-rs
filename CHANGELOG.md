@@ -85,15 +85,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared WebDAV types (`DavItem`, `BatchItem`, `Depth`, `TextMatch`, `Collation`,
   `MatchType`, `ParamFilter`) are unchanged — a single definition re-exported by
   both modules.
+- New `truncated: bool` field on `caldav::SyncResponse` and `carddav::SyncResponse`
+  (AUDIT-015): `true` when the server truncated the sync result set (RFC 6578 §3.6 —
+  a `507 Insufficient Storage` status inside the 207 multistatus, normally on the
+  request-URI, which still surfaces in `items` with its per-item status). The returned
+  `sync_token` remains valid for fetching the next page of changes. Additive but
+  constructor-visible: struct literals must add the field (prefer `..Default::default()`
+  or update them)
 
 ### Fixed
+- **Behavior change:** weak ETags (`W/"abc"`) are now rejected client-side by
+  `put_if_match`, `put_if_match_prefer`, and `delete_if_match` (AUDIT-008) with
+  `Error::InvalidEtag` and the new `EtagReason::Weak`, **before any network
+  I/O**. Previously a weak tag was accepted and sent as `If-Match: W/"abc"`;
+  because RFC 9110 mandates strong comparison for `If-Match`, weak validators
+  never match, so the server was guaranteed to answer `412 Precondition
+  Failed` — a permanently broken write path for servers that issue weak ETags.
+  Weak ETags remain accepted on informational paths (`etag_from_headers`,
+  `normalize_etag`)
 - The request-compression probe (AUDIT-012) no longer permanently pins `Identity`
   after a transient failure: a failed probe (transport error, timeout, non-success
   status) leaves the negotiation state unset so the next body-carrying request
   re-probes, while the current request proceeds uncompressed. A completed probe
-  still caches the server's answer — including `Identity` when the server
-  advertises no compression support. The probe timeout now derives from the
-  client's `timeout(...)` setting instead of a hardcoded 5 s
+   still caches the server's answer — including `Identity` when the server
+   advertises no compression support. The probe timeout now derives from the
+   client's `timeout(...)` setting instead of a hardcoded 5 s
+- `webdav::parse_error_body` (AUDIT-015) no longer silently returns a default
+  `WebDavError` for a malformed `<D:error>` body: `webdav::WebDavError` gains a
+  `parse_failed: bool` flag (`#[non_exhaustive]` struct), set when an error body was
+  present but could not be parsed as XML — a hostile server can no longer suppress
+  precondition diagnostics with garbage markup (`parse_failed == false, precondition_code == None`
+  remains a well-formed response with no error body)
 
 ## [0.10.0] - 2026-09-01
 

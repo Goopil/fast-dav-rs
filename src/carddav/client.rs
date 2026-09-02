@@ -315,6 +315,13 @@ impl CardDavClient {
     }
 
     /// Incrementally synchronise an addressbook collection using `sync-collection`.
+    ///
+    /// # Truncation
+    ///
+    /// If the server truncates the result set (RFC 6578 §3.6), the returned
+    /// [`SyncResponse`] has `truncated == true` and the request-URI appears
+    /// in `items` with a `HTTP/1.1 507 Insufficient Storage` status. The
+    /// returned sync token is valid for fetching the next page of changes.
     pub async fn sync_collection(
         &self,
         addressbook_path: &str,
@@ -541,14 +548,27 @@ pub fn map_address_objects(items: Vec<DavItem>) -> Vec<AddressObject> {
     out
 }
 
+/// Map raw multistatus items into a CardDAV [`SyncResponse`] (RFC 6578).
+///
+/// The sync token is resolved top-level first, then from the `Sync-Token`
+/// response header, then from the first per-item token. `truncated` is set
+/// when any response element carries a `507 Insufficient Storage` status
+/// (RFC 6578 §3.6 result truncation — normally on the request-URI).
+///
+/// Collection heuristic: response elements flagged as collections, or echoing
+/// a sync token without an etag and without an address-data payload, are
+/// treated as the collection entry and skipped. A non-compliant server can
+/// abuse this to hide member changes; the `truncated` flag and the returned
+/// token are the observable signals.
 pub fn map_sync_response(
     headers: &HeaderMap,
     items: Vec<DavItem>,
     top_level_sync_token: Option<String>,
 ) -> SyncResponse {
-    let (sync_token, rows) = map_sync_rows(headers, items, top_level_sync_token, |item| {
-        item.address_data.take()
-    });
+    let (sync_token, rows, truncated) =
+        map_sync_rows(headers, items, top_level_sync_token, |item| {
+            item.address_data.take()
+        });
     SyncResponse {
         sync_token,
         items: rows
@@ -561,6 +581,7 @@ pub fn map_sync_response(
                 is_deleted: r.is_deleted,
             })
             .collect(),
+        truncated,
     }
 }
 

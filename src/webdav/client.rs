@@ -55,6 +55,14 @@ pub(crate) const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
   </D:prop>
 </D:propfind>"#;
 
+/// Build the `If-Match` header value for a conditional request.
+///
+/// Accepts `*`, quoted/bare strong entity-tags (bare values are quoted), and
+/// rejects empty and malformed tags. Weak entity-tags (`W/"abc"`) are
+/// **rejected**: RFC 9110 §13.1.1 mandates strong comparison for `If-Match`,
+/// so a weak validator would never match and the operation would be a
+/// guaranteed `412` on a compliant server. Weak tags remain accepted on the
+/// informational paths ([`normalize_etag`], [`etag_from_headers`]).
 pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
     let etag = etag.trim();
     if etag.is_empty() {
@@ -65,6 +73,14 @@ pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
     }
 
     if etag == "*" || is_valid_entity_tag(etag) {
+        if etag.starts_with("W/") {
+            // RFC 9110 §13.1.1: `If-Match` uses strong comparison; a weak
+            // validator never matches, so the write would be a guaranteed 412.
+            return Err(Error::InvalidEtag {
+                reason: EtagReason::Weak,
+                source: None,
+            });
+        }
         return header::HeaderValue::from_str(etag).map_err(|err| Error::InvalidEtag {
             reason: EtagReason::InvalidHeaderValue,
             source: Some(Box::new(err)),
@@ -73,10 +89,9 @@ pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
 
     if let Some(opaque) = etag.strip_prefix("W/") {
         validate_opaque_tag(opaque)?;
-        let value = format!("W/\"{opaque}\"");
-        return header::HeaderValue::from_str(&value).map_err(|err| Error::InvalidEtag {
-            reason: EtagReason::InvalidHeaderValue,
-            source: Some(Box::new(err)),
+        return Err(Error::InvalidEtag {
+            reason: EtagReason::Weak,
+            source: None,
         });
     }
 
@@ -1029,12 +1044,18 @@ impl WebDavClient {
 
     /// Conditional `DELETE` guarded by `If-Match`.
     ///
-    /// Accepts entity-tags returned by DAV servers, including quoted strong and weak ETags, as
-    /// well as bare ETags returned by some servers. Bare ETags are quoted before sending.
+    /// Accepts entity-tags returned by DAV servers, including quoted strong
+    /// ETags, as well as bare ETags returned by some servers. Bare ETags are
+    /// quoted before sending. Weak entity-tags (`W/"abc"`) are rejected
+    /// client-side: RFC 9110 strong comparison means a weak validator would
+    /// never match, making the operation a guaranteed `412`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the ETag is empty or cannot form a valid HTTP entity-tag.
+    /// Returns an error if the ETag is empty, cannot form a valid HTTP
+    /// entity-tag, or is a weak entity-tag
+    /// ([`Error::InvalidEtag`](crate::Error::InvalidEtag) with
+    /// [`EtagReason::Weak`](crate::EtagReason::Weak)).
     pub async fn delete_if_match(&self, path: &str, etag: &str) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
         h.insert(header::IF_MATCH, if_match_header_value(etag)?);
@@ -1543,6 +1564,16 @@ impl WebDavClient {
     /// `namespace` and `data_element` select the CalDAV/CardDAV data
     /// property requested alongside `getetag` (e.g. `calendar-data`).
     ///
+    /// # Truncation
+    ///
+    /// When the server truncates the result set (RFC 6578 §3.6), it reports
+    /// `507 Insufficient Storage` inside the 207 multistatus — normally on
+    /// the request-URI. That response element surfaces as an ordinary item
+    /// with `status: Some("HTTP/1.1 507 Insufficient Storage")`; inspect
+    /// `items` for a 507 status (or use the CalDAV/CardDAV `sync_collection`
+    /// wrappers, which set `SyncResponse.truncated`) and use the returned
+    /// sync token to fetch the next page.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::UnexpectedStatus`] (operation
@@ -1601,6 +1632,10 @@ impl WebDavClient {
     /// with `410 Gone` (stale sync token), the report is re-issued with an
     /// empty sync token (initial sync) and the full result set with the new
     /// token is returned. Uses [`SyncLevel::One`].
+    ///
+    /// Result-set truncation (RFC 6578 §3.6) surfaces as an item with a
+    /// `HTTP/1.1 507 Insufficient Storage` status (see
+    /// [`sync_collection_with_level`](Self::sync_collection_with_level)).
     ///
     /// Any other error propagates unchanged.
     ///
@@ -1882,6 +1917,13 @@ macro_rules! impl_dav_client_delegates {
             }
 
             /// Conditional `DELETE` guarded by `If-Match`.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the ETag is empty, malformed, or a weak
+            /// entity-tag (`Error::InvalidEtag` with `EtagReason::Weak` —
+            /// RFC 9110 strong comparison means weak validators never match
+            /// `If-Match`).
             pub async fn delete_if_match(
                 &self,
                 path: &str,
@@ -1893,14 +1935,18 @@ macro_rules! impl_dav_client_delegates {
             /// Conditional `PUT` guarded by `If-Match`.
             ///
             /// The write only succeeds if the current resource ETag matches.
-            /// Quoted strong and weak ETags are accepted; bare ETags returned
-            /// by some servers are quoted automatically.
+            /// Quoted strong ETags are accepted; bare ETags returned by some
+            /// servers are quoted automatically. Weak entity-tags (`W/"abc"`)
+            /// are rejected client-side: RFC 9110 strong comparison means a
+            /// weak validator would never match, making the operation a
+            /// guaranteed `412`.
             ///
             /// # Errors
             ///
             /// Returns an error if the path cannot be resolved to a valid
-            /// URI, the ETag is empty or malformed, or a network/server error
-            /// occurs.
+            /// URI, the ETag is empty, malformed, or a weak entity-tag
+            /// (`Error::InvalidEtag` with `EtagReason::Weak`), or a
+            /// network/server error occurs.
             pub async fn put_if_match(
                 &self,
                 path: &str,
@@ -1928,8 +1974,10 @@ macro_rules! impl_dav_client_delegates {
             /// # Errors
             ///
             /// Returns an error if the path cannot be resolved to a valid
-            /// URI, the ETag is empty or malformed, or a network/server error
-            /// occurs.
+            /// URI, the ETag is empty, malformed, or a weak entity-tag
+            /// (`Error::InvalidEtag` with `EtagReason::Weak` — RFC 9110
+            /// strong comparison means weak validators never match
+            /// `If-Match`), or a network/server error occurs.
             ///
             /// # Example
             ///
@@ -2139,6 +2187,14 @@ macro_rules! impl_dav_client_delegates {
             /// all descendants. The existing `sync_collection` keeps the
             /// `SyncLevel::One` behavior.
             ///
+            /// # Truncation
+            ///
+            /// If the server truncates the result set (RFC 6578 §3.6), the
+            /// returned sync response has `truncated == true` and the
+            /// request-URI appears in `items` with a `HTTP/1.1 507
+            /// Insufficient Storage` status. The returned sync token is valid
+            /// for fetching the next page of changes.
+            ///
             /// # Errors
             ///
             /// Returns an error if the REPORT request fails or the server
@@ -2186,6 +2242,10 @@ macro_rules! impl_dav_client_delegates {
             /// empty sync token (initial sync) and the full result set with
             /// the new token is returned. Any other error propagates
             /// unchanged.
+            ///
+            /// Result-set truncation (RFC 6578 §3.6) sets `truncated == true`
+            /// on the returned sync response; the returned token remains
+            /// valid for fetching the next page.
             ///
             /// # Errors
             ///
@@ -2330,15 +2390,27 @@ mod tests {
     }
 
     #[test]
-    fn test_if_match_weak_quoted() {
-        let val = if_match_header_value(r#"W/"abc""#).unwrap();
-        assert_eq!(val.to_str().unwrap(), r#"W/"abc""#);
+    fn test_if_match_weak_quoted_rejected() {
+        let err = if_match_header_value(r#"W/"abc""#).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::Weak,
+                source: None
+            }
+        ));
     }
 
     #[test]
-    fn test_if_match_weak_unquoted_gets_quoted() {
-        let val = if_match_header_value("W/abc").unwrap();
-        assert_eq!(val.to_str().unwrap(), r#"W/"abc""#);
+    fn test_if_match_weak_unquoted_rejected() {
+        let err = if_match_header_value("W/abc").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::Weak,
+                source: None
+            }
+        ));
     }
 
     #[test]

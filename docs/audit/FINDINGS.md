@@ -264,6 +264,7 @@ Restrict the automatic retry to idempotent methods (`PROPFIND`/`REPORT`/`GET` �
 - **Confidence:** Confirmed
 - **Domain:** Correctness / Data integrity
 - **Location:** `src/webdav/client.rs:62-69` (`if_match_header_value`), used by `put_if_match` (`caldav/client.rs:274`, `carddav/client.rs:275`) and `delete_if_match` (`webdav/client.rs:759-763`)
+- **Status:** ✅ Fixed 2026-09-02 (v1.1 audit wave 2): weak entity-tags (`W/"abc"`) are rejected client-side by the shared `if_match_header_value` with `Error::InvalidEtag` and the new `EtagReason::Weak` — before any network I/O — since RFC 9110 strong comparison makes them a guaranteed `412`; informational paths (`etag_from_headers`, `normalize_etag`) still accept weak tags. No escape hatch (add `if_match_allow_weak` only if a user asks).
 
 ### Problem
 A weak etag `W/"abc"` is validated and re-emitted as `W/"abc"` in `If-Match`. RFC 9110 mandates **strong comparison** for `If-Match`: weak validators never match, so the conditional operation can never succeed on a compliant server.
@@ -422,6 +423,7 @@ Fold these types into `webdav` (or a shared `types` module) and re-export once. 
 - **Confidence:** Confirmed (parse_error_body, 507 shape) / Needs verification (per-item propstat failures)
 - **Domain:** Data integrity
 - **Location:** `src/webdav/streaming.rs:399-407`, `src/caldav/client.rs:837-841` / `src/carddav/client.rs:881-885`, `src/webdav/client.rs:1032` pattern
+- **Status:** ✅ Fixed 2026-09-02 (v1.1 audit wave 2, batch 2): both `SyncResponse` types (CalDAV/CardDAV, kept distinct per AUDIT-006 scope) gain `truncated: bool`, set by the shared `map_sync_rows` when any response element carries a `507` status — detection runs before the collection heuristic so the flag is never suppressed; per-item statuses pass through unchanged. `parse_error_body` reports malformed error bodies via the new `webdav::WebDavError::parse_failed` flag instead of a silent default. The part-3 collection heuristic is documented on `map_sync_response`/`SyncResponse` (behavior intentionally unchanged, per audit).
 
 ### Problem
 Three related silent-degradation paths:

@@ -532,6 +532,13 @@ impl CalDavClient {
     /// `<C:expand>`). When it is `Some`, `include_data` is implied `true`
     /// (the server returns expanded calendar data).
     ///
+    /// # Truncation
+    ///
+    /// If the server truncates the result set (RFC 6578 §3.6), the returned
+    /// [`SyncResponse`] has `truncated == true` and the request-URI appears
+    /// in `items` with a `HTTP/1.1 507 Insufficient Storage` status. The
+    /// returned sync token is valid for fetching the next page of changes.
+    ///
     /// # Errors
     ///
     /// Returns an error **before any network I/O** if `expand` is provided
@@ -839,14 +846,27 @@ pub fn map_calendar_objects(items: Vec<DavItem>) -> Vec<CalendarObject> {
     out
 }
 
+/// Map raw multistatus items into a CalDAV [`SyncResponse`] (RFC 6578).
+///
+/// The sync token is resolved top-level first, then from the `Sync-Token`
+/// response header, then from the first per-item token. `truncated` is set
+/// when any response element carries a `507 Insufficient Storage` status
+/// (RFC 6578 §3.6 result truncation — normally on the request-URI).
+///
+/// Collection heuristic: response elements flagged as collections, or echoing
+/// a sync token without an etag and without a calendar-data payload, are
+/// treated as the collection entry and skipped. A non-compliant server can
+/// abuse this to hide member changes; the `truncated` flag and the returned
+/// token are the observable signals.
 pub fn map_sync_response(
     headers: &HeaderMap,
     items: Vec<DavItem>,
     top_level_sync_token: Option<String>,
 ) -> SyncResponse {
-    let (sync_token, rows) = map_sync_rows(headers, items, top_level_sync_token, |item| {
-        item.calendar_data.take()
-    });
+    let (sync_token, rows, truncated) =
+        map_sync_rows(headers, items, top_level_sync_token, |item| {
+            item.calendar_data.take()
+        });
     SyncResponse {
         sync_token,
         items: rows
@@ -859,6 +879,7 @@ pub fn map_sync_response(
                 is_deleted: r.is_deleted,
             })
             .collect(),
+        truncated,
     }
 }
 

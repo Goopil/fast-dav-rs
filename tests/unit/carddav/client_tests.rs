@@ -400,6 +400,97 @@ async fn sync_collection_sends_depth_zero() {
 }
 
 #[tokio::test]
+async fn sync_collection_507_on_request_uri_sets_truncated_and_item_surfaces() {
+    // RFC 6578 §3.10: a truncated result set is reported as a 207 whose
+    // request-URI response element carries `HTTP/1.1 507 Insufficient Storage`.
+    let body = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/contacts/a.vcf</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/contacts/</D:href>
+    <D:status>HTTP/1.1 507 Insufficient Storage</D:status>
+    <D:error><D:number-of-matches-within-limits/></D:error>
+  </D:response>
+  <D:sync-token>http://example.com/sync/1233</D:sync-token>
+</D:multistatus>"#
+        .to_vec();
+    let base = crate::common::http_helpers::serve_once(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let sync = client
+        .sync_collection("contacts/", None, None, false)
+        .await
+        .unwrap();
+
+    assert!(
+        sync.truncated,
+        "a 507 inside the multistatus must surface as a first-class truncation signal"
+    );
+    assert_eq!(
+        sync.sync_token.as_deref(),
+        Some("http://example.com/sync/1233")
+    );
+    let item = sync
+        .items
+        .iter()
+        .find(|i| i.href == "/contacts/")
+        .expect("the request-URI item must still surface");
+    assert_eq!(
+        item.status.as_deref(),
+        Some("HTTP/1.1 507 Insufficient Storage"),
+        "per-item status must be passed through unchanged"
+    );
+    assert!(!item.is_deleted, "507 is not a deletion");
+    assert_eq!(sync.items.len(), 2, "the member item must also surface");
+}
+
+#[tokio::test]
+async fn sync_collection_normal_response_is_not_truncated() {
+    let body = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/contacts/a.vcf</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:sync-token>http://example.com/sync/2</D:sync-token>
+</D:multistatus>"#
+        .to_vec();
+    let base = crate::common::http_helpers::serve_once(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let sync = client
+        .sync_collection("contacts/", None, None, false)
+        .await
+        .unwrap();
+
+    assert!(!sync.truncated);
+    assert_eq!(sync.items.len(), 1);
+    assert_eq!(
+        sync.sync_token.as_deref(),
+        Some("http://example.com/sync/2")
+    );
+}
+
+#[tokio::test]
 async fn mkaddressbook_sends_depth_zero() {
     let body = b"<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"></D:multistatus>".to_vec();
     let (base, captured) = crate::common::http_helpers::serve_capture(
