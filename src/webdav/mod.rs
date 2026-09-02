@@ -6,6 +6,7 @@ pub mod streaming;
 pub mod types;
 pub mod xml;
 
+pub use crate::common::http::HyperClient;
 pub use builder::WebDavClientBuilder;
 pub use client::{
     RequestCompressionMode, WebDavClient, etag_from_headers, normalize_etag, normalize_sync_token,
