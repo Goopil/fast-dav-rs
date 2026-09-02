@@ -77,8 +77,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - e2e gate for the v1.1 APIs (issue #124): new e2e tests against the live
   SabreDAV fixture cover WebDAV locking (lock/refresh/unlock lifecycle, 423
-  enforcement, re-lock), RFC 6764 discovery fallback (the fixture answers 404
-  on `.well-known/*`), `calendar_multiget_many` (batched retrieval + ordering),
+  enforcement, re-lock), RFC 6764 discovery over a real well-known redirect
+  (the fixture's SabreDAV instance now answers `301 /principals/test/` on
+  `/.well-known/caldav` and `/carddav` via a `beforeMethod:*` handler — the
+  documented SabreDAV pattern, since sabre/dav ships no well-known support —
+  and the tests assert the final post-redirect service URI),
+  `calendar_multiget_many` (batched retrieval + ordering),
   the Auto request-compression probe on a real PUT (AUDIT-012),
   `with_hyper_client` injection on a live PROPFIND (AUDIT-017), and the
   `truncated == false` sync regression (AUDIT-015). The fixture now serves the
