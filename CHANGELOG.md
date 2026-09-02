@@ -8,9 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- WebDAV locking (RFC 4918 class 2, issue #90): `lock` (LOCK with a `Timeout: Second-N`
-  header and a `<D:lockinfo>` body), `refresh_lock` (LOCK re-issued without a body with the
-  lock token in an `If` header, RFC 4918 §9.10.7), and `unlock` (UNLOCK with the token in a
+- RFC 6764 §5 auto-discovery (issue #91): free functions `discover_caldav` and
+  `discover_carddav` (taking `&WebDavClient`, re-exported from `fast_dav_rs::webdav` and the
+  crate root) probe `{base}/.well-known/caldav` or `/.well-known/carddav` with a `Depth: 0`
+  PROPFIND requesting `DAV:current-user-principal` (RFC 6764 §6). Redirects are followed by
+  the client's redirect pipeline and the final request URL is returned as the discovered
+  service URL; `404` (or a success answered directly on the `.well-known` URI) falls back to
+  the base URL unchanged; any other non-success status fails with `Error::UnexpectedStatus`
+  (new `Operation::DiscoverWellKnownCaldav` / `Operation::DiscoverWellKnownCarddav` variants).
+  Client credentials are attached to the probe and stripped on cross-origin redirect hops.
+  DNS SRV record lookup (RFC 6764 §3) is not implemented (would require a DNS resolver
+  dependency; deferred)
 - WebDAV locking (RFC 4918 class 2, issue #90): `lock` (LOCK with a `Timeout: Second-N`
   header and a `<D:lockinfo>` body), `refresh_lock` (LOCK re-issued without a body with the
   lock token in an `If` header, RFC 4918 §9.10.7), and `unlock` (UNLOCK with the token in a

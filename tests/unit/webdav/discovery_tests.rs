@@ -1,0 +1,168 @@
+use fast_dav_rs::webdav::{discover_caldav, discover_carddav};
+use fast_dav_rs::{Error, Operation, RequestCompressionMode, WebDavClient};
+
+use crate::common::http_helpers::{response_head, serve_capture, serve_sequence, unreachable_base};
+
+const REDIRECT_301: &str = "HTTP/1.1 301 Moved Permanently\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+const REDIRECT_307: &str = "HTTP/1.1 307 Temporary Redirect\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+fn redirect_head(template: &str, location: &str) -> String {
+    template.replace("{loc}", location)
+}
+
+fn make_client(base: &str) -> WebDavClient {
+    let client = WebDavClient::builder(base).build().unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+    client
+}
+
+#[tokio::test]
+async fn discover_caldav_follows_multi_hop_redirects_to_final_url() {
+    let ok_body = b"ok".to_vec();
+    let first = (redirect_head(REDIRECT_301, "/a/"), Vec::new());
+    let second = (redirect_head(REDIRECT_307, "/cal/"), Vec::new());
+    let third = (response_head("", ok_body.len()), ok_body);
+    let (base, captured) = serve_sequence(vec![first, second, third]).await;
+    let client = make_client(&base);
+
+    let service_url = discover_caldav(&client).await.unwrap();
+    assert_eq!(
+        service_url,
+        format!("{base}cal/"),
+        "the final redirect target is the discovered service URL"
+    );
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 3, "all three hops must be captured: {reqs:?}");
+    let first_req = String::from_utf8_lossy(&reqs[0]);
+    assert!(
+        first_req.contains("PROPFIND /.well-known/caldav HTTP/1.1"),
+        "the probe must target .well-known/caldav (RFC 6764 §5): {first_req}"
+    );
+    assert!(
+        first_req.to_ascii_lowercase().contains("depth: 0"),
+        "the probe must send Depth: 0 (RFC 6764 §6): {first_req}"
+    );
+}
+
+#[tokio::test]
+async fn discover_caldav_404_falls_back_to_base_url() {
+    let (base, captured) = serve_capture(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+        Vec::new(),
+    )
+    .await;
+    let client = make_client(&base);
+
+    let service_url = discover_caldav(&client).await.unwrap();
+    assert_eq!(
+        service_url, base,
+        "404 means the server does not advertise: fall back to the base URL"
+    );
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(
+        req.contains("PROPFIND /.well-known/caldav HTTP/1.1"),
+        "the probe must target .well-known/caldav (RFC 6764 §5): {req}"
+    );
+}
+
+#[tokio::test]
+async fn discover_caldav_direct_success_returns_base_url() {
+    let ok_body = b"ok".to_vec();
+    let (base, _captured) = serve_capture(response_head("", ok_body.len()), ok_body).await;
+    let client = make_client(&base);
+
+    let service_url = discover_caldav(&client).await.unwrap();
+    assert_eq!(
+        service_url, base,
+        "a success served directly on .well-known is not the service endpoint \
+         (RFC 5785 §1.1): fall back to the base URL"
+    );
+}
+
+#[tokio::test]
+async fn discover_caldav_connection_refused_yields_typed_error() {
+    let base = unreachable_base().await;
+    let client = make_client(&base);
+
+    let err = discover_caldav(&client).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Connection(_)),
+        "connection refusal must surface as a typed Error::Connection, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn discover_caldav_unexpected_status_is_typed_error() {
+    let (base, _captured) = serve_capture(
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_owned(),
+        Vec::new(),
+    )
+    .await;
+    let client = make_client(&base);
+
+    let err = discover_caldav(&client).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::UnexpectedStatus {
+                operation: Operation::DiscoverWellKnownCaldav,
+                ..
+            }
+        ),
+        "a non-success, non-404 status must surface as Error::UnexpectedStatus, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains(".well-known/caldav"),
+        "display should name the failed probe, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn discover_carddav_unexpected_status_is_typed_error() {
+    let (base, _captured) = serve_capture(
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_owned(),
+        Vec::new(),
+    )
+    .await;
+    let client = make_client(&base);
+
+    let err = discover_carddav(&client).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::UnexpectedStatus {
+                operation: Operation::DiscoverWellKnownCarddav,
+                ..
+            }
+        ),
+        "the CardDAV wrapper must map errors to DiscoverWellKnownCarddav, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains(".well-known/carddav"),
+        "display should name the failed probe, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn discover_carddav_probes_well_known_carddav_and_resolves() {
+    let ok_body = b"ok".to_vec();
+    let first = (redirect_head(REDIRECT_301, "/addr/"), Vec::new());
+    let second = (response_head("", ok_body.len()), ok_body);
+    let (base, captured) = serve_sequence(vec![first, second]).await;
+    let client = make_client(&base);
+
+    let service_url = discover_carddav(&client).await.unwrap();
+    assert_eq!(service_url, format!("{base}addr/"));
+
+    let reqs = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&reqs[0]);
+    assert!(
+        req.contains("PROPFIND /.well-known/carddav HTTP/1.1"),
+        "the probe must target .well-known/carddav (RFC 6764 §5): {req}"
+    );
+}

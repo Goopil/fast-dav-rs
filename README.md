@@ -92,6 +92,7 @@ features, and major releases introduce breaking changes when needed.
 - Bounded parallelism for batch PROPFIND/REPORT operations.
 - Automatic request compression negotiation (br, zstd, gzip) with overrides.
 - Streaming send APIs for custom workflows.
+- RFC 6764 `.well-known` service discovery (`discover_caldav`/`discover_carddav`).
 - Retry with exponential backoff for transient failures (429/503/504) with `Retry-After` support.
 
 ## Requirements
@@ -517,6 +518,30 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .follow_redirects(true) // default
     .max_redirects(5)       // default
     .build()?;
+```
+
+### Auto-discovery (RFC 6764)
+
+`discover_caldav` and `discover_carddav` (free functions taking `&WebDavClient`) locate the
+service "context path" for a base URL per RFC 6764 §5: a `PROPFIND` with `Depth: 0` and a
+`DAV:current-user-principal` body is sent to `{base}/.well-known/caldav` (or `/carddav`).
+Redirects are followed by the client's redirect pipeline, so the **final** request URL is the
+discovered service URL. A `404` (or a success answered directly on the `.well-known` URI)
+returns the base URL unchanged as a documented fallback; any other non-success status fails
+with `Error::UnexpectedStatus`. Client credentials are attached to the probe and stripped
+automatically on cross-origin redirect hops. DNS SRV record lookup (RFC 6764 §3) is not
+implemented:
+
+```rust
+use fast_dav_rs::{WebDavClient, discover_caldav};
+
+# async fn example() -> fast_dav_rs::Result<()> {
+let client = WebDavClient::builder("https://dav.example.com/")
+    .basic_auth("user", "pass")
+    .build()?;
+let service_url = discover_caldav(&client).await?;
+# Ok(())
+# }
 ```
 
 ### Retry & backoff

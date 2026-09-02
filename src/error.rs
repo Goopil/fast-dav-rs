@@ -332,6 +332,10 @@ pub enum Operation {
     Lock,
     /// `UNLOCK` to remove a WebDAV lock (RFC 4918 §9.11).
     Unlock,
+    /// `PROPFIND` against `/.well-known/caldav` (RFC 6764 §5 service discovery).
+    DiscoverWellKnownCaldav,
+    /// `PROPFIND` against `/.well-known/carddav` (RFC 6764 §5 service discovery).
+    DiscoverWellKnownCarddav,
 }
 
 impl std::fmt::Display for Operation {
@@ -349,6 +353,8 @@ impl std::fmt::Display for Operation {
             Self::ReportSyncCollection => "REPORT sync-collection",
             Self::Lock => "LOCK",
             Self::Unlock => "UNLOCK",
+            Self::DiscoverWellKnownCaldav => "PROPFIND .well-known/caldav",
+            Self::DiscoverWellKnownCarddav => "PROPFIND .well-known/carddav",
         };
         f.write_str(s)
     }
