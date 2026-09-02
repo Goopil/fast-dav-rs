@@ -842,8 +842,9 @@ impl WebDavClient {
                 continue;
             }
 
-            // Transient-failure retry (429/503/504): honor `Retry-After` on
-            // 429, exponential backoff + jitter otherwise. The budget is
+            // Transient-failure retry (429/503/504): honor `Retry-After`
+            // (clamped to the backoff cap), exponential backoff + jitter
+            // otherwise. The budget is
             // shared across the whole redirect chain; exhausted retries fall
             // through and the last response is returned as-is.
             let retryable = is_retryable_status(resp.status())
