@@ -1,6 +1,6 @@
 [package]
 name = "fast-dav-rs"
-version = "0.9.2"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Fast CalDAV/CardDAV client with hyper + rustls, HTTP/2, compression, batching, and streaming XML parsing."

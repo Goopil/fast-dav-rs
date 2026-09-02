@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-01
+
 ### Added
 - iCalendar validation before CalDAV `PUT` (issue #89): `put`, `put_if_match`, and
   `put_if_none_match` on `CalDavClient` now validate the body client-side **before any
