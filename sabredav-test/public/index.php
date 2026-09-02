@@ -52,6 +52,7 @@ $server->addPlugin(new Sabre\CalDAV\ICSExportPlugin());
 $server->addPlugin(new Sabre\CardDAV\Plugin());
 $server->addPlugin(new Sabre\DAV\Browser\Plugin());
 $server->addPlugin(new Sabre\DAV\Sync\Plugin());
+$server->addPlugin(new Sabre\DAV\Locks\Plugin(new Sabre\DAV\Locks\Backend\PDO($pdo)));
 
 // Start server
 $server->exec();
