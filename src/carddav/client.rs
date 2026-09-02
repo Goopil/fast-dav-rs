@@ -15,8 +15,10 @@ use crate::{Error, Operation, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
 
-/// Content-Type for vCard PUT bodies, including the `version=4.0` parameter
-/// required by RFC 6352 §6.2.1.
+/// Content-Type for vCard `PUT` bodies carrying no (or an unrecognized)
+/// `VERSION` property: the `version=4.0` parameter required by RFC 6352
+/// §6.2.1. `put` and `put_if_none_match` derive the version from the body
+/// instead (see [`vcard_content_type`]).
 pub const VCARD_CONTENT_TYPE: &str = "text/vcard; charset=utf-8; version=4.0";
 
 /// High-performance CardDAV client built on **hyper 1.x** + **rustls**.
@@ -108,29 +110,30 @@ impl CardDavClient {
 
     /// Send a `PUT` with a vCard body (`text/vcard`).
     ///
+    /// The `Content-Type` version parameter is derived from the body: a
+    /// `VERSION:<n>.<n>` property (case-insensitive simple line scan) sets
+    /// it — e.g. a vCard 3.0 body is sent as
+    /// `text/vcard; charset=utf-8; version=3.0` — and bodies without a
+    /// well-formed `VERSION` fall back to [`VCARD_CONTENT_TYPE`] (4.0).
+    ///
     /// Use [`put_if_match`] or [`put_if_none_match`] for safer conditional writes.
     pub async fn put(&self, path: &str, vcard_bytes: Bytes) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
-        h.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static(VCARD_CONTENT_TYPE),
-        );
+        h.insert(header::CONTENT_TYPE, vcard_content_type(&vcard_bytes));
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
     }
     /// Create-only `PUT` guarded by `If-None-Match: *`.
     ///
-    /// Fails if the resource already exists.
+    /// Fails if the resource already exists. The `Content-Type` version
+    /// parameter is derived from the body like [`put`](Self::put).
     pub async fn put_if_none_match(
         &self,
         path: &str,
         vcard_bytes: Bytes,
     ) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
-        h.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static(VCARD_CONTENT_TYPE),
-        );
+        h.insert(header::CONTENT_TYPE, vcard_content_type(&vcard_bytes));
         h.insert(header::IF_NONE_MATCH, header::HeaderValue::from_static("*"));
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
@@ -347,6 +350,53 @@ impl CardDavClient {
 
 pub fn escape_xml(input: &str) -> String {
     crate::webdav::xml::escape_xml(input)
+}
+
+/// Build the wire `Content-Type` for a vCard `PUT` body: the version
+/// parameter comes from the body's `VERSION` property (like CalDAV's
+/// `prepare_ical_put` derives it for iCalendar), defaulting to the
+/// `version=4.0` of [`VCARD_CONTENT_TYPE`] when the body declares none.
+fn vcard_content_type(body: &[u8]) -> header::HeaderValue {
+    let version = vcard_version(body);
+    header::HeaderValue::from_str(&format!("text/vcard; charset=utf-8; version={version}"))
+        .unwrap_or_else(|_| header::HeaderValue::from_static(VCARD_CONTENT_TYPE))
+}
+
+/// Detect the vCard `VERSION` declared by a body with a simple line scan:
+/// the first property whose name (before any parameters) is `VERSION`
+/// (case-insensitive) contributes its value when it is well-formed
+/// `<digits>.<digits>`. Anything else — non-UTF-8 bodies, no `VERSION`
+/// property, or a malformed value — yields the default `4.0`. vCard line
+/// folding of the `VERSION` property itself is not unfolded (continuation
+/// lines cannot start a property).
+fn vcard_version(body: &[u8]) -> &str {
+    const DEFAULT: &str = "4.0";
+    let Ok(text) = std::str::from_utf8(body) else {
+        return DEFAULT;
+    };
+    for line in text.lines() {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            continue;
+        }
+        let Some(colon) = line.find(':') else {
+            continue;
+        };
+        let name_end = line[..colon].find(';').unwrap_or(colon);
+        if !line[..name_end].eq_ignore_ascii_case("VERSION") {
+            continue;
+        }
+        let value = line[colon + 1..].trim();
+        let Some((major, minor)) = value.split_once('.') else {
+            return DEFAULT;
+        };
+        let numeric = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+        return if numeric(major) && numeric(minor) {
+            value
+        } else {
+            DEFAULT
+        };
+    }
+    DEFAULT
 }
 
 fn build_mkcol_addressbook_body(xml_body: &str) -> String {
@@ -588,6 +638,41 @@ pub fn map_sync_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vcard_version_line_scan_cases() {
+        assert_eq!(vcard_version(b"VERSION:3.0"), "3.0");
+        assert_eq!(
+            vcard_version(b"BEGIN:VCARD\r\nVERSION:3.0\r\nEND:VCARD\r\n"),
+            "3.0"
+        );
+        assert_eq!(
+            vcard_version(b"BEGIN:VCARD\r\nversion;X=1:3.0\r\nEND:VCARD\r\n"),
+            "3.0"
+        );
+        assert_eq!(
+            vcard_version(b"X-OTHER:VERSION:3.0\r\nVERSION:10.0"),
+            "10.0"
+        );
+        // Malformed / missing / folded VERSION falls back to the default.
+        assert_eq!(
+            vcard_version(b"BEGIN:VCARD\r\nVERSION:three\r\nEND:VCARD\r\n"),
+            "4.0"
+        );
+        assert_eq!(
+            vcard_version(b"BEGIN:VCARD\r\nVERSION:3\r\nEND:VCARD\r\n"),
+            "4.0"
+        );
+        assert_eq!(
+            vcard_version(b"BEGIN:VCARD\r\nFN:x\r\nEND:VCARD\r\n"),
+            "4.0"
+        );
+        assert_eq!(
+            vcard_version(b"BEGIN:VCARD\r\nVER\r\n SION:3.0\r\nEND:VCARD\r\n"),
+            "4.0"
+        );
+        assert_eq!(vcard_version(b"\xFF\xFE"), "4.0");
+    }
 
     #[test]
     fn build_mkcol_addressbook_body_with_resourcetype_no_duplicate() {

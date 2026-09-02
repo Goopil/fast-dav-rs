@@ -1,4 +1,6 @@
-use fast_dav_rs::caldav::{FreeBusyType, TimeRange};
+use fast_dav_rs::caldav::{
+    CalendarQueryFilter, FreeBusyType, ParamFilter, PropFilter, TextMatch, TimeRange,
+};
 use fast_dav_rs::{CalDavClient, Depth, Error, RequestCompressionMode, SyncLevel};
 use hyper::http::HeaderMap;
 
@@ -163,7 +165,7 @@ async fn calendar_multiget_sends_expand() {
     let client = CalDavClient::new(&base, None, None).unwrap();
     client.set_request_compression_mode(RequestCompressionMode::Disabled);
 
-    let expand = TimeRange::new("20240101T000000Z");
+    let expand = TimeRange::new("20240101T000000Z").with_end("20240201T000000Z");
     client
         .calendar_multiget("cal/", ["/cal/a.ics"], false, Some(expand))
         .await
@@ -172,8 +174,118 @@ async fn calendar_multiget_sends_expand() {
     let raw = captured.lock().unwrap();
     let req = String::from_utf8_lossy(&raw);
     assert!(
-        req.contains("<C:calendar-data><C:expand start=\"20240101T000000Z\"/></C:calendar-data>"),
-        "expected start-only expand element in request body: {req}"
+        req.contains(
+            "<C:calendar-data><C:expand start=\"20240101T000000Z\" end=\"20240201T000000Z\"/></C:calendar-data>"
+        ),
+        "expected start+end expand element in request body: {req}"
+    );
+}
+
+#[tokio::test]
+async fn calendar_multiget_rejects_expand_without_end() {
+    // RFC 4791 §9.6.5: both start and end are #REQUIRED attributes of
+    // <C:expand>; a start-only expand must fail before any network I/O.
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let Err(err) = client
+        .calendar_multiget(
+            "cal/",
+            ["/cal/a.ics"],
+            false,
+            Some(TimeRange::new("20240101T000000Z")),
+        )
+        .await
+    else {
+        panic!("expand without end must fail before any network I/O");
+    };
+
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg) if msg.contains("expand requires an `end`")),
+        "expected InvalidInput for expand without end, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn calendar_multiget_rejects_expand_end_before_start() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let Err(err) = client
+        .calendar_multiget(
+            "cal/",
+            ["/cal/a.ics"],
+            false,
+            Some(TimeRange::new("20240201T000000Z").with_end("20240101T000000Z")),
+        )
+        .await
+    else {
+        panic!("end <= start must be rejected before any network I/O");
+    };
+
+    assert!(
+        matches!(
+            err,
+            Error::InvalidDateTime { ref context, ref value, reason, .. }
+                if context.contains("calendar-multiget expand")
+                    && value == "20240101T000000Z"
+                    && reason == "end must be after start"
+        ),
+        "expected InvalidDateTime(end must be after start), got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn calendar_query_timerange_rejects_end_before_start() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let Err(err) = client
+        .calendar_query_timerange(
+            "cal/",
+            "VEVENT",
+            Some("20240201T000000Z"),
+            Some("20240101T000000Z"),
+            false,
+            None,
+        )
+        .await
+    else {
+        panic!("time-range end <= start must be rejected before any network I/O");
+    };
+
+    assert!(
+        matches!(
+            err,
+            Error::InvalidDateTime { ref context, reason, .. }
+                if context == "invalid calendar-query time-range"
+                    && reason == "end must be after start"
+        ),
+        "expected InvalidDateTime for end <= start, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn sync_collection_rejects_expand_without_end() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let Err(err) = client
+        .sync_collection(
+            "cal/",
+            None,
+            None,
+            false,
+            Some(TimeRange::new("20240101T000000Z")),
+        )
+        .await
+    else {
+        panic!("expand without end must fail before any network I/O");
+    };
+
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg) if msg.contains("expand requires an `end`")),
+        "expected InvalidInput for expand without end, got: {err:?}"
     );
 }
 
@@ -1473,5 +1585,37 @@ async fn multiget_many_rejects_invalid_expand_before_io() {
         matches!(err, Error::InvalidDateTime { ref context, .. }
             if context.contains("calendar-multiget expand")),
         "expected InvalidDateTime for expand, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn calendar_query_rejects_exclusive_prop_filters_before_io() {
+    // RFC 4791 §9.7.2: `is-not-defined | ((time-range | text-match)?, param-filter*)`.
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let both = CalendarQueryFilter::new("VEVENT").with_prop_filters(vec![
+        PropFilter::new("DTSTART", TextMatch::new("x"))
+            .with_time_range(TimeRange::new("20240101T000000Z")),
+    ]);
+    let err = client
+        .calendar_query("cal/", &both, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg) if msg.contains("text-match and time-range are mutually exclusive")),
+        "expected InvalidInput for text-match + time-range, got: {err:?}"
+    );
+
+    let mut not_defined = PropFilter::not_defined("LOCATION");
+    not_defined.param_filters = vec![ParamFilter::not_defined("TYPE")];
+    let absent = CalendarQueryFilter::new("VEVENT").with_prop_filters(vec![not_defined]);
+    let err = client
+        .calendar_query("cal/", &absent, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg) if msg.contains("is-not-defined excludes")),
+        "expected InvalidInput for is-not-defined with children, got: {err:?}"
     );
 }

@@ -107,8 +107,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sync_token` remains valid for fetching the next page of changes. Additive but
   constructor-visible: struct literals must add the field (prefer `..Default::default()`
   or update them)
+- CalDAV `text-match` serialization is now protocol-correct (RFC 4791 §9.7.5):
+  CalDAV `prop-filter`/`param-filter` children no longer emit `match-type` (the
+  attribute does not exist in the CalDAV DTD) and omit the `collation` attribute
+  when it is the CalDAV default `i;ascii-casemap` (an explicitly selected
+  non-default collation is still sent). CardDAV serialization is unchanged
+  (`match-type` and `collation` always present, RFC 6352 §10.4). The
+  `Collation`/`MatchType` enums and their defaults are unchanged
 
 ### Fixed
+- **RFC 4791 request-XML validity (issue #138):** `calendar_query_timerange`,
+  `calendar_multiget`, `calendar_multiget_many`, and the CalDAV `sync_collection`
+  now reject an `expand` without an `end` **before any network I/O** with
+  `Error::InvalidInput` — RFC 4791 §9.6.5 makes both `start` and `end`
+  `#REQUIRED` attributes of `<C:expand>`, so the previously emitted start-only
+  expand was invalid against conforming servers. Wherever expand/time-range
+  `start`+`end` are both set, `end <= start` is rejected with
+  `Error::InvalidDateTime` ("end must be after start", RFC 4791 §9.9) — also on
+  `calendar_query` time-ranges and `free_busy_query`
+- **RFC 4791 §9.7.2 / RFC 6352 §10.5.1 filter exclusivity (issue #138):**
+  `CalDavClient::calendar_query` rejects `prop-filter`s violating the child
+  exclusivity DTD before any network I/O with `Error::InvalidInput`
+  (`is-not-defined` excludes `text-match`, `time-range`, and `param-filter`;
+  `text-match` and `time-range` are mutually exclusive). `PropFilter::to_xml`
+  and `CardDavFilter::to_filter_xml` enforce the same exclusivity by
+  serialization precedence (`is-not-defined` alone; `text-match` wins over
+  `time-range`), so direct `to_xml` callers can no longer emit invalid XML
+- **Behavior change:** `CalDavClient::calendar_query` with a
+  `prop-filter` that sets `is_not_defined` together with a `text-match`,
+  `time-range`, or `param-filter` — or both `text_match` and `time_range` —
+  now fails with `Error::InvalidInput` before any network I/O instead of
+  sending a request conforming servers must reject
+- CardDAV `put`/`put_if_none_match` no longer hardcode `version=4.0` in the
+  `Content-Type` (issue #138): the version parameter is derived from the
+  body's `VERSION` property (case-insensitive simple line scan, e.g. a vCard
+  3.0 body is sent as `text/vcard; charset=utf-8; version=3.0`), falling back
+  to `version=4.0` when the body declares none or a malformed one — a lying
+  `Content-Type` could make `valid-address-data` reject the write
+  (RFC 6352 §5.3.2.1)
 - **Behavior change:** weak ETags (`W/"abc"`) are now rejected client-side by
   `put_if_match`, `put_if_match_prefer`, and `delete_if_match` (AUDIT-008) with
   `Error::InvalidEtag` and the new `EtagReason::Weak`, **before any network
