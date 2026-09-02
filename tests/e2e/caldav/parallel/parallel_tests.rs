@@ -98,16 +98,17 @@ async fn test_report_many() {
         let response = client.mkcalendar(&calendar_path, &calendar_xml).await;
         match response {
             Ok(resp) => {
-                if resp.status().is_success() {
-                    calendar_paths.push(calendar_path.clone());
-                    cleanup_paths.push(calendar_path);
-                    println!("Created calendar {}: {}", i, resp.status());
-                } else {
-                    println!("Failed to create calendar {}: {}", i, resp.status());
-                }
+                assert!(
+                    resp.status().is_success(),
+                    "Expected successful calendar creation {i}, got {}",
+                    resp.status()
+                );
+                calendar_paths.push(calendar_path.clone());
+                cleanup_paths.push(calendar_path);
+                println!("Created calendar {}: {}", i, resp.status());
             }
             Err(e) => {
-                println!("Error creating calendar {}: {}", i, e);
+                panic!("Error creating calendar {i}: {e}");
             }
         }
     }
@@ -135,18 +136,15 @@ async fn test_report_many() {
             match result.result {
                 Ok(response) => {
                     println!("REPORT {} ({}): {}", i, result.pub_path, response.status());
-                    // Reports may succeed or fail depending on server support
                     assert!(
-                        response.status().is_success() || response.status().is_client_error(),
-                        "Expected successful or client error REPORT for {}",
-                        result.pub_path
+                        response.status().is_success(),
+                        "Expected successful sync-collection REPORT for {}, got {}",
+                        result.pub_path,
+                        response.status()
                     );
                 }
                 Err(e) => {
-                    println!(
-                        "REPORT {} ({}) failed (may be expected): {}",
-                        i, result.pub_path, e
-                    );
+                    panic!("REPORT {} ({}) failed: {}", i, result.pub_path, e);
                 }
             }
         }

@@ -52,6 +52,23 @@ $server->addPlugin(new Sabre\CalDAV\ICSExportPlugin());
 $server->addPlugin(new Sabre\CardDAV\Plugin());
 $server->addPlugin(new Sabre\DAV\Browser\Plugin());
 $server->addPlugin(new Sabre\DAV\Sync\Plugin());
+$server->addPlugin(new Sabre\DAV\Locks\Plugin(new Sabre\DAV\Locks\Backend\PDO($pdo)));
+
+// RFC 6764 §5 service discovery: SabreDAV has no built-in well-known support
+// (verified: no hits in vendor/sabre), so implement it the way the docs
+// recommend — a beforeMethod handler that redirects the well-known URIs to
+// the user principal (which answers PROPFIND current-user-principal with
+// 207). Registered after the Auth plugin so credentials are validated first.
+// When a beforeMethod handler interrupts the chain, invokeMethod returns
+// without emitting, so the handler must send the response itself.
+$server->on('beforeMethod:*', function ($request, $response) use ($server) {
+    if (in_array($request->getPath(), ['.well-known/caldav', '.well-known/carddav'], true)) {
+        $response->setStatus(301);
+        $response->setHeader('Location', '/principals/test/');
+        $server->sapi->sendResponse($response);
+        return false; // interrupt the event chain
+    }
+});
 
 // Start server
 $server->exec();

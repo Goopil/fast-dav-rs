@@ -941,7 +941,7 @@ cargo test --doc
 ## End-to-End Testing
 
 This project includes a complete e2e testing environment with a SabreDAV server that supports CalDAV and CardDAV
-features including compression.
+features including compression, WebDAV locking (class 2), and WebDAV sync.
 
 ### Prerequisites
 

@@ -133,6 +133,17 @@ CREATE TABLE IF NOT EXISTS `schedulingobjects` (
   size INT(11) UNSIGNED NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `locks` (
+  id INTEGER UNSIGNED NOT NULL PRIMARY KEY AUTO_INCREMENT,
+  owner VARCHAR(100),
+  timeout INTEGER UNSIGNED,
+  created INTEGER UNSIGNED,
+  token VARCHAR(100),
+  scope TINYINT,
+  depth TINYINT,
+  uri TEXT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Insert test user (username: test, password: test - plain text for development)
 INSERT INTO `users` (`username`, `digesta1`) VALUES
 ('test', 'test');

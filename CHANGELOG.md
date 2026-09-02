@@ -75,6 +75,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Compression-retry semantics are unchanged.
 
 ### Changed
+- e2e gate for the v1.1 APIs (issue #124): new e2e tests against the live
+  SabreDAV fixture cover WebDAV locking (lock/refresh/unlock lifecycle, 423
+  enforcement, re-lock), RFC 6764 discovery over a real well-known redirect
+  (the fixture's SabreDAV instance now answers `301 /principals/test/` on
+  `/.well-known/caldav` and `/carddav` via a `beforeMethod:*` handler — the
+  documented SabreDAV pattern, since sabre/dav ships no well-known support —
+  and the tests assert the final post-redirect service URI),
+  `calendar_multiget_many` (batched retrieval + ordering),
+  the Auto request-compression probe on a real PUT (AUDIT-012),
+  `with_hyper_client` injection on a live PROPFIND (AUDIT-017), and the
+  `truncated == false` sync regression (AUDIT-015). The fixture now serves the
+  SabreDAV `Locks` plugin with the PDO locks backend (class 2) — a `locks`
+  table was added to `sabredav-test/sql/init.sql` (additive; fresh CI
+  environments pick it up automatically). Soft asserts in the parallel e2e
+  tests (AUDIT-017) were hardened to panics
 - **Breaking:** `SyncItem`, `SyncResponse`, `build_sync_collection_body`, and
   `map_sync_response` are no longer re-exported from the crate root. CalDAV and
   CardDAV define distinct same-named types/helpers, and the root previously bound
