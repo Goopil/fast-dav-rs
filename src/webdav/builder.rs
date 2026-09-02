@@ -28,6 +28,12 @@ use crate::{Error, Result};
 /// Created with [`WebDavClient::builder`]. Every option is optional and
 /// documented with its default; only the base URL is required.
 ///
+/// The base URL must not embed userinfo credentials
+/// (`https://user:pass@host/` is rejected at build time with
+/// [`Error::InvalidConfig`](crate::Error::InvalidConfig), per RFC 9110 §3.2);
+/// pass credentials via [`basic_auth`](Self::basic_auth) or
+/// [`bearer_token`](Self::bearer_token) instead.
+///
 /// # Example
 ///
 /// ```no_run
@@ -449,7 +455,8 @@ impl WebDavClientBuilder {
     ///
     /// # Errors
     ///
-    /// Returns an error if the base URL is not a valid URI, if credentials
+    /// Returns an error if the base URL is not a valid URI, if the base URL
+    /// embeds userinfo credentials (RFC 9110 §3.2), if credentials
     /// are provided but cannot be encoded, if the proxy URI is invalid,
     /// if `timeout` or `pool_max_idle_per_host` is zero, or if PEM
     /// certificates cannot be parsed.
@@ -516,6 +523,16 @@ impl WebDavClientBuilder {
             .base_url
             .parse()
             .map_err(|source| Error::invalid_url(&self.base_url, source))?;
+        if base
+            .authority()
+            .is_some_and(|authority| authority.as_str().contains('@'))
+        {
+            return Err(Error::InvalidConfig(
+                "base_url must not contain userinfo credentials — pass them via \
+                 basic_auth/bearer_auth"
+                    .to_owned(),
+            ));
+        }
 
         let auth_header = build_auth_header(
             self.basic_user.take(),
