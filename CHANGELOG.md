@@ -64,6 +64,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout, and exhausted retries return the last response as-is (no synthetic error).
   Compression-retry semantics are unchanged.
 
+### Changed
+- **Breaking:** `SyncItem`, `SyncResponse`, `build_sync_collection_body`, and
+  `map_sync_response` are no longer re-exported from the crate root. CalDAV and
+  CardDAV define distinct same-named types/helpers, and the root previously bound
+  only the CalDAV versions — a CardDAV user importing `fast_dav_rs::SyncResponse`
+  silently got the wrong type (AUDIT-014). Import them from their modules instead:
+  `fast_dav_rs::caldav::{SyncItem, SyncResponse, build_sync_collection_body,
+  map_sync_response}` or `fast_dav_rs::carddav::{SyncItem, SyncResponse, …}`. The
+  shared WebDAV types (`DavItem`, `BatchItem`, `Depth`, `TextMatch`, `Collation`,
+  `MatchType`, `ParamFilter`) are unchanged — a single definition re-exported by
+  both modules.
+
 ## [0.10.0] - 2026-09-01
 
 ### Added

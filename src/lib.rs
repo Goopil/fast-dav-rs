@@ -713,11 +713,13 @@ pub use caldav::streaming::{
     parse_multistatus_stream_visit, parse_multistatus_stream_visit_with_timeout,
     parse_multistatus_stream_with_timeout,
 };
+// `SyncItem`/`SyncResponse`/`build_sync_collection_body`/`map_sync_response` are deliberately
+// NOT re-exported here: CalDAV and CardDAV define distinct same-named items (AUDIT-014) —
+// import them from `caldav::` or `carddav::` instead.
 pub use caldav::{
-    BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, MediaType, SyncItem,
-    SyncResponse, ValidationLevel, build_calendar_multiget_body, build_calendar_query_body,
-    build_sync_collection_body, map_calendar_list, map_calendar_objects, map_sync_response,
-    validate_icalendar,
+    BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, MediaType,
+    ValidationLevel, build_calendar_multiget_body, build_calendar_query_body, map_calendar_list,
+    map_calendar_objects, validate_icalendar,
 };
 pub use carddav::builder::CardDavClientBuilder;
 pub use carddav::{
