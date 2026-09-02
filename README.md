@@ -442,6 +442,13 @@ so you can override the default timeout for specific requests.
 `propfind_many` and `report_many` accept a `max_concurrency` parameter to bound the number of in-flight
 requests while preserving input order in the result list.
 
+`CalDavClient::calendar_multiget_many` applies the same machinery to `calendar-multiget`: the href
+list is chunked into `batch_size` slices, one REPORT is issued per chunk with at most
+`max_concurrency` in flight, and results come back as `Vec<BatchItem<CalendarObject>>` ordered by
+chunk. A failed chunk is a single error `BatchItem`; sibling chunks are unaffected. Pick
+`batch_size` (e.g. 100 hrefs per REPORT) and `max_concurrency` (e.g. 4) to match your server's
+limits.
+
 ## Advanced Configuration
 
 For production use, use the builder pattern to configure auth, timeouts,
