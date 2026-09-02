@@ -219,7 +219,7 @@ The `Operation` enum identifies which DAV operation produced an
 `UnexpectedStatus` (e.g. `PropfindCollections`, `ReportCalendarQuery`,
 `Lock`, `Unlock`). The
 `EtagReason` enum describes why an ETag was rejected (`Empty`,
-`InvalidFormat`, `InvalidCharacters`, `InvalidHeaderValue`).
+`InvalidFormat`, `InvalidCharacters`, `InvalidHeaderValue`, `Weak`).
 
 > **Note:** TLS errors may appear as either `TlsRustls` (automatic
 > `rustls::Error` propagation via `?`) or `Tls` (manually wrapped with
@@ -629,6 +629,17 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .prefer(Some(Prefer::Minimal)) // default: none
     .build()?;
 ```
+
+### Conditional requests (If-Match)
+
+`put_if_match`, `put_if_match_prefer`, and `delete_if_match` send `If-Match`
+guarded requests using **RFC 9110 strong comparison**. Quoted strong ETags are
+sent as-is; bare ETags (as returned by some servers) are quoted automatically.
+Weak entity-tags (`W/"abc"`) are rejected **client-side before any network
+I/O** with `Error::InvalidEtag` and `EtagReason::Weak`: under strong comparison
+a weak validator never matches, so a server would always answer `412
+Precondition Failed`. Weak ETags remain accepted everywhere they are purely
+informational (`etag_from_headers`, `normalize_etag`).
 
 ### iCalendar validation (CalDAV)
 

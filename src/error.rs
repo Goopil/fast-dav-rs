@@ -13,6 +13,10 @@ pub enum EtagReason {
     InvalidCharacters,
     /// The ETag cannot be used as an HTTP header value.
     InvalidHeaderValue,
+    /// A weak entity-tag (`W/"…"`) was used where RFC 9110 requires strong
+    /// comparison (`If-Match`): weak validators never match, so the
+    /// conditional operation could never succeed.
+    Weak,
 }
 
 impl std::fmt::Display for EtagReason {
@@ -22,6 +26,10 @@ impl std::fmt::Display for EtagReason {
             Self::InvalidFormat => "invalid entity-tag format",
             Self::InvalidCharacters => "contains invalid entity-tag characters",
             Self::InvalidHeaderValue => "cannot be used as an If-Match header value",
+            Self::Weak => {
+                "weak entity-tag not allowed for If-Match (RFC 9110 strong comparison: \
+                 weak validators never match)"
+            }
         };
         f.write_str(s)
     }

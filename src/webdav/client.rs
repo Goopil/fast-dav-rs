@@ -54,6 +54,14 @@ pub(crate) const PROBE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
   </D:prop>
 </D:propfind>"#;
 
+/// Build the `If-Match` header value for a conditional request.
+///
+/// Accepts `*`, quoted/bare strong entity-tags (bare values are quoted), and
+/// rejects empty and malformed tags. Weak entity-tags (`W/"abc"`) are
+/// **rejected**: RFC 9110 §13.1.1 mandates strong comparison for `If-Match`,
+/// so a weak validator would never match and the operation would be a
+/// guaranteed `412` on a compliant server. Weak tags remain accepted on the
+/// informational paths ([`normalize_etag`], [`etag_from_headers`]).
 pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
     let etag = etag.trim();
     if etag.is_empty() {
@@ -64,6 +72,14 @@ pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
     }
 
     if etag == "*" || is_valid_entity_tag(etag) {
+        if etag.starts_with("W/") {
+            // RFC 9110 §13.1.1: `If-Match` uses strong comparison; a weak
+            // validator never matches, so the write would be a guaranteed 412.
+            return Err(Error::InvalidEtag {
+                reason: EtagReason::Weak,
+                source: None,
+            });
+        }
         return header::HeaderValue::from_str(etag).map_err(|err| Error::InvalidEtag {
             reason: EtagReason::InvalidHeaderValue,
             source: Some(Box::new(err)),
@@ -72,10 +88,9 @@ pub(crate) fn if_match_header_value(etag: &str) -> Result<header::HeaderValue> {
 
     if let Some(opaque) = etag.strip_prefix("W/") {
         validate_opaque_tag(opaque)?;
-        let value = format!("W/\"{opaque}\"");
-        return header::HeaderValue::from_str(&value).map_err(|err| Error::InvalidEtag {
-            reason: EtagReason::InvalidHeaderValue,
-            source: Some(Box::new(err)),
+        return Err(Error::InvalidEtag {
+            reason: EtagReason::Weak,
+            source: None,
         });
     }
 
@@ -975,12 +990,18 @@ impl WebDavClient {
 
     /// Conditional `DELETE` guarded by `If-Match`.
     ///
-    /// Accepts entity-tags returned by DAV servers, including quoted strong and weak ETags, as
-    /// well as bare ETags returned by some servers. Bare ETags are quoted before sending.
+    /// Accepts entity-tags returned by DAV servers, including quoted strong
+    /// ETags, as well as bare ETags returned by some servers. Bare ETags are
+    /// quoted before sending. Weak entity-tags (`W/"abc"`) are rejected
+    /// client-side: RFC 9110 strong comparison means a weak validator would
+    /// never match, making the operation a guaranteed `412`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the ETag is empty or cannot form a valid HTTP entity-tag.
+    /// Returns an error if the ETag is empty, cannot form a valid HTTP
+    /// entity-tag, or is a weak entity-tag
+    /// ([`Error::InvalidEtag`](crate::Error::InvalidEtag) with
+    /// [`EtagReason::Weak`](crate::EtagReason::Weak)).
     pub async fn delete_if_match(&self, path: &str, etag: &str) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
         h.insert(header::IF_MATCH, if_match_header_value(etag)?);
@@ -1842,6 +1863,13 @@ macro_rules! impl_dav_client_delegates {
             }
 
             /// Conditional `DELETE` guarded by `If-Match`.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error if the ETag is empty, malformed, or a weak
+            /// entity-tag (`Error::InvalidEtag` with `EtagReason::Weak` —
+            /// RFC 9110 strong comparison means weak validators never match
+            /// `If-Match`).
             pub async fn delete_if_match(
                 &self,
                 path: &str,
@@ -1853,14 +1881,18 @@ macro_rules! impl_dav_client_delegates {
             /// Conditional `PUT` guarded by `If-Match`.
             ///
             /// The write only succeeds if the current resource ETag matches.
-            /// Quoted strong and weak ETags are accepted; bare ETags returned
-            /// by some servers are quoted automatically.
+            /// Quoted strong ETags are accepted; bare ETags returned by some
+            /// servers are quoted automatically. Weak entity-tags (`W/"abc"`)
+            /// are rejected client-side: RFC 9110 strong comparison means a
+            /// weak validator would never match, making the operation a
+            /// guaranteed `412`.
             ///
             /// # Errors
             ///
             /// Returns an error if the path cannot be resolved to a valid
-            /// URI, the ETag is empty or malformed, or a network/server error
-            /// occurs.
+            /// URI, the ETag is empty, malformed, or a weak entity-tag
+            /// (`Error::InvalidEtag` with `EtagReason::Weak`), or a
+            /// network/server error occurs.
             pub async fn put_if_match(
                 &self,
                 path: &str,
@@ -1888,8 +1920,10 @@ macro_rules! impl_dav_client_delegates {
             /// # Errors
             ///
             /// Returns an error if the path cannot be resolved to a valid
-            /// URI, the ETag is empty or malformed, or a network/server error
-            /// occurs.
+            /// URI, the ETag is empty, malformed, or a weak entity-tag
+            /// (`Error::InvalidEtag` with `EtagReason::Weak` — RFC 9110
+            /// strong comparison means weak validators never match
+            /// `If-Match`), or a network/server error occurs.
             ///
             /// # Example
             ///
@@ -2302,15 +2336,27 @@ mod tests {
     }
 
     #[test]
-    fn test_if_match_weak_quoted() {
-        let val = if_match_header_value(r#"W/"abc""#).unwrap();
-        assert_eq!(val.to_str().unwrap(), r#"W/"abc""#);
+    fn test_if_match_weak_quoted_rejected() {
+        let err = if_match_header_value(r#"W/"abc""#).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::Weak,
+                source: None
+            }
+        ));
     }
 
     #[test]
-    fn test_if_match_weak_unquoted_gets_quoted() {
-        let val = if_match_header_value("W/abc").unwrap();
-        assert_eq!(val.to_str().unwrap(), r#"W/"abc""#);
+    fn test_if_match_weak_unquoted_rejected() {
+        let err = if_match_header_value("W/abc").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidEtag {
+                reason: EtagReason::Weak,
+                source: None
+            }
+        ));
     }
 
     #[test]
