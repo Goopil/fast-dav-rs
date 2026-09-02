@@ -7,7 +7,7 @@ use parking_lot::RwLock;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
-use tokio::time::{Duration, timeout};
+use tokio::time::{Duration, sleep, timeout};
 
 use crate::common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
@@ -16,6 +16,7 @@ use crate::common::compression::{
 use crate::common::http::HyperClient;
 use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
+use crate::webdav::retry::{is_idempotent_method, is_retryable_status, retry_delay};
 use crate::webdav::types::{
     BatchItem, DavCapabilities, DavItem, Depth, LockInfo, LockScope, Prefer, SyncCapability,
     SyncLevel,
@@ -330,6 +331,17 @@ pub struct WebDavClient {
     /// Client-wide `Prefer` header (RFC 7240) injected on every request
     /// unless the request already carries one, if set via the builder.
     prefer: Option<Prefer>,
+    /// Maximum number of retries for transient failures (`429`, `503`,
+    /// `504`); `0` disables retrying (each request is sent exactly once).
+    max_retries: usize,
+    /// When `false` (default), only idempotent methods are retried; when
+    /// `true`, every method is retried on transient failures.
+    retry_all: bool,
+    /// Initial exponential-backoff delay (shrinkable via the test seam).
+    retry_initial_backoff: Duration,
+    /// Upper bound for the exponential-backoff delay (shrinkable via the
+    /// test seam).
+    retry_backoff_cap: Duration,
 }
 
 impl WebDavClient {
@@ -388,6 +400,10 @@ impl WebDavClient {
         follow_redirects: bool,
         max_redirects: u8,
         prefer: Option<Prefer>,
+        max_retries: usize,
+        retry_all: bool,
+        retry_initial_backoff: Duration,
+        retry_backoff_cap: Duration,
     ) -> Self {
         Self {
             base,
@@ -401,6 +417,10 @@ impl WebDavClient {
             follow_redirects,
             max_redirects,
             prefer,
+            max_retries,
+            retry_all,
+            retry_initial_backoff,
+            retry_backoff_cap,
         }
     }
 
@@ -425,6 +445,14 @@ impl WebDavClient {
     /// Get the current request compression strategy.
     pub fn request_compression_mode(&self) -> RequestCompressionMode {
         *self.request_compression_mode.read()
+    }
+
+    /// Hidden test seam: shrink the exponential-backoff delays so unit tests
+    /// do not sleep for real seconds. Not part of the stable API.
+    #[doc(hidden)]
+    pub fn set_retry_delays_for_testing(&mut self, initial: Duration, cap: Duration) {
+        self.retry_initial_backoff = initial;
+        self.retry_backoff_cap = cap;
     }
 
     /// Get the currently resolved request compression encoding.
@@ -658,14 +686,23 @@ impl WebDavClient {
     // ----------- Aggregated send (Bytes) with automatic decompression -----------
 
     /// Shared request pipeline: builds the request (auth, UA, compression),
-    /// sends it with the compression-retry loop, follows HTTP redirects, and
-    /// returns the raw (still-encoded) response.
+    /// sends it with the compression-retry loop, follows HTTP redirects,
+    /// retries transient failures (`429`/`503`/`504`), and returns the raw
+    /// (still-encoded) response.
     ///
     /// Redirect handling (301/302/303/307/308): the request is re-sent to the
     /// `Location` target up to `max_redirects` times. On 303 the method
     /// switches to `GET` and the body is dropped. When a hop crosses origins
     /// (scheme, host, or port change), `Authorization` and `Cookie` headers
     /// are stripped for the remainder of the chain.
+    ///
+    /// Transient-failure retry (429/503/504): when `max_retries` > 0 and the
+    /// method is retryable per the idempotency policy, the request is re-sent
+    /// after a delay (`Retry-After` on 429, exponential backoff + jitter
+    /// otherwise). The retry budget is shared across the whole redirect chain
+    /// and counts every HTTP attempt; each attempt (retries included) runs
+    /// under the same per-request timeout. When the budget is exhausted, the
+    /// last response is returned as-is.
     async fn build_and_send(
         &self,
         method: Method,
@@ -689,6 +726,7 @@ impl WebDavClient {
         let mut redirects: u8 = 0;
         let mut strip_credentials = false;
         let mut attempt = 0;
+        let mut retries: usize = 0;
 
         loop {
             let mut headers = base_headers.clone();
@@ -745,6 +783,26 @@ impl WebDavClient {
                 continue;
             }
 
+            // Transient-failure retry (429/503/504): honor `Retry-After` on
+            // 429, exponential backoff + jitter otherwise. The budget is
+            // shared across the whole redirect chain; exhausted retries fall
+            // through and the last response is returned as-is.
+            if retries < self.max_retries
+                && is_retryable_status(resp.status())
+                && (self.retry_all || is_idempotent_method(&method))
+            {
+                let delay = retry_delay(
+                    resp.status(),
+                    resp.headers(),
+                    retries,
+                    self.retry_initial_backoff,
+                    self.retry_backoff_cap,
+                );
+                retries += 1;
+                sleep(delay).await;
+                continue;
+            }
+
             if !self.follow_redirects || !is_redirect_status(resp.status()) {
                 return Ok(resp);
             }
@@ -789,6 +847,11 @@ impl WebDavClient {
     /// is re-sent as `GET` without a body, and `Authorization`/`Cookie`
     /// headers are stripped when a hop crosses origins. Exceeding the limit
     /// fails with [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
+    ///
+    /// Transient failures (`429`/`503`/`504`) are retried up to
+    /// `max_retries` times (default 0 = disabled) when the method is
+    /// retryable per the idempotency policy; see
+    /// [`WebDavClientBuilder::max_retries`](crate::WebDavClientBuilder::max_retries).
     pub async fn send(
         &self,
         method: Method,

@@ -32,6 +32,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Error::InvalidConfig` and empty `hrefs` returns an empty result — both
   before any network I/O
 
+- Retry with exponential backoff for transient failures (issue #91, audit finding H8):
+  new `max_retries(usize)` and `retry_all(bool)` builder options on `WebDavClientBuilder`,
+  `CalDavClientBuilder`, and `CardDavClientBuilder` (defaults `0` / `false` — retrying
+  disabled, the previous behavior). When enabled, `429`, `503`, and `504` responses are
+  retried in the shared request pipeline: a `429` honors the server's `Retry-After` header
+  (integer seconds or HTTP-date; absent → exponential backoff), while `503`/`504` always
+  use an exponential backoff (base 2, initial ~250 ms, doubling per attempt, capped at
+  ~8 s) with ±25 % jitter (no new dependency). By default only idempotent methods (`GET`,
+  `HEAD`, `OPTIONS`, `PROPFIND`, `REPORT`) are retried; `retry_all(true)` extends retrying
+  to every method. The retry budget counts every HTTP attempt across the whole redirect
+  chain (total attempts = `1 + max_retries`), each attempt runs under the same per-request
+  timeout, and exhausted retries return the last response as-is (no synthetic error).
+  Compression-retry semantics are unchanged.
+
 ## [0.10.0] - 2026-09-01
 
 ### Added
