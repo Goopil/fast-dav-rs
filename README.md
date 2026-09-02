@@ -693,6 +693,10 @@ async fn main() -> Result<()> {
 - `sync_collection_resilient` (all clients) recovers automatically from `410 Gone` (stale sync
   token, RFC 6578 §3.11) by re-issuing the report as an initial sync and returning the full
   result set with the new token; any other error propagates unchanged.
+- The sync types and helpers (`SyncItem`, `SyncResponse`, `build_sync_collection_body`,
+  `map_sync_response`) are **module-qualified**: CalDAV and CardDAV define distinct same-named
+  items, so they are only available as `fast_dav_rs::caldav::{SyncItem, SyncResponse, …}` and
+  `fast_dav_rs::carddav::{SyncItem, SyncResponse, …}` — never at the crate root.
 
 ### WebDAV locking (class 2)
 
