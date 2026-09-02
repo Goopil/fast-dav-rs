@@ -97,13 +97,9 @@ fn test_etag_from_headers_strips_quotes_and_returns_none_if_empty() {
 
 #[tokio::test]
 async fn test_conditional_operations_normalize_if_match() {
-    for (etag, expected) in [
-        ("  abc  ", "\"abc\""),
-        ("\"abc\"", "\"abc\""),
-        ("W/\"abc\"", "W/\"abc\""),
-        ("W/abc", "W/\"abc\""),
-        ("*", "*"),
-    ] {
+    // Weak ETags (`W/"abc"`, `W/abc`) are rejected client-side since AUDIT-008
+    // (RFC 9110 strong comparison) — see test_weak_etags_rejected_with_reason.
+    for (etag, expected) in [("  abc  ", "\"abc\""), ("\"abc\"", "\"abc\""), ("*", "*")] {
         let (base_url, request) = capture_request().await;
         let client = CardDavClient::new(&base_url, None, None).unwrap();
         client.set_request_compression_mode(fast_dav_rs::webdav::RequestCompressionMode::Disabled);
@@ -150,6 +146,53 @@ async fn test_if_match_rejects_bare_weak_prefix() {
             .is_err()
     );
     assert!(client.delete_if_match("contact.vcf", "W/").await.is_err());
+}
+
+#[tokio::test]
+async fn test_weak_etags_rejected_with_reason_before_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let client = CardDavClient::new(&format!("http://{address}/"), None, None).unwrap();
+
+    for etag in [r#"W/"abc""#, "W/abc"] {
+        let err = client
+            .put_if_match("contact.vcf", Bytes::from_static(b"BEGIN:VCARD"), etag)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                fast_dav_rs::Error::InvalidEtag {
+                    reason: fast_dav_rs::EtagReason::Weak,
+                    ..
+                }
+            ),
+            "expected InvalidEtag(Weak), got {err:?}"
+        );
+
+        let err = client
+            .delete_if_match("contact.vcf", etag)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                fast_dav_rs::Error::InvalidEtag {
+                    reason: fast_dav_rs::EtagReason::Weak,
+                    ..
+                }
+            ),
+            "expected InvalidEtag(Weak), got {err:?}"
+        );
+    }
+
+    // No connection was ever attempted: the listening socket stays silent.
+    tokio::select! {
+        accepted = listener.accept() => {
+            panic!("client attempted network I/O: {accepted:?}")
+        }
+        () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
+    }
 }
 
 #[tokio::test]

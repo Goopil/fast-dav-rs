@@ -77,6 +77,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both modules.
 
 ### Fixed
+- **Behavior change:** weak ETags (`W/"abc"`) are now rejected client-side by
+  `put_if_match`, `put_if_match_prefer`, and `delete_if_match` (AUDIT-008) with
+  `Error::InvalidEtag` and the new `EtagReason::Weak`, **before any network
+  I/O**. Previously a weak tag was accepted and sent as `If-Match: W/"abc"`;
+  because RFC 9110 mandates strong comparison for `If-Match`, weak validators
+  never match, so the server was guaranteed to answer `412 Precondition
+  Failed` — a permanently broken write path for servers that issue weak ETags.
+  Weak ETags remain accepted on informational paths (`etag_from_headers`,
+  `normalize_etag`)
 - The request-compression probe (AUDIT-012) no longer permanently pins `Identity`
   after a transient failure: a failed probe (transport error, timeout, non-success
   status) leaves the negotiation state unset so the next body-carrying request

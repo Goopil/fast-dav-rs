@@ -264,6 +264,7 @@ Restrict the automatic retry to idempotent methods (`PROPFIND`/`REPORT`/`GET` �
 - **Confidence:** Confirmed
 - **Domain:** Correctness / Data integrity
 - **Location:** `src/webdav/client.rs:62-69` (`if_match_header_value`), used by `put_if_match` (`caldav/client.rs:274`, `carddav/client.rs:275`) and `delete_if_match` (`webdav/client.rs:759-763`)
+- **Status:** ✅ Fixed 2026-09-02 (v1.1 audit wave 2): weak entity-tags (`W/"abc"`) are rejected client-side by the shared `if_match_header_value` with `Error::InvalidEtag` and the new `EtagReason::Weak` — before any network I/O — since RFC 9110 strong comparison makes them a guaranteed `412`; informational paths (`etag_from_headers`, `normalize_etag`) still accept weak tags. No escape hatch (add `if_match_allow_weak` only if a user asks).
 
 ### Problem
 A weak etag `W/"abc"` is validated and re-emitted as `W/"abc"` in `If-Match`. RFC 9110 mandates **strong comparison** for `If-Match`: weak validators never match, so the conditional operation can never succeed on a compliant server.
