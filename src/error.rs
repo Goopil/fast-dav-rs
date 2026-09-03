@@ -75,6 +75,32 @@ impl std::fmt::Display for ICalendarViolation {
     }
 }
 
+/// Why an OAuth2 token refresh (RFC 6749 §6) failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TokenRefreshReason {
+    /// The token endpoint answered with a non-success HTTP status.
+    Rejected,
+    /// The response body was not a parsable RFC 6749 §5.1 token response
+    /// (invalid JSON, missing/empty `access_token`), or exceeded the 1 MiB
+    /// body limit.
+    MalformedResponse,
+    /// The request to the token endpoint failed at the transport level or
+    /// timed out.
+    Transport,
+}
+
+impl std::fmt::Display for TokenRefreshReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Rejected => "token endpoint rejected the grant",
+            Self::MalformedResponse => "token endpoint returned a malformed token response",
+            Self::Transport => "token endpoint request failed",
+        };
+        f.write_str(s)
+    }
+}
+
 /// Error returned by `fast-dav-rs` operations.
 ///
 /// The enum is `#[non_exhaustive]` so that new variants can be added
@@ -155,6 +181,23 @@ pub enum Error {
     InvalidICalendar {
         /// Which structural check failed.
         violation: ICalendarViolation,
+    },
+
+    /// An OAuth2 token refresh (RFC 6749 §6) failed. Tokens and client
+    /// secrets never appear in this error.
+    #[error("token refresh failed: {reason}")]
+    #[non_exhaustive]
+    TokenRefresh {
+        /// Why the refresh failed.
+        reason: TokenRefreshReason,
+        /// HTTP status from the token endpoint when the failure was an HTTP
+        /// error status. The response body is never included (it may echo
+        /// tokens, RFC 6749 §10.4).
+        status: Option<StatusCode>,
+        /// The underlying transport error, when the failure happened before
+        /// an HTTP response was received.
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
     /// A builder configuration value is invalid (timeout, pool size, auth, etc.).

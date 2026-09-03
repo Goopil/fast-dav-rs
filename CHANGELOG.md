@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Pluggable authentication (issue #161): a new `TokenProvider` trait — the
+  third auth mode next to `basic_auth`/`bearer_token` (mutually exclusive,
+  last-set wins) — resolves the `Authorization: Bearer` header per request
+  through a new `WebDavClientBuilder::token_provider(Arc<dyn TokenProvider>)`
+  option (delegated to `CalDavClientBuilder`/`CardDavClientBuilder`). When
+  the DAV server answers `401`, the client invalidates the provider and
+  retries the request exactly once with a freshly resolved token (independent
+  of the transient-retry budget; skipped once credentials were stripped for a
+  cross-origin redirect; a still-failing `401` is returned as-is). The
+  provided `OAuth2RefreshProvider` implements the generic OAuth2
+  refresh-token grant (RFC 6749 §6): it POSTs `grant_type=refresh_token`
+  (form-encoded) to a configured token endpoint, caches the access token
+  until `expires_in` passes, adopts `refresh_token` rotation, and renews
+  transparently on expiry or `401` with single-flight deduplication (a
+  `tokio::sync::Mutex` around the refresh — concurrent callers share one
+  in-flight refresh). Refresh failures surface as the new
+  `Error::TokenRefresh` with the new `TokenRefreshReason` taxonomy
+  (`Rejected` with the HTTP status, `MalformedResponse`, `Transport`);
+  tokens and secrets never appear in errors, `Debug` output, or tracing
+  events. Client clones share the provider's cache and single-flight
+  refresh.
+
 ## [0.11.0] - 2026-09-03
 
 ### Added
