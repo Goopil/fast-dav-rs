@@ -158,6 +158,35 @@ fn parse_error_body_takes_first_child_element() {
 }
 
 #[test]
+fn parse_error_body_prefers_dav_namespace_over_vendor_elements() {
+    // Real SabreDAV 4.7 body (e2e-verified): vendor extension elements come
+    // first and the DAV: precondition is last — the code must not be
+    // "sabredav-version".
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<d:error xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns">
+  <s:sabredav-version>4.7.1</s:sabredav-version>
+  <s:exception>Sabre\DAV\Exception\InvalidSyncToken</s:exception>
+  <s:message>Invalid or unknown sync token</s:message>
+  <d:valid-sync-token/>
+</d:error>"#;
+    let err = fast_dav_rs::webdav::parse_error_body(xml).expect("parse succeeds");
+    assert_eq!(err.precondition_code.as_deref(), Some("valid-sync-token"));
+    assert!(!err.parse_failed);
+}
+
+#[test]
+fn parse_error_body_handles_default_dav_namespace() {
+    // The DAV: namespace may be declared as the default namespace instead of
+    // a prefix; unprefixed preconditions must still resolve.
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<error xmlns="DAV:">
+  <valid-sync-token/>
+</error>"#;
+    let err = fast_dav_rs::webdav::parse_error_body(xml).expect("parse succeeds");
+    assert_eq!(err.precondition_code.as_deref(), Some("valid-sync-token"));
+}
+
+#[test]
 fn parse_multistatus_distinguishes_multiple_propstat_groups() {
     let xml = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:multistatus xmlns:D="DAV:">

@@ -779,3 +779,102 @@ END:VCALENDAR"#,
 
     println!("Sync deletion tracking test completed");
 }
+
+/// RFC 6578 §3.2 resilient re-sync against the real fixture: SabreDAV's sync
+/// plugin answers a `sync-collection` REPORT whose token lacks the
+/// `http://sabre.io/ns/sync/` prefix with `403 Forbidden` + the
+/// `DAV:valid-sync-token` precondition (`InvalidSyncToken`). The resilient
+/// client must re-issue the report once as an initial sync and flag
+/// `resynced = true`; a follow-up sync with the returned token is not a
+/// resync.
+#[tokio::test]
+async fn test_sync_resilient_reinitializes_on_unknown_token() {
+    let client = create_test_client();
+    let calendar_name = generate_unique_calendar_name();
+    let calendar_path = format!("calendars/test/{}/", calendar_name);
+
+    let calendar_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{}</D:displayname>
+    </D:prop>
+  </D:set>
+</C:mkcalendar>"#,
+        calendar_name
+    );
+    let mk_response = client.mkcalendar(&calendar_path, &calendar_xml).await;
+    assert!(
+        mk_response
+            .as_ref()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false),
+        "Expected successful calendar creation"
+    );
+
+    let mut event_paths = Vec::new();
+    for i in 1..=2 {
+        let event_uid = format!("{}-resync-{}", generate_unique_event_uid(), i);
+        let event_path = format!("{calendar_path}{event_uid}.ics");
+        let event_ics = format!(
+            r#"BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Resync Regression//EN
+BEGIN:VEVENT
+UID:{}
+DTSTAMP:20230101T000000Z
+DTSTART:20231225T100000Z
+DTEND:20231225T110000Z
+SUMMARY:Resync regression event {}
+END:VEVENT
+END:VCALENDAR"#,
+            event_uid, i
+        );
+        let response = client
+            .put(&event_path, Bytes::from(event_ics))
+            .await
+            .expect("event PUT request");
+        assert!(
+            response.status().is_success(),
+            "Expected successful event creation, got {}",
+            response.status()
+        );
+        event_paths.push(event_path);
+    }
+
+    // A token the server does not recognize must trigger one re-issue as an
+    // initial sync, flagged `resynced`, not a hard error.
+    let delta = client
+        .sync_collection_resilient(&calendar_path, Some("bogus-token"), None, true)
+        .await
+        .expect("resilient sync must recover from a 403 valid-sync-token");
+    assert!(
+        delta.resynced,
+        "A 403 valid-sync-token must be re-issued as an initial sync with resynced = true"
+    );
+    assert!(
+        delta.items.len() >= event_paths.len(),
+        "The re-issued initial sync must list all events, got {}",
+        delta.items.len()
+    );
+    assert!(
+        delta.sync_token.is_some(),
+        "The re-issued sync must hand out a fresh sync token"
+    );
+
+    // A sync with the fresh token is a normal incremental sync: no resync.
+    let next = client
+        .sync_collection_resilient(&calendar_path, delta.sync_token.as_deref(), None, true)
+        .await
+        .expect("incremental sync with the fresh token");
+    assert!(
+        !next.resynced,
+        "A sync that succeeded on the first attempt must not be flagged as a resync"
+    );
+
+    for event_path in event_paths {
+        let _ = client.delete(&event_path).await;
+    }
+    let _ = client.delete(&calendar_path).await;
+}

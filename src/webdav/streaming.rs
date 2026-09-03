@@ -1106,6 +1106,15 @@ pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
     let mut buf = Vec::with_capacity(4 * 1024);
     let mut in_error = false;
     let mut found = false;
+    // Namespace declarations in scope on `<D:error>`; precondition codes are
+    // the DAV:-namespaced child elements (RFC 4918 §16). Servers interleave
+    // vendor extension elements (e.g. SabreDAV's `<s:sabredav-version>`,
+    // `<s:exception>`, `<s:message>`) before the precondition, so the first
+    // child is not necessarily the code — prefer a DAV: child, fall back to
+    // the first child of any namespace.
+    let mut xmlns: std::collections::HashMap<Vec<u8>, Vec<u8>> = Default::default();
+    let mut default_ns: Option<Vec<u8>> = None;
+    let mut first_any: Option<Vec<u8>> = None;
 
     loop {
         match xml.read_event_into(&mut buf) {
@@ -1114,9 +1123,28 @@ pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
                 let local = local_name(&name);
                 if local.eq_ignore_ascii_case(b"error") {
                     in_error = true;
+                    for attr in e.attributes().flatten() {
+                        let key = attr.key.as_ref();
+                        if key == b"xmlns" {
+                            default_ns = Some(attr.value.into_owned());
+                        } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                            xmlns.insert(prefix.to_vec(), attr.value.into_owned());
+                        }
+                    }
                 } else if in_error && !found {
-                    err.precondition_code = Some(String::from_utf8_lossy(local).into_owned());
-                    found = true;
+                    if first_any.is_none() {
+                        first_any = Some(local.to_vec());
+                    }
+                    let prefix = namespace_prefix(&name);
+                    let ns = if prefix.is_empty() {
+                        default_ns.as_deref()
+                    } else {
+                        xmlns.get(prefix).map(Vec::as_slice)
+                    };
+                    if ns == Some(b"DAV:".as_slice()) {
+                        err.precondition_code = Some(String::from_utf8_lossy(local).into_owned());
+                        found = true;
+                    }
                 }
             }
             Ok(Event::End(e)) => {
@@ -1144,6 +1172,10 @@ pub fn parse_error_body(body: &[u8]) -> Result<WebDavError> {
         buf.clear();
     }
 
+    if err.precondition_code.is_none() {
+        err.precondition_code = first_any.map(|c| String::from_utf8_lossy(&c).into_owned());
+    }
+
     Ok(err)
 }
 
@@ -1151,6 +1183,13 @@ fn local_name(raw: &[u8]) -> &[u8] {
     match raw.iter().position(|b| *b == b':') {
         Some(idx) => &raw[idx + 1..],
         None => raw,
+    }
+}
+
+fn namespace_prefix(raw: &[u8]) -> &[u8] {
+    match raw.iter().position(|b| *b == b':') {
+        Some(idx) => &raw[..idx],
+        None => &[],
     }
 }
 

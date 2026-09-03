@@ -94,3 +94,63 @@ async fn test_contact_crud() {
 
     let _ = client.delete(&book_path).await;
 }
+
+/// vCard 3.0 round-trip (issue #138): `put`/`put_if_none_match` derive the
+/// `Content-Type` version parameter from the body's `VERSION` property. A
+/// real 3.0 write must succeed against the server and read back as 3.0 —
+/// the wire-level header derivation is owned by the unit tests.
+#[tokio::test]
+async fn test_vcard_30_put_round_trip() {
+    let client = create_test_client();
+    let book_name = unique_addressbook_name("vcard30");
+    let book_path = format!("addressbooks/test/{}/", book_name);
+
+    let book_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkaddressbook xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{}</D:displayname>
+    </D:prop>
+  </D:set>
+</C:mkaddressbook>"#,
+        book_name
+    );
+    let mk_response = client.mkaddressbook(&book_path, &book_xml).await;
+    assert!(
+        mk_response.unwrap().status().is_success(),
+        "Expected successful addressbook creation"
+    );
+
+    let uid = unique_uid("vcard30");
+    let contact_path = format!("{}{}", book_path, unique_contact_uri("vcard30"));
+    let vcard = Bytes::from(format!(
+        "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:{uid}\r\nFN:Bob 3.0\r\nEMAIL:bob3@example.com\r\nEND:VCARD\r\n",
+    ));
+
+    let create_resp = client
+        .put(&contact_path, vcard)
+        .await
+        .expect("PUT vCard 3.0");
+    assert!(
+        create_resp.status().is_success(),
+        "Expected a vCard 3.0 write to succeed with the derived Content-Type, got {}",
+        create_resp.status()
+    );
+
+    let results = client
+        .addressbook_query_uid(&book_path, &uid, true)
+        .await
+        .expect("query by UID");
+    let data = results
+        .iter()
+        .find_map(|item| item.address_data.clone())
+        .expect("Expected address data for the stored contact");
+    assert!(
+        data.contains("VERSION:3.0"),
+        "The stored vCard must keep its 3.0 version, got: {data}"
+    );
+
+    let _ = client.delete(&contact_path).await;
+    let _ = client.delete(&book_path).await;
+}
