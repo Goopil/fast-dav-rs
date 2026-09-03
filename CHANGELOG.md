@@ -284,6 +284,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cause (RFC 6764 §5 requires clients to handle `.well-known` redirects,
   so leave the builder default enabled) (issue #139)
 
+### Security
+- Userinfo in base URLs is now rejected (issue #141): a base URL like
+  `https://user:password@dav.example.com/` was previously accepted even though
+  the userinfo was never converted to Basic auth (inexplicable 401s) and was
+  echoed verbatim into `Error::InvalidUrl` messages and, with the `tracing`
+  feature, into every debug-level request log line (RFC 9110 §3.2 — senders
+  MUST NOT generate userinfo). `WebDavClientBuilder::build` (and therefore the
+  CalDAV and CardDAV builders, which delegate to it) now fails with
+  `Error::InvalidConfig` before any I/O when the base URL carries userinfo;
+  pass credentials via `basic_auth`/`bearer_token` instead. As belt-and-braces,
+  userinfo is redacted to `***` wherever a URL is echoed: `Error::InvalidUrl`
+  values and the `tracing` request/redirect log fields never contain
+  credentials, even for URIs obtained from a remote server (e.g. redirect
+  targets)
+
 ## [0.10.0] - 2026-09-01
 
 ### Added

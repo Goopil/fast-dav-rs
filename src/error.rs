@@ -394,8 +394,10 @@ impl Error {
         url: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
+        // Redact userinfo before storing: the URL may come from a caller or a
+        // remote server and must never be echoed with embedded credentials.
         Self::InvalidUrl {
-            url: url.into(),
+            url: crate::common::redact_userinfo(url.into()),
             source: Box::new(source),
         }
     }

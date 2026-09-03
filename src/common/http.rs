@@ -20,9 +20,8 @@ pub type HyperClient = Client<hyper_rustls::HttpsConnector<MaybeProxied>, Full<B
 /// Connector that is either direct or proxied via HTTP CONNECT tunnel.
 ///
 /// Implementation detail, public so the [`HyperClient`] alias is nameable.
-/// The variants cannot be constructed outside this crate; use
-/// [`MaybeProxied::direct`] for the direct form (the internal builder
-/// constructs the tunneled form from proxy settings).
+/// Use [`MaybeProxied::direct`] for the direct form; the tunneled form
+/// (`MaybeProxied::Tunneled`) is constructed internally from proxy settings.
 ///
 /// Implements `tower_service::Service<Uri>` by delegating to the inner
 /// connector. The future is boxed since `HttpConnector` and

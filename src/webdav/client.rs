@@ -15,6 +15,10 @@ use crate::common::compression::{
 };
 use crate::common::http::HyperClient;
 use crate::common::{dav_debug, dav_trace};
+// Only referenced inside `dav_debug!` arguments, which compile out without
+// the `tracing` feature.
+#[cfg(feature = "tracing")]
+use crate::common::redact_userinfo;
 use crate::error::EtagReason;
 use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::retry::{is_idempotent_method, is_retryable_status, retry_delay};
@@ -962,14 +966,18 @@ impl WebDavClient {
             let limit = per_req_timeout.unwrap_or(self.default_timeout);
             #[cfg(feature = "tracing")]
             let started = std::time::Instant::now();
-            dav_debug!(method = %method, uri = %uri, "dav request start");
+            dav_debug!(
+                method = %method,
+                uri = %redact_userinfo(&uri),
+                "dav request start"
+            );
             let fut = self.client.request(req);
             let resp = timeout(limit, fut)
                 .await
                 .map_err(|_| {
                     dav_debug!(
                         method = %method,
-                        uri = %uri,
+                        uri = %redact_userinfo(&uri),
                         limit_ms = limit.as_millis() as u64,
                         "dav request timed out"
                     );
@@ -978,7 +986,7 @@ impl WebDavClient {
                 .map_err(Error::from_client)?;
             dav_debug!(
                 method = %method,
-                uri = %uri,
+                uri = %redact_userinfo(&uri),
                 status = %resp.status(),
                 duration_us = started.elapsed().as_micros() as u64,
                 "dav request finished"
@@ -1009,7 +1017,7 @@ impl WebDavClient {
                 retries += 1;
                 dav_debug!(
                     method = %method,
-                    uri = %uri,
+                    uri = %redact_userinfo(&uri),
                     status = %resp.status(),
                     delay_ms = delay.as_millis() as u64,
                     attempt = retries,
@@ -1021,7 +1029,7 @@ impl WebDavClient {
             if retryable && retries > 0 {
                 dav_debug!(
                     method = %method,
-                    uri = %uri,
+                    uri = %redact_userinfo(&uri),
                     status = %resp.status(),
                     attempts = retries,
                     "retry budget exhausted; returning last response as-is"
@@ -1073,8 +1081,8 @@ impl WebDavClient {
             }
 
             dav_debug!(
-                from = %uri,
-                to = %next,
+                from = %redact_userinfo(&uri),
+                to = %redact_userinfo(&next),
                 status = %resp.status(),
                 hop = redirects as u64 + 1,
                 "following redirect"

@@ -1,6 +1,7 @@
 use fast_dav_rs::common::http::MaybeProxied;
 use fast_dav_rs::{
-    CalDavClient, CardDavClient, ContentEncoding, HyperClient, RequestCompressionMode, WebDavClient,
+    CalDavClient, CardDavClient, ContentEncoding, Error, HyperClient, RequestCompressionMode,
+    WebDavClient,
 };
 use hyper::{HeaderMap, Method, StatusCode};
 use hyper_rustls::HttpsConnectorBuilder;
@@ -60,6 +61,60 @@ fn builder_no_auth() {
 #[test]
 fn builder_invalid_url_errors() {
     assert!(WebDavClient::builder("not a url").build().is_err());
+}
+
+#[test]
+fn builder_rejects_userinfo_in_base_url() {
+    let Err(err) = WebDavClient::builder("https://user:hunter2@dav.example.com/").build() else {
+        panic!("userinfo in the base URL must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("userinfo")),
+        "should be InvalidConfig about userinfo, got: {err}"
+    );
+    assert!(
+        !err.to_string().contains("hunter2"),
+        "error display must not echo the password: {err}"
+    );
+}
+
+#[test]
+fn builder_rejects_userinfo_caldav() {
+    let Err(err) = CalDavClient::builder("https://user:hunter2@cal.example.com/").build() else {
+        panic!("userinfo in the base URL must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("userinfo")),
+        "should be InvalidConfig about userinfo, got: {err}"
+    );
+}
+
+#[test]
+fn builder_rejects_userinfo_carddav() {
+    let Err(err) = CardDavClient::builder("https://user:hunter2@cards.example.com/").build() else {
+        panic!("userinfo in the base URL must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("userinfo")),
+        "should be InvalidConfig about userinfo, got: {err}"
+    );
+}
+
+#[test]
+fn invalid_url_display_redacts_userinfo() {
+    // Malformed URL that also carries userinfo: the parse error must not
+    // echo the credentials (belt-and-braces beside the builder rejection).
+    let Err(err) = WebDavClient::builder("https://user:hunter2@bad host/").build() else {
+        panic!("an invalid URL with userinfo must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidUrl { .. }),
+        "should be InvalidUrl, got: {err}"
+    );
+    assert!(
+        !err.to_string().contains("hunter2"),
+        "error display must not echo the password: {err}"
+    );
 }
 
 #[test]
