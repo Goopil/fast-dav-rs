@@ -60,10 +60,27 @@ async fn test_lock_refresh_unlock_relock_lifecycle() {
         mk.status()
     );
 
+    // Create the event resource first; the lock then targets the resource
+    // itself (`Depth: 0`, RFC 4918 §9.10.4 — a collection lock with the
+    // explicit `Depth: 0` this client now sends does NOT cover children).
+    let event_path = format!("{calendar_path}locked.ics");
+    let created = setup
+        .put(
+            &event_path,
+            Bytes::from(create_test_event("lock-423@example.com")),
+        )
+        .await
+        .expect("PUT request must complete");
+    assert!(
+        created.status().is_success(),
+        "Expected the event to be created before locking, got {}",
+        created.status()
+    );
+
     // LOCK: exclusive write lock with a requested timeout.
     let lock = client
         .lock(
-            &calendar_path,
+            &event_path,
             LockScope::Exclusive,
             "<D:href>principals/test</D:href>",
             Some(60),
@@ -87,7 +104,6 @@ async fn test_lock_refresh_unlock_relock_lifecycle() {
     );
 
     // A PUT without the lock token must be rejected with 423 Locked.
-    let event_path = format!("{calendar_path}locked.ics");
     let denied = setup
         .put(
             &event_path,
@@ -105,7 +121,7 @@ async fn test_lock_refresh_unlock_relock_lifecycle() {
     // refresh_lock: re-issue LOCK with the token in an `If` header; the
     // server may rotate the token, so use the returned LockInfo afterwards.
     let refreshed = client
-        .refresh_lock(&calendar_path, &lock.token, Some(120))
+        .refresh_lock(&event_path, &lock.token, Some(120))
         .await
         .expect("Lock refresh must succeed while the lock is held");
     assert!(
@@ -116,14 +132,14 @@ async fn test_lock_refresh_unlock_relock_lifecycle() {
 
     // UNLOCK: release with the refreshed token (typical 204).
     client
-        .unlock(&calendar_path, &refreshed.token)
+        .unlock(&event_path, &refreshed.token)
         .await
         .expect("UNLOCK must succeed for a held lock");
 
     // Re-lock after release: must succeed with a fresh token.
     let relock = client
         .lock(
-            &calendar_path,
+            &event_path,
             LockScope::Exclusive,
             "<D:href>principals/test</D:href>",
             Some(60),
@@ -137,7 +153,7 @@ async fn test_lock_refresh_unlock_relock_lifecycle() {
 
     // Teardown.
     client
-        .unlock(&calendar_path, &relock.token)
+        .unlock(&event_path, &relock.token)
         .await
         .expect("Teardown UNLOCK must succeed");
     let del = setup
@@ -186,9 +202,21 @@ async fn test_put_succeeds_after_unlock() {
     let uid = "lock-after-unlock@example.com";
     let event_path = format!("{calendar_path}{uid}.ics");
 
+    // Create the resource first, then lock the resource itself (`Depth: 0`,
+    // RFC 4918 §9.10.4 — a collection lock does NOT cover children).
+    let created = setup
+        .put(&event_path, Bytes::from(create_test_event(uid)))
+        .await
+        .expect("PUT request must complete");
+    assert!(
+        created.status().is_success(),
+        "Expected the event to be created before locking, got {}",
+        created.status()
+    );
+
     let lock = client
         .lock(
-            &calendar_path,
+            &event_path,
             LockScope::Exclusive,
             "<D:href>principals/test</D:href>",
             None,
@@ -210,7 +238,7 @@ async fn test_put_succeeds_after_unlock() {
 
     // After unlock: the same write succeeds.
     client
-        .unlock(&calendar_path, &lock.token)
+        .unlock(&event_path, &lock.token)
         .await
         .expect("UNLOCK must succeed");
     let put = setup
