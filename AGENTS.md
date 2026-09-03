@@ -24,6 +24,15 @@ cargo test --doc --all-features
 # Run only end-to-end tests
 cargo test --test e2e_tests
 
+# Run e2e tests against the Radicale fixture (bring it up first)
+cargo test --test e2e_radicale
+
+# Run e2e tests against the Nextcloud fixture (bring it up first)
+cargo test --test e2e_nextcloud
+
+# Run the opt-in Provider A smoke tier (skips when PROVIDER_A_DAV_URL is unset)
+PROVIDER_A_DAV_URL=https://dav.example.test cargo test --test e2e_provider_a_smoke -- --ignored
+
 # Run a single specific test
 cargo nextest run --test unit_tests test_name
 
@@ -42,6 +51,10 @@ cargo llvm-cov nextest --test unit_tests --all-features --no-fail-fast --lcov --
 - `./run-e2e-tests.sh` - End-to-end tests against SabreDAV server (requires Docker)
 - `./sabredav-test/setup.sh` - Sets up E2E test environment
 - `./sabredav-test/reset-db.sh` - Resets E2E test database
+- `./radicale-test/setup.sh` - Starts + seeds the Radicale fixture (http://localhost:8081)
+- `./radicale-test/reset.sh` - Resets the Radicale fixture (tmpfs wipe + re-seed)
+- `./nextcloud-test/setup.sh` - Starts + provisions the Nextcloud fixture (http://localhost:8083; first boot is slow)
+- `./nextcloud-test/reset.sh` - Full Nextcloud fixture wipe + reinstall
 
 ### CI Configuration
 The project uses GitHub Actions with these key steps:

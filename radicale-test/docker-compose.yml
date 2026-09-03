@@ -1,0 +1,19 @@
+services:
+  radicale:
+    # No official Radicale image exists on Docker Hub; this is the de-facto
+    # community standard (pinned for reproducibility).
+    image: tomsquest/docker-radicale:3.7.6.0
+    container_name: fast-dav-radicale
+    ports:
+      - "8081:5232"
+    volumes:
+      - ./config:/config:ro
+    tmpfs:
+      - /data
+    healthcheck:
+      # Any HTTP response (401 included) proves the server is up.
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://127.0.0.1:5232/ || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s

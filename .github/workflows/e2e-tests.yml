@@ -131,3 +131,98 @@ jobs:
       run: |
         cd sabredav-test
         docker compose down -v
+
+  e2e-radicale:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install docker compose V2
+      run: |
+        mkdir -p ~/.docker/cli-plugins
+        curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
+        chmod +x ~/.docker/cli-plugins/docker-compose
+        docker compose version
+
+    - name: Start Radicale fixture
+      run: ./radicale-test/setup.sh
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: stable-rust
+
+    - name: Run Radicale e2e tests
+      run: |
+        cargo test --manifest-path Cargo.toml --test e2e_radicale
+      env:
+        RADICALE_URL: http://localhost:8081
+
+    - name: Debug - Show fixture logs if failed
+      if: failure()
+      run: |
+        cd radicale-test
+        echo "=== Radicale logs ==="
+        docker compose logs
+
+    - name: Stop services
+      if: always()
+      run: |
+        cd radicale-test
+        docker compose down -v
+
+  e2e-nextcloud:
+    # The Nextcloud image is the heaviest fixture (first boot installs the
+    # instance); the compose healthcheck + the setup.sh wait loop keep this
+    # bounded. The image itself is pulled from Docker Hub (nothing to build).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install docker compose V2
+      run: |
+        mkdir -p ~/.docker/cli-plugins
+        curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
+        chmod +x ~/.docker/cli-plugins/docker-compose
+        docker compose version
+
+    - name: Pull Nextcloud image
+      run: docker pull nextcloud:stable-apache
+
+    - name: Start Nextcloud fixture
+      run: ./nextcloud-test/setup.sh
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo artifacts
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: stable-rust
+
+    - name: Run Nextcloud e2e tests
+      run: |
+        cargo test --manifest-path Cargo.toml --test e2e_nextcloud
+      env:
+        NEXTCLOUD_URL: http://localhost:8083
+
+    - name: Debug - Show fixture logs if failed
+      if: failure()
+      run: |
+        cd nextcloud-test
+        echo "=== Nextcloud logs ==="
+        docker compose logs --tail 200
+
+    - name: Stop services
+      if: always()
+      run: |
+        cd nextcloud-test
+        docker compose down -v

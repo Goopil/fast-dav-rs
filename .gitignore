@@ -12,3 +12,6 @@
 
 .env
 .env.*
+
+# Minted at runtime by nextcloud-test/setup.sh — never commit.
+nextcloud-test/.app-password
