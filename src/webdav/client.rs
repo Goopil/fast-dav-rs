@@ -8,6 +8,7 @@ use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, sleep, timeout};
+use zeroize::Zeroize;
 
 use crate::common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
@@ -20,6 +21,7 @@ use crate::common::{dav_debug, dav_trace};
 #[cfg(feature = "tracing")]
 use crate::common::redact_userinfo;
 use crate::error::EtagReason;
+use crate::webdav::auth::TokenProvider;
 use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::retry::{is_idempotent_method, is_retryable_status, retry_delay};
 use crate::webdav::types::{
@@ -442,6 +444,12 @@ pub struct WebDavClient {
     /// an accepted trade-off so the header can be attached cheaply to each
     /// request.
     auth_header: Option<header::HeaderValue>,
+    /// Pluggable per-request auth: when set, the `Authorization: Bearer`
+    /// header is resolved through [`TokenProvider::token`] before each
+    /// request (third auth mode, mutually exclusive with `auth_header`).
+    /// Clones share the provider, including its cache and single-flight
+    /// refresh.
+    token_provider: Option<Arc<dyn TokenProvider>>,
     default_timeout: Duration,
     request_compression_mode: Arc<RwLock<RequestCompressionMode>>,
     /// Pre-parsed `User-Agent` header injected on every request, if set.
@@ -520,6 +528,7 @@ impl WebDavClient {
         client: HyperClient,
         auth_header: Option<header::HeaderValue>,
         user_agent: Option<header::HeaderValue>,
+        token_provider: Option<Arc<dyn TokenProvider>>,
         default_timeout: Duration,
         request_compression_mode: RequestCompressionMode,
         follow_redirects: bool,
@@ -534,6 +543,7 @@ impl WebDavClient {
             base,
             client,
             auth_header,
+            token_provider,
             user_agent,
             default_timeout,
             request_compression_mode: Arc::new(RwLock::new(request_compression_mode)),
@@ -553,6 +563,27 @@ impl WebDavClient {
     #[cfg(test)]
     pub(crate) fn auth_header(&self) -> Option<&header::HeaderValue> {
         self.auth_header.as_ref()
+    }
+
+    /// Resolve the `Authorization` header for the next request attempt.
+    ///
+    /// The token provider wins when configured (third auth mode — the
+    /// builder guarantees mutual exclusion with the static header).
+    /// Provider errors propagate and fail the request.
+    async fn resolve_auth_header(&self) -> Result<Option<header::HeaderValue>> {
+        let Some(provider) = &self.token_provider else {
+            return Ok(self.auth_header.clone());
+        };
+        let mut token = provider.token().await?;
+        let value = header::HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
+            Error::InvalidInput(
+                "token provider returned a token that cannot be used as an HTTP \
+                 header value (visible ASCII required)"
+                    .to_owned(),
+            )
+        });
+        token.zeroize();
+        Ok(Some(value?))
     }
 
     /// Get the base URI this client was constructed with.
@@ -725,8 +756,15 @@ impl WebDavClient {
         }
 
         let mut req_builder = Request::builder().method(propfind).uri(uri);
-        if let Some(auth) = &self.auth_header {
-            req_builder = req_builder.header(header::AUTHORIZATION, auth);
+        match self.resolve_auth_header().await {
+            Ok(Some(auth)) => {
+                req_builder = req_builder.header(header::AUTHORIZATION, auth);
+            }
+            Ok(None) => {}
+            // A failing token provider is surfaced by the real request; the
+            // probe just reports failure (no caching) as with any transport
+            // error.
+            Err(_) => return false,
         }
 
         add_accept_encoding(&mut headers);
@@ -897,6 +935,12 @@ impl WebDavClient {
     /// and counts every HTTP attempt; each attempt (retries included) runs
     /// under the same per-request timeout. When the budget is exhausted, the
     /// last response is returned as-is.
+    ///
+    /// Auth renewal (only when a [`TokenProvider`] is configured): a `401`
+    /// response triggers exactly **one** refresh + resend per request —
+    /// never a loop — and does not consume the transient-retry budget. The
+    /// renewal is skipped once credentials were stripped for a cross-origin
+    /// redirect. A still-unauthorized retry is returned as-is.
     pub(crate) async fn build_and_send(
         &self,
         method: Method,
@@ -921,6 +965,9 @@ impl WebDavClient {
         let mut strip_credentials = false;
         let mut attempt = 0;
         let mut retries: usize = 0;
+        // Auth renewal on 401: at most one extra attempt per request (see
+        // below), independent of the transient-retry budget.
+        let mut auth_retried = false;
 
         loop {
             let mut headers = base_headers.clone();
@@ -929,7 +976,8 @@ impl WebDavClient {
             let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
 
             if !strip_credentials {
-                if let Some(auth) = &self.auth_header {
+                let auth = self.resolve_auth_header().await?;
+                if let Some(auth) = auth {
                     req_builder = req_builder.header(header::AUTHORIZATION, auth);
                 }
             }
@@ -991,6 +1039,29 @@ impl WebDavClient {
                 duration_us = started.elapsed().as_micros() as u64,
                 "dav request finished"
             );
+
+            // Auth renewal (token providers only): a 401 triggers exactly one
+            // refresh+retry per request, never a loop. Skipped once
+            // credentials were deliberately stripped cross-origin (the 401
+            // came from a server that must not receive them again) and it
+            // does not consume the transient-retry budget. A still-failing
+            // 401 is returned as-is.
+            if resp.status() == StatusCode::UNAUTHORIZED
+                && self.token_provider.is_some()
+                && !auth_retried
+                && !strip_credentials
+            {
+                auth_retried = true;
+                if let Some(provider) = &self.token_provider {
+                    provider.invalidate();
+                    dav_debug!(
+                        method = %method,
+                        uri = %redact_userinfo(&uri),
+                        "401 with token provider; refreshing token and retrying once"
+                    );
+                    continue;
+                }
+            }
 
             let should_retry =
                 self.handle_request_compression_outcome(attempted_encoding, resp.status());

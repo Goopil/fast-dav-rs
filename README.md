@@ -529,6 +529,46 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .build()?;
 ```
 
+### Pluggable token provider (renewable OAuth2)
+
+`token_provider(...)` is the third auth mode (mutually exclusive with
+`basic_auth`/`bearer_token`, last-set wins): the client asks a
+`TokenProvider` for the bearer token before each request, and when the
+server rejects a token with `401` it refreshes **once** and retries. The
+provided `OAuth2RefreshProvider` implements the generic RFC 6749 §6
+refresh grant (pure HTTP — no browser flows, no provider presets; obtaining
+the initial refresh token is the caller's job):
+
+```rust
+use std::sync::Arc;
+use fast_dav_rs::webdav::{OAuth2RefreshProvider, WebDavClient};
+
+let provider = OAuth2RefreshProvider::new(
+    "https://auth.example.com/oauth2/token",
+    "my-client-id",
+    "my-client-secret",
+    "the-long-lived-refresh-token",
+)?;
+
+let client = WebDavClient::builder("https://dav.example.com/")
+    .token_provider(Arc::new(provider))
+    .build()?;
+```
+
+Renewal is transparent and single-flight: tokens are cached until
+`expires_in` passes or a `401` arrives, and concurrent requests share one
+in-flight refresh instead of stampeding the token endpoint. Refresh
+failures surface as `Error::TokenRefresh` (`Rejected` / `MalformedResponse`
+/ `Transport`); a `401` after one refresh is returned as-is. Clones of the
+client share the provider's cache. Any custom token source works by
+implementing the `TokenProvider` trait (see its docs for the exact
+401-renewal contract).
+
+> **Security**: tokens travel as `Authorization: Bearer` headers on every
+> request — always use `https://` outside isolated test environments.
+> Tokens never appear in the crate's `Debug` output, error messages, or
+> tracing events.
+
 ### Proxy + custom CA for debugging
 
 Route traffic through a debugging proxy (Proxyman/Charles/mitmproxy)
@@ -723,6 +763,12 @@ cleartext and can be read by anyone on the network path. The connector intention
 `http://` and `https://` (plain HTTP is convenient for isolated test environments such as the
 bundled Docker setup), so the library does not reject `http://` at runtime — **always use
 `https://` outside isolated test environments**.
+
+The same applies to Bearer tokens (static or resolved through a
+`TokenProvider`): they are sent as an `Authorization: Bearer` header on every request and must
+never travel over plain `http://` in production. Token material — access tokens, refresh tokens,
+client secrets — never appears in the crate's `Debug` output, error messages, or tracing events;
+errors about failed token refreshes carry only a typed reason and an HTTP status.
 
 ## Observability
 

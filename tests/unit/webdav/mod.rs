@@ -1,3 +1,4 @@
+pub mod auth_tests;
 pub mod builder_tests;
 pub mod compliance_tests;
 pub mod compression_probe_tests;

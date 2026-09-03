@@ -19,6 +19,7 @@ use std::time::Duration;
 use zeroize::Zeroize;
 
 use crate::common::http::{HyperClient, MaybeProxied};
+use crate::webdav::auth::TokenProvider;
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
 use crate::webdav::types::Prefer;
 use crate::{Error, Result};
@@ -53,6 +54,7 @@ pub struct WebDavClientBuilder {
     basic_user: Option<String>,
     basic_pass: Option<String>,
     bearer_token: Option<String>,
+    token_provider: Option<Arc<dyn TokenProvider>>,
     timeout: Duration,
     connect_timeout: Option<Duration>,
     user_agent: Option<String>,
@@ -83,6 +85,9 @@ impl std::fmt::Debug for WebDavClientBuilder {
         }
         if self.bearer_token.is_some() {
             d.field("bearer_token", &"<redacted>");
+        }
+        if self.token_provider.is_some() {
+            d.field("token_provider", &"<redacted>");
         }
         d.field("timeout", &self.timeout)
             .field("connect_timeout", &self.connect_timeout)
@@ -119,6 +124,7 @@ impl Default for WebDavClientBuilder {
             basic_user: None,
             basic_pass: None,
             bearer_token: None,
+            token_provider: None,
             timeout: Duration::from_secs(20),
             connect_timeout: None,
             user_agent: None,
@@ -151,8 +157,9 @@ impl WebDavClientBuilder {
 
     /// Send **Basic** credentials with every request. Default: no auth.
     ///
-    /// Calling this after [`bearer_token`](Self::bearer_token) clears the
-    /// bearer token — the last auth method called wins.
+    /// Calling this after [`bearer_token`](Self::bearer_token) or
+    /// [`token_provider`](Self::token_provider) clears it — the last auth
+    /// method called wins.
     ///
     /// # Security
     ///
@@ -165,13 +172,17 @@ impl WebDavClientBuilder {
         self.basic_user = Some(user.into());
         self.basic_pass = Some(pass.into());
         self.bearer_token = None;
+        self.token_provider = None;
         self
     }
 
     /// Send a **Bearer** token with every request (OAuth 2.0). Default: no auth.
     ///
-    /// Calling this after [`basic_auth`](Self::basic_auth) clears the Basic
-    /// credentials — the last auth method called wins.
+    /// Calling this after [`basic_auth`](Self::basic_auth) or
+    /// [`token_provider`](Self::token_provider) clears it — the last auth
+    /// method called wins. For renewable tokens see
+    /// [`token_provider`](Self::token_provider) with
+    /// [`OAuth2RefreshProvider`](crate::webdav::OAuth2RefreshProvider).
     ///
     /// # Security
     ///
@@ -182,6 +193,60 @@ impl WebDavClientBuilder {
         self.bearer_token = Some(token.into());
         self.basic_user = None;
         self.basic_pass = None;
+        self.token_provider = None;
+        self
+    }
+
+    /// Resolve the `Authorization: Bearer` header per request through a
+    /// pluggable [`TokenProvider`]. Default: none. This is the **third**
+    /// auth mode next to [`basic_auth`](Self::basic_auth) and
+    /// [`bearer_token`](Self::bearer_token) — calling this clears those, and
+    /// calling those clears this (last-set wins).
+    ///
+    /// The provider's [`token`](TokenProvider::token) method is called before
+    /// each outgoing request and once more when the DAV server rejects the
+    /// attached token with `401` (the request is retried once with a fresh
+    /// token; see the [`TokenProvider`] contract). Use
+    /// [`OAuth2RefreshProvider`](crate::webdav::OAuth2RefreshProvider) for the
+    /// generic RFC 6749 §6 refresh grant, or implement the trait to pull
+    /// tokens from any source.
+    ///
+    /// Clones of the built client share the provider — including its cache
+    /// and single-flight refresh — so tokens are fetched once no matter how
+    /// many task-local clones issue requests.
+    ///
+    /// # Security
+    ///
+    /// The resolved token is sent as an `Authorization: Bearer` header on
+    /// **every** request. Over plain `http://` the token travels in
+    /// cleartext. Always use `https://` outside isolated test environments.
+    /// Tokens never appear in the client's `Debug` output or error messages.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    ///
+    /// use fast_dav_rs::webdav::{OAuth2RefreshProvider, WebDavClient};
+    ///
+    /// # fn main() -> fast_dav_rs::Result<()> {
+    /// let provider = OAuth2RefreshProvider::new(
+    ///     "https://auth.example.com/oauth2/token",
+    ///     "client-id",
+    ///     "client-secret",
+    ///     "refresh-token",
+    /// )?;
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .token_provider(Arc::new(provider))
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn token_provider(mut self, provider: Arc<dyn TokenProvider>) -> Self {
+        self.token_provider = Some(provider);
+        self.basic_user = None;
+        self.basic_pass = None;
+        self.bearer_token = None;
         self
     }
 
@@ -555,6 +620,7 @@ impl WebDavClientBuilder {
             hyper_client,
             auth_header,
             user_agent,
+            self.token_provider.take(),
             self.timeout,
             self.request_compression,
             self.follow_redirects,
@@ -723,6 +789,14 @@ fn build_rustls_config(
 // Hyper client construction
 // ---------------------------------------------------------------------------
 
+/// Build a Hyper client with the crate's default transport settings (native
+/// roots with webpki fallback, HTTP/1.1 + HTTP/2, default pool). Used by the
+/// [`OAuth2RefreshProvider`](crate::webdav::OAuth2RefreshProvider) for its
+/// token-endpoint calls.
+pub(crate) fn default_hyper_client() -> Result<HyperClient> {
+    build_hyper_client(&WebDavClientBuilder::default())
+}
+
 /// Build a fully configured Hyper client.
 ///
 /// Constructs the connector (with optional proxy tunnel), the TLS config
@@ -820,6 +894,20 @@ macro_rules! impl_dav_builder {
 
             pub fn bearer_token(mut self, token: impl Into<String>) -> Self {
                 self.inner = self.inner.bearer_token(token);
+                self
+            }
+
+            /// Resolve the `Authorization: Bearer` header per request through
+            /// a pluggable
+            /// [`TokenProvider`](crate::webdav::TokenProvider). Default:
+            /// none. Mutually exclusive with `basic_auth`/`bearer_token`
+            /// (last-set wins). See
+            /// [`WebDavClientBuilder::token_provider`](crate::webdav::WebDavClientBuilder::token_provider).
+            pub fn token_provider(
+                mut self,
+                provider: std::sync::Arc<dyn $crate::webdav::auth::TokenProvider>,
+            ) -> Self {
+                self.inner = self.inner.token_provider(provider);
                 self
             }
 
