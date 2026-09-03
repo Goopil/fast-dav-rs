@@ -797,3 +797,32 @@ async fn carddav_put_derives_content_type_version_from_body() {
         "a body without VERSION must default to version=4.0: {reqd}"
     );
 }
+
+#[tokio::test]
+async fn carddav_put_if_match_derives_content_type_version_from_body() {
+    use bytes::Bytes;
+
+    let responses = vec![(
+        crate::common::http_helpers::response_head("", 0),
+        Vec::new(),
+    )];
+    let (base, captured) = crate::common::http_helpers::serve_sequence(responses).await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    client
+        .put_if_match(
+            "a.vcf",
+            Bytes::from_static(b"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:A\r\nEND:VCARD\r\n"),
+            "\"etag\"",
+        )
+        .await
+        .unwrap();
+
+    let reqs = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&reqs[0]).to_ascii_lowercase();
+    assert!(
+        req.contains("content-type: text/vcard; charset=utf-8; version=3.0"),
+        "a conditional PUT of a vCard 3.0 body must carry version=3.0: {req}"
+    );
+}

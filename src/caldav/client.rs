@@ -51,8 +51,8 @@ impl_dav_client_delegates!(
     "calendar-data",
     crate::caldav::types::SyncResponse,
     crate::caldav::client::map_sync_response,
-    validation_level: crate::caldav::validation::ValidationLevel,
-    prepare_ical_put
+    validation_level: validation_level: crate::caldav::validation::ValidationLevel,
+    validate: prepare_ical_put
 );
 
 impl CalDavClient {

@@ -44,7 +44,8 @@ impl_dav_client_delegates!(
     "urn:ietf:params:xml:ns:carddav",
     "address-data",
     crate::carddav::types::SyncResponse,
-    crate::carddav::client::map_sync_response
+    crate::carddav::client::map_sync_response,
+    validate: prepare_vcard_put
 );
 
 impl CardDavClient {
@@ -137,6 +138,13 @@ impl CardDavClient {
         h.insert(header::IF_NONE_MATCH, header::HeaderValue::from_static("*"));
         self.send(Method::PUT, path, h, Some(vcard_bytes), None)
             .await
+    }
+
+    /// Conditional-PUT hook for the delegate macro: derive the `Content-Type`
+    /// version from the body so `put_if_match`/`put_if_match_prefer` behave
+    /// like `put`/`put_if_none_match` (issue #138).
+    fn prepare_vcard_put(&self, body: &[u8]) -> Result<header::HeaderValue> {
+        Ok(vcard_content_type(body))
     }
 
     /// Send a CardDAV `MKADDRESSBOOK` to create an addressbook collection.

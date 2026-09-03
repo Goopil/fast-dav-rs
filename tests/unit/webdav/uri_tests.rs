@@ -156,6 +156,38 @@ async fn move_with_valid_absolute_destination_passes_validation() {
     );
 }
 
+#[tokio::test]
+async fn move_rejects_destination_with_userinfo() {
+    let client = make_client("http://127.0.0.1:1/");
+
+    // Userinfo in the Destination is never generated (RFC 9110 §3.2):
+    // rejected before any network I/O.
+    let err = client
+        .r#move("src", "https://user:hunter2@dav.example.com/dest", true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "a userinfo-bearing Destination must be rejected, got: {err:?}"
+    );
+
+    // Validation failures redact credentials carried in the raw value.
+    let err = client
+        .copy("src", "https://user:hunter2@", true)
+        .await
+        .unwrap_err();
+    match err {
+        fast_dav_rs::Error::InvalidInput(msg) => {
+            assert!(
+                !msg.contains("hunter2"),
+                "error messages must not echo credentials: {msg}"
+            );
+            assert!(msg.contains("***"), "credentials must be redacted: {msg}");
+        }
+        other => panic!("expected InvalidInput, got: {other:?}"),
+    }
+}
+
 #[test]
 fn build_uri_absolute_url_still_parsed_directly() {
     let client = make_client("http://127.0.0.1:8080/base/");

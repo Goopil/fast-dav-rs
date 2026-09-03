@@ -246,9 +246,10 @@ impl TextMatch {
 
     /// Render this text-match as the `<C:text-match>` element using the
     /// CardDAV serialization (RFC 6352 §10.4): `collation` and `match-type`
-    /// are always present. For CalDAV serialization (no `match-type`,
-    /// `i;ascii-casemap` collation omitted per RFC 4791 §9.7.5) the CalDAV
-    /// filters call the protocol-aware variant internally.
+    /// are always present. For CalDAV serialization (no `match-type` and no
+    /// `collation` attribute per RFC 4791 §9.7.5 — the wire default is
+    /// `i;ascii-casemap`) the CalDAV filters call the protocol-aware variant
+    /// internally.
     pub fn to_xml(&self) -> String {
         self.to_xml_for(false)
     }

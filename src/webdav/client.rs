@@ -1341,16 +1341,30 @@ impl WebDavClient {
     ) -> Result<Response<Bytes>> {
         // RFC 4918 §10.3 Simple-ref: the Destination is an absolute URI.
         // It is sent verbatim (no percent-encoding here), so reject values
-        // that are not absolute URIs up front.
-        let dest = dest_absolute_url
-            .parse::<Uri>()
-            .map_err(|_| Error::InvalidInput(format!(
-                "Destination must be an absolute, already percent-encoded URI, got {dest_absolute_url:?}"
-            )))?;
+        // that are not absolute URIs up front. Never echo the raw value in
+        // errors and reject userinfo (RFC 9110 §3.2 — senders MUST NOT
+        // generate it): the Destination may come from user config or
+        // discovery output and could carry credentials.
+        let dest = dest_absolute_url.parse::<Uri>().map_err(|_| {
+            Error::InvalidInput(format!(
+                "Destination must be an absolute, already percent-encoded URI, got {:?}",
+                crate::common::redact_userinfo(dest_absolute_url)
+            ))
+        })?;
         if dest.scheme_str().is_none() || dest.host().is_none() {
             return Err(Error::InvalidInput(format!(
-                "Destination must be an absolute URI with scheme and authority, got {dest_absolute_url:?}"
+                "Destination must be an absolute URI with scheme and authority, got {:?}",
+                crate::common::redact_userinfo(dest_absolute_url)
             )));
+        }
+        if dest
+            .authority()
+            .is_some_and(|authority| authority.as_str().contains('@'))
+        {
+            return Err(Error::InvalidInput(
+                "Destination must not carry userinfo (RFC 9110 §3.2): pass credentials via the client's auth options, not the URI"
+                    .to_string(),
+            ));
         }
         let mut h = HeaderMap::new();
         h.insert(
@@ -2157,7 +2171,8 @@ macro_rules! impl_dav_client_delegates {
         $data_element:expr,
         $sync_response:ty,
         $map_sync_response:path
-        $(, $extra_field:ident : $extra_ty:ty, $validate:ident)?
+        $(, validation_level: $extra_field:ident : $extra_ty:ty)?
+        $(, validate: $validate:ident)?
     ) => {
         impl $client {
             /// Wrap a [`WebDavClient`] into this client type.
