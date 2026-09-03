@@ -106,12 +106,17 @@ pub enum FreeBusyType {
 }
 
 /// A time-range filter for `comp-filter` and `prop-filter` (RFC 4791 §8.5).
+///
+/// When used as `expand` (RFC 4791 §9.6.5) **both** `start` and `end` are
+/// mandatory; the client rejects an expand without `end` before any network
+/// I/O. Wherever both bounds are set, `end` must be after `start`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct TimeRange {
     /// Start of the time range (iCalendar UTC date-time, e.g. `20240101T000000Z`).
     pub start: String,
-    /// Optional end of the time range.
+    /// Optional end of the time range. Mandatory when the range is used as
+    /// `expand`; must be after `start` when present.
     pub end: Option<String>,
 }
 
@@ -137,18 +142,31 @@ impl TimeRange {
 }
 
 /// A property-level filter inside a `comp-filter` (RFC 4791 §8.2).
+///
+/// The RFC 4791 §9.7.2 DTD makes the children exclusive:
+/// `is-not-defined | ((time-range | text-match)?, param-filter*)`.
+/// [`PropFilter::to_xml`] enforces this by serialization precedence and
+/// [`CalDavClient::calendar_query`] rejects a violating filter with
+/// [`Error::InvalidInput`](crate::Error::InvalidInput) before any network I/O.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PropFilter {
     /// The iCalendar property name to filter on (e.g. `SUMMARY`, `DTSTART`).
     pub name: String,
-    /// Optional text-match condition.
+    /// Optional text-match condition. Mutually exclusive with `time_range`
+    /// (RFC 4791 §9.7.2): when both are set, `text_match` wins in the
+    /// serialized XML and `calendar_query` rejects the filter.
     pub text_match: Option<TextMatch>,
-    /// Optional time-range filter.
+    /// Optional time-range filter. Mutually exclusive with `text_match`
+    /// (RFC 4791 §9.7.2). Also requires `end` > `start` when both bounds
+    /// are set.
     pub time_range: Option<TimeRange>,
-    /// Nested `param-filter` elements.
+    /// Nested `param-filter` elements. Ignored (not serialized) when
+    /// `is_not_defined` is set.
     pub param_filters: Vec<ParamFilter>,
     /// If `true`, matches resources where this property is **absent**.
+    /// Excludes `text_match`, `time_range`, and `param_filters`
+    /// (RFC 4791 §9.7.2).
     pub is_not_defined: bool,
 }
 
@@ -188,20 +206,26 @@ impl PropFilter {
     }
 
     /// Render this prop-filter as CalDAV XML (the `<C:prop-filter>` element).
+    ///
+    /// Exclusivity is applied by precedence per the RFC 4791 §9.7.2 DTD
+    /// (`is-not-defined | ((time-range | text-match)?, param-filter*)`):
+    /// when `is_not_defined` is set only `<C:is-not-defined/>` is emitted,
+    /// and `text_match` wins over `time_range` when both are set.
+    /// [`CalDavClient::calendar_query`](crate::CalDavClient::calendar_query)
+    /// rejects violating filters with an error before any network I/O.
     pub fn to_xml(&self) -> String {
         let mut inner = String::new();
         if self.is_not_defined {
             inner.push_str(xml::IS_NOT_DEFINED_XML);
         } else {
             if let Some(tm) = &self.text_match {
-                inner.push_str(&tm.to_xml());
-            }
-            if let Some(tr) = &self.time_range {
+                inner.push_str(&tm.to_xml_for(true));
+            } else if let Some(tr) = &self.time_range {
                 inner.push_str(&tr.to_xml());
             }
-        }
-        for pf in &self.param_filters {
-            inner.push_str(&pf.to_xml());
+            for pf in &self.param_filters {
+                inner.push_str(&pf.to_xml_for(true));
+            }
         }
         xml::prop_filter_xml(&self.name, &inner)
     }

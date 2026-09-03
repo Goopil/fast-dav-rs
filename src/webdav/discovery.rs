@@ -2,9 +2,14 @@
 //! `.well-known/carddav` URIs.
 //!
 //! The probe reuses the client's request pipeline (`build_and_send`): HTTP
-//! redirects (301/302/303/307/308) are followed and credentials are attached
+//! redirects (301/302/303/307/308) are followed **only when the client's
+//! `follow_redirects` is enabled** (the default — RFC 6764 §5 requires
+//! clients to handle `.well-known` redirects), and credentials are attached
 //! per the client's configuration, with `Authorization`/`Cookie` stripped
-//! automatically when a hop crosses origins.
+//! automatically when a hop crosses origins. With `follow_redirects(false)`
+//! — or when a `Location` cannot be resolved or would downgrade https→http
+//! — the probe returns the 3xx and discovery fails with a descriptive
+//! error.
 //!
 //! DNS SRV record lookup (RFC 6764 §3/§6 step 2) is not implemented — the
 //! caller supplies the base URL.
@@ -48,6 +53,16 @@ async fn discover_well_known(
         return Ok(client.base().to_string());
     }
     if !status.is_success() {
+        if status.is_redirection() {
+            // RFC 6764 §5 requires clients to handle .well-known redirects.
+            // A 3xx reaching this point means the pipeline could not follow
+            // the hop: `follow_redirects(false)` on the client, an
+            // unresolvable `Location`, or an https→http downgrade.
+            return Err(Error::other(format!(
+                "discovery probe received redirect status {status} that was not followed \
+                 (is follow_redirects disabled?); the {path} service URL cannot be resolved"
+            )));
+        }
         return Err(Error::UnexpectedStatus { operation, status });
     }
     if final_uri.path() == path {
@@ -69,7 +84,12 @@ async fn discover_well_known(
 /// `DAV:current-user-principal` (RFC 6764 §6) — against
 /// `{base}/.well-known/caldav`, reusing the client's redirect, auth, timeout,
 /// and compression pipeline. Redirects (301/302/303/307/308) are followed
-/// automatically; the **final** request URL is the discovered service URL.
+/// **when the client's `follow_redirects` is enabled** (the builder default);
+/// the **final** request URL is the discovered service URL. RFC 6764 §5
+/// requires clients to handle `.well-known` redirects, so leave redirect
+/// following enabled: with `follow_redirects(false)` — or when a hop cannot
+/// be resolved/followed (e.g. an https→http downgrade) — the probe returns
+/// the 3xx and discovery fails with a descriptive error.
 ///
 /// # Fallbacks and errors
 ///
@@ -77,7 +97,9 @@ async fn discover_well_known(
 ///   URI (where the real endpoint must not live, RFC 5785 §1.1): the base
 ///   URL is returned unchanged (RFC 6764 §6 permits retrying at the root).
 /// - Any other non-success status: [`Error::UnexpectedStatus`] with
-///   [`Operation::DiscoverWellKnownCaldav`].
+///   [`Operation::DiscoverWellKnownCaldav`], except a 3xx that could not be
+///   followed (redirect following disabled, unresolvable `Location`, or an
+///   https→http downgrade), which fails with a descriptive error instead.
 /// - Transport failures (connection refused, timeout, …) propagate unchanged.
 ///
 /// Client credentials (Basic/Bearer) are attached to the probe — RFC 6764 §5
@@ -109,7 +131,9 @@ pub async fn discover_caldav(client: &WebDavClient) -> Result<String> {
 ///
 /// Behaves exactly like [`discover_caldav`] but probes
 /// `{base}/.well-known/carddav`; non-success statuses map to
-/// [`Error::UnexpectedStatus`] with [`Operation::DiscoverWellKnownCarddav`].
+/// [`Error::UnexpectedStatus`] with [`Operation::DiscoverWellKnownCarddav`]
+/// (a 3xx that could not be followed fails with a descriptive error
+/// instead — see [`discover_caldav`]).
 ///
 /// # Example
 ///

@@ -203,12 +203,59 @@ fn prop_filter_to_xml_with_text_match() {
 
 #[test]
 fn prop_filter_to_xml_with_time_range() {
-    let pf = PropFilter::new("DTSTART", TextMatch::new("20240101T000000Z"))
-        .with_time_range(TimeRange::new("20240101T000000Z"));
+    let mut pf = PropFilter::new("DTSTART", TextMatch::new("20240101T000000Z"));
+    pf.text_match = None;
+    pf.time_range = Some(TimeRange::new("20240101T000000Z"));
     let xml = pf.to_xml();
     assert!(xml.contains("prop-filter name=\"DTSTART\""));
     assert!(xml.contains("<C:time-range start=\"20240101T000000Z\""));
+    assert!(!xml.contains("text-match"));
+}
+
+#[test]
+fn prop_filter_to_xml_prefers_text_match_over_time_range() {
+    // RFC 4791 §9.7.2: text-match and time-range are mutually exclusive;
+    // serialization precedence keeps text-match.
+    let pf = PropFilter::new("DTSTART", TextMatch::new("20240101T000000Z"))
+        .with_time_range(TimeRange::new("20240101T000000Z"));
+    let xml = pf.to_xml();
     assert!(xml.contains("text-match"));
+    assert!(!xml.contains("time-range"));
+}
+
+#[test]
+fn prop_filter_to_xml_is_not_defined_excludes_other_children() {
+    // RFC 4791 §9.7.2: is-not-defined is exclusive — no text-match,
+    // time-range, or param-filter children may be serialized.
+    let mut pf = PropFilter::not_defined("LOCATION");
+    pf.param_filters = vec![ParamFilter::new("TYPE", TextMatch::new("work"))];
+    let xml = pf.to_xml();
+    assert!(xml.contains("<C:is-not-defined/>"));
+    assert!(!xml.contains("param-filter"));
+    assert!(!xml.contains("text-match"));
+    assert!(!xml.contains("time-range"));
+}
+
+#[test]
+fn caldav_text_match_omits_match_type_and_default_collation() {
+    // RFC 4791 §9.7.5: CalDAV text-match has no match-type attribute and
+    // defaults to i;ascii-casemap — both must be omitted for the CalDAV
+    // default collation.
+    let mut tm = TextMatch::new("meeting");
+    tm.collation = Collation::AsciiCasemap;
+    let xml = PropFilter::new("SUMMARY", tm).to_xml();
+    assert!(xml.contains("<C:text-match>meeting</C:text-match>"));
+    assert!(!xml.contains("match-type"));
+    assert!(!xml.contains("collation"));
+}
+
+#[test]
+fn caldav_text_match_keeps_explicit_non_default_collation() {
+    // An explicitly selected non-default collation is still sent (without
+    // match-type, which CalDAV does not define).
+    let xml = PropFilter::new("SUMMARY", TextMatch::new("meeting")).to_xml();
+    assert!(xml.contains("collation=\"i;unicode-casemap\""));
+    assert!(!xml.contains("match-type"));
 }
 
 #[test]
@@ -243,8 +290,9 @@ fn prop_filter_to_xml_multiple_children() {
         ]);
     let xml = pf.to_xml();
     assert!(xml.contains("prop-filter name=\"SUMMARY\""));
+    // text-match and time-range are mutually exclusive; text-match wins.
     assert!(xml.contains("text-match"));
-    assert!(xml.contains("time-range"));
+    assert!(!xml.contains("time-range"));
     assert!(xml.contains("param-filter name=\"PARTSTAT\""));
     assert!(xml.contains("param-filter name=\"ROLE\""));
     assert!(xml.contains("<C:is-not-defined/>"));
@@ -330,7 +378,8 @@ fn calendar_query_filter_to_xml_multiple_prop_filters() {
     assert!(xml.contains("prop-filter name=\"SUMMARY\""));
     assert!(xml.contains("prop-filter name=\"LOCATION\""));
     assert!(xml.contains(">meeting</C:text-match>"));
-    assert!(xml.contains("match-type=\"contains\""));
+    // CalDAV text-match has no match-type attribute (RFC 4791 §9.7.5).
+    assert!(!xml.contains("match-type"));
 }
 
 #[test]
@@ -383,7 +432,8 @@ fn calendar_query_filter_to_query_body_full_structure() {
     assert!(body.contains("comp-filter name=\"VEVENT\""));
     assert!(body.contains("time-range"));
     assert!(body.contains("prop-filter name=\"SUMMARY\""));
-    assert!(xml_contains(&body, "match-type=\"contains\""));
+    // CalDAV text-match never carries a match-type attribute (RFC 4791 §9.7.5).
+    assert!(!xml_contains(&body, "match-type"));
     assert!(body.contains("prop-filter name=\"ATTENDEE\""));
     assert!(body.contains("param-filter name=\"PARTSTAT\""));
     assert!(body.contains(">ACCEPTED</C:text-match>"));
