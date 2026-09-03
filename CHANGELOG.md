@@ -107,6 +107,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sync_token` remains valid for fetching the next page of changes. Additive but
   constructor-visible: struct literals must add the field (prefer `..Default::default()`
   or update them)
+- **Breaking (0.11 window):** `BatchItem` (returned by `propfind_many`,
+  `report_many`, `calendar_multiget_many`) gains a `pub hrefs: Vec<String>` field
+  carrying the request hrefs of the batch — the single request path for
+  `propfind_many`/`report_many`, the chunk's requested hrefs for
+  `calendar_multiget_many` chunks — so a failed multiget chunk is attributable to
+  the hrefs it should re-fetch (issue #140). `BatchItem` is `#[non_exhaustive]`, so
+  external construction was already impossible; only exhaustive internal pattern
+  matches are affected
+- **Breaking (0.11 window):** `WebDavClient::sync_collection_resilient` and the
+  crate-internal `sync_collection_resilient_report` now return a 4-tuple
+  `(HeaderMap, Vec<DavItem>, Option<String>, bool)` whose last element (`resynced`)
+  is `true` when the result came from an initial sync triggered by a stale sync
+  token; `caldav::SyncResponse` and `carddav::SyncResponse` gain a `pub resynced:
+  bool` field (always `false` for incremental syncs). Per RFC 6578 §3.4 an initial
+  sync MUST NOT report deletions that predate the stale token, so callers must
+  rebuild their caches when `resynced == true` (issue #140). The stale-token signal
+  is now also recognized as `403 Forbidden` + `valid-sync-token` (RFC 6578 §3.2
+  alternative signal), not only `410 Gone`
 - New `#[non_exhaustive]` error variant `Error::UnexpectedStatusWithDav {
   operation, status, dav }` (issue #136): LOCK/UNLOCK error responses with a
   `<D:error>` body (e.g. `423 Locked` + `<D:no-conflicting-lock/>`, RFC 4918 §16)
@@ -126,6 +144,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Collation`/`MatchType` enums and their defaults are unchanged
 
 ### Fixed
+- Silent sync-data loss (issue #140): the shared `sync-collection` mapping
+  (CalDAV/CardDAV `map_sync_response`) consumed the data payload twice when a
+  response element carried a per-item sync token and no etag — the taking closures
+  (`calendar_data.take()` / `address_data.take()`) emptied the payload on the first
+  call, so such members were delivered **without their data**. The payload is now
+  computed exactly once and survives
+- Multiget REPORTs are now sent with `Depth: 0` (issue #140): the batched multiget
+  (`report_many_bodies`, used by `calendar_multiget_many`) and the single-request
+  `calendar_multiget` / `addressbook_multiget` previously sent `Depth: 1`, which
+  servers SHOULD NOT receive for multiget REPORTs (RFC 4791 §7.9, RFC 6352 §8.7)
 - `Retry-After` handling on transient retries (issue #137): the honored delay
   is now clamped to the retry backoff cap (a hostile or overloaded server
   answering `429` with a huge `Retry-After` could previously park the request

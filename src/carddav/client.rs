@@ -292,6 +292,9 @@ impl CardDavClient {
     }
 
     /// Fetch specific address objects via `addressbook-multiget`.
+    ///
+    /// The REPORT is sent with `Depth: 0` (RFC 6352 §8.7) and answers with one
+    /// multistatus element per requested href.
     pub async fn addressbook_multiget<I, S>(
         &self,
         addressbook_path: &str,
@@ -306,7 +309,7 @@ impl CardDavClient {
             return Ok(Vec::new());
         };
 
-        let resp = self.report(addressbook_path, Depth::One, &body).await?;
+        let resp = self.report(addressbook_path, Depth::Zero, &body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
                 operation: Operation::ReportAddressbookMultiget,
@@ -632,6 +635,7 @@ pub fn map_sync_response(
             })
             .collect(),
         truncated,
+        resynced: false,
     }
 }
 

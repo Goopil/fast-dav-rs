@@ -337,6 +337,11 @@ impl Depth {
 #[non_exhaustive]
 pub struct BatchItem<T> {
     pub pub_path: String,
+    /// The request hrefs this batch was issued for: the single request path
+    /// for singleton batches (`propfind_many`/`report_many`), the chunk's
+    /// requested hrefs for multiget chunks (`calendar_multiget_many`). On a
+    /// failed batch these are exactly the hrefs to re-fetch.
+    pub hrefs: Vec<String>,
     pub result: Result<T>,
 }
 
@@ -670,14 +675,17 @@ pub(crate) fn map_sync_rows(
             truncated = true;
         }
 
+        // Consume the data payload exactly once: `data_of` closures take the
+        // data out of the item, so calling it twice would drop the payload
+        // from members that carry a per-item sync token and no etag.
+        let data = data_of(&mut item);
         let is_collection = item.is_collection
-            || (item.sync_token.is_some() && item.etag.is_none() && data_of(&mut item).is_none());
+            || (item.sync_token.is_some() && item.etag.is_none() && data.is_none());
         if is_collection {
             continue;
         }
         let is_deleted = matches!(code, Some(404) | Some(410));
 
-        let data = data_of(&mut item);
         out.push(SyncRow {
             href: item.href,
             etag: item.etag,

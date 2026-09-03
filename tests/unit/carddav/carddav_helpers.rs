@@ -601,3 +601,28 @@ fn map_sync_response_normalizes_quoted_header_token() {
     let sync = map_sync_response(&headers, Vec::new(), None);
     assert_eq!(sync.sync_token.as_deref(), Some("quoted-header-token"));
 }
+
+#[test]
+fn sync_member_with_per_item_token_and_data_keeps_payload() {
+    use fast_dav_rs::carddav::DavItem;
+
+    // Regression (#140): the collection heuristic used to consume the data
+    // payload (the mapper's closure takes it) and then call it again, so a
+    // member carrying a per-item sync token, no etag and address-data was
+    // delivered without its data.
+    let mut item = DavItem::new();
+    item.href = "/card/a.vcf".to_string();
+    item.sync_token = Some("http://example.com/sync/item-1".to_string());
+    item.address_data = Some("BEGIN:VCARD\r\nEND:VCARD".to_string());
+
+    let sync = map_sync_response(&HeaderMap::new(), vec![item], None);
+
+    assert_eq!(sync.items.len(), 1, "token+data member is not a collection");
+    let member = &sync.items[0];
+    assert_eq!(member.href, "/card/a.vcf");
+    assert_eq!(
+        member.address_data.as_deref(),
+        Some("BEGIN:VCARD\r\nEND:VCARD"),
+        "the data payload must survive the mapping"
+    );
+}

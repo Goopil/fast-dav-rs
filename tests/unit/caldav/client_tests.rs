@@ -1141,6 +1141,7 @@ async fn sync_collection_resilient_recovers_from_gone() {
     assert_eq!(sync.items[0].href, "/cal/a.ics");
     assert_eq!(sync.items[0].etag.as_deref(), Some("etag-a"));
     assert!(!sync.items[0].is_deleted);
+    assert!(sync.resynced, "410-triggered initial sync must be flagged");
 
     let reqs = captured.lock().unwrap();
     assert_eq!(
@@ -1178,6 +1179,7 @@ async fn sync_collection_with_level_sends_infinite() {
         Some("http://example.com/sync/2")
     );
     assert_eq!(sync.items.len(), 2);
+    assert!(!sync.resynced, "an incremental sync is never a resync");
 
     let raw = captured.lock().unwrap();
     let req = String::from_utf8_lossy(&raw);
@@ -1305,6 +1307,35 @@ async fn delegate_request_compression_mode_getter_roundtrips() {
 }
 
 // ---------------------------------------------------------------------------
+// calendar_multiget
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn calendar_multiget_sends_depth_zero() {
+    let (_, body) = multiget_report_response(&["/cal/a.ics"], true);
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let objects = client
+        .calendar_multiget("cal/", ["/cal/a.ics"], true, None)
+        .await
+        .unwrap();
+    assert_eq!(objects.len(), 1);
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+    assert!(
+        req.contains("depth: 0") && !req.contains("depth: 1"),
+        "calendar-multiget must use Depth: 0 (RFC 4791 §7.9): {req}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // calendar_multiget_many
 // ---------------------------------------------------------------------------
 
@@ -1360,6 +1391,10 @@ async fn multiget_many_chunks_hrefs_and_orders_results() {
         req1.contains("calendar-multiget"),
         "expected calendar-multiget report root: {req1}"
     );
+    assert!(
+        req1.to_ascii_lowercase().contains("depth: 0"),
+        "multiget REPORTs must use Depth: 0 (RFC 4791 §7.9): {req1}"
+    );
     assert!(req1.contains("<D:href>/cal/e0.ics</D:href>"), "{req1}");
     assert!(req1.contains("<D:href>/cal/e1.ics</D:href>"), "{req1}");
     assert!(
@@ -1389,6 +1424,20 @@ async fn multiget_many_chunks_hrefs_and_orders_results() {
             item.result.as_ref().err()
         );
     }
+    // Each BatchItem carries the hrefs its chunk's REPORT requested.
+    assert_eq!(
+        items[0].hrefs,
+        vec!["/cal/e0.ics".to_string(), "/cal/e1.ics".to_string()]
+    );
+    assert_eq!(
+        items[1].hrefs,
+        vec!["/cal/e0.ics".to_string(), "/cal/e1.ics".to_string()]
+    );
+    assert_eq!(
+        items[2].hrefs,
+        vec!["/cal/e2.ics".to_string(), "/cal/e3.ics".to_string()]
+    );
+    assert_eq!(items[4].hrefs, vec!["/cal/e4.ics".to_string()]);
     let got: Vec<String> = items
         .iter()
         .map(|i| i.result.as_ref().unwrap().href.clone())
@@ -1469,6 +1518,11 @@ async fn multiget_many_partial_failure_isolated() {
         ),
         "expected UnexpectedStatus(500) for the failed chunk, got: {:?}",
         items[1].result
+    );
+    assert!(
+        items[1].hrefs == vec!["/cal/e1.ics".to_string()],
+        "a failed chunk must be attributable to its requested hrefs, got: {:?}",
+        items[1].hrefs
     );
     assert!(items[2].result.is_ok(), "sibling chunk must be unaffected");
 }

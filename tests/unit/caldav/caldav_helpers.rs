@@ -674,3 +674,28 @@ fn map_sync_response_normalizes_quoted_header_token() {
     let sync = map_sync_response(&headers, Vec::new(), None);
     assert_eq!(sync.sync_token.as_deref(), Some("quoted-header-token"));
 }
+
+#[test]
+fn sync_member_with_per_item_token_and_data_keeps_payload() {
+    use fast_dav_rs::caldav::DavItem;
+
+    // Regression (#140): the collection heuristic used to consume the data
+    // payload (the mapper's closure takes it) and then call it again, so a
+    // member carrying a per-item sync token, no etag and calendar-data was
+    // delivered without its data.
+    let mut item = DavItem::new();
+    item.href = "/cal/a.ics".to_string();
+    item.sync_token = Some("http://example.com/sync/item-1".to_string());
+    item.calendar_data = Some("BEGIN:VCALENDAR\r\nEND:VCALENDAR".to_string());
+
+    let sync = map_sync_response(&HeaderMap::new(), vec![item], None);
+
+    assert_eq!(sync.items.len(), 1, "token+data member is not a collection");
+    let member = &sync.items[0];
+    assert_eq!(member.href, "/cal/a.ics");
+    assert_eq!(
+        member.calendar_data.as_deref(),
+        Some("BEGIN:VCALENDAR\r\nEND:VCALENDAR"),
+        "the data payload must survive the mapping"
+    );
+}
