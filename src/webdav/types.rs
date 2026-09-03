@@ -141,6 +141,12 @@ pub struct LockInfo {
     pub scope: Option<LockScope>,
     /// Lock owner (text of `<D:owner>` or its `<D:href>`); `None` when absent.
     pub owner: Option<String>,
+    /// The resource the lock applies to, from `<D:lockroot><D:href>`
+    /// (RFC 4918 §14.2); `None` when the server omitted it.
+    pub lockroot: Option<String>,
+    /// Lock depth parsed from `<D:depth>` (`0`, `1`, or `infinity`,
+    /// RFC 4918 §14.3); `None` when absent or unrecognized.
+    pub depth: Option<Depth>,
 }
 
 /// Collation algorithm for `text-match` comparisons (RFC 4791 §8.4 / RFC 6352 §7.3).
@@ -238,13 +244,22 @@ impl TextMatch {
         self
     }
 
-    /// Render this text-match as the `<C:text-match>` element.
+    /// Render this text-match as the `<C:text-match>` element using the
+    /// CardDAV serialization (RFC 6352 §10.4): `collation` and `match-type`
+    /// are always present. For CalDAV serialization (no `match-type`,
+    /// `i;ascii-casemap` collation omitted per RFC 4791 §9.7.5) the CalDAV
+    /// filters call the protocol-aware variant internally.
     pub fn to_xml(&self) -> String {
+        self.to_xml_for(false)
+    }
+
+    pub(crate) fn to_xml_for(&self, caldav: bool) -> String {
         xml::text_match_xml(
             &self.value,
-            self.collation.as_str(),
-            self.match_type.as_str(),
+            self.collation,
+            self.match_type,
             self.negate,
+            caldav,
         )
     }
 }
@@ -281,12 +296,18 @@ impl ParamFilter {
         }
     }
 
-    /// Render this param-filter as the `<C:param-filter>` element.
+    /// Render this param-filter as the `<C:param-filter>` element using the
+    /// CardDAV serialization for a nested `text-match` (see
+    /// [`TextMatch::to_xml`]).
     pub fn to_xml(&self) -> String {
+        self.to_xml_for(false)
+    }
+
+    pub(crate) fn to_xml_for(&self, caldav: bool) -> String {
         let inner = if self.is_not_defined {
             xml::IS_NOT_DEFINED_XML.to_string()
         } else if let Some(tm) = &self.text_match {
-            tm.to_xml()
+            tm.to_xml_for(caldav)
         } else {
             String::new()
         };
@@ -295,7 +316,7 @@ impl ParamFilter {
 }
 
 /// WebDAV Depth
-#[derive(Copy, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Depth {
     Zero,
@@ -316,6 +337,11 @@ impl Depth {
 #[non_exhaustive]
 pub struct BatchItem<T> {
     pub pub_path: String,
+    /// The request hrefs this batch was issued for: the single request path
+    /// for singleton batches (`propfind_many`/`report_many`), the chunk's
+    /// requested hrefs for multiget chunks (`calendar_multiget_many`). On a
+    /// failed batch these are exactly the hrefs to re-fetch.
+    pub hrefs: Vec<String>,
     pub result: Result<T>,
 }
 
@@ -389,6 +415,18 @@ pub struct WebDavError {
     /// `precondition_code == None`) from a well-formed body with no
     /// `<D:error>` child (`parse_failed == false`, `precondition_code == None`).
     pub parse_failed: bool,
+}
+
+impl std::fmt::Display for WebDavError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(code) = &self.precondition_code {
+            f.write_str(code)
+        } else if self.parse_failed {
+            f.write_str("unparseable <D:error> body")
+        } else {
+            f.write_str("no precondition reported")
+        }
+    }
 }
 
 /// Parse a `DAV` response header value (RFC 4918 §10.1) into
@@ -637,14 +675,17 @@ pub(crate) fn map_sync_rows(
             truncated = true;
         }
 
+        // Consume the data payload exactly once: `data_of` closures take the
+        // data out of the item, so calling it twice would drop the payload
+        // from members that carry a per-item sync token and no etag.
+        let data = data_of(&mut item);
         let is_collection = item.is_collection
-            || (item.sync_token.is_some() && item.etag.is_none() && data_of(&mut item).is_none());
+            || (item.sync_token.is_some() && item.etag.is_none() && data.is_none());
         if is_collection {
             continue;
         }
         let is_deleted = matches!(code, Some(404) | Some(410));
 
-        let data = data_of(&mut item);
         out.push(SyncRow {
             href: item.href,
             etag: item.etag,

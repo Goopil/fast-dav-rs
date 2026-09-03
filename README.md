@@ -205,6 +205,7 @@ fn is_retryable(error: &Error) -> bool {
 | `Connection`           | The TCP/TLS handshake failed (DNS, refused, TLS)                      |
 | `Transport`            | A request was sent but the response stream broke                      |
 | `UnexpectedStatus`     | The server returned an unexpected HTTP status code                    |
+| `UnexpectedStatusWithDav` | Unexpected status with a `<D:error>` body (e.g. `423` + `no-conflicting-lock`) |
 | `Timeout`              | An operation exceeded its configured time limit                      |
 | `BodyTooLarge`         | A decompressed response body exceeded the 256 MiB limit              |
 | `Xml`                  | Parsing or decoding XML failed                                        |
@@ -457,9 +458,11 @@ requests while preserving input order in the result list.
 `CalDavClient::calendar_multiget_many` applies the same machinery to `calendar-multiget`: the href
 list is chunked into `batch_size` slices, one REPORT is issued per chunk with at most
 `max_concurrency` in flight, and results come back as `Vec<BatchItem<CalendarObject>>` ordered by
-chunk. A failed chunk is a single error `BatchItem`; sibling chunks are unaffected. Pick
-`batch_size` (e.g. 100 hrefs per REPORT) and `max_concurrency` (e.g. 4) to match your server's
-limits.
+chunk. A failed chunk is a single error `BatchItem`; sibling chunks are unaffected. Every
+`BatchItem` carries the request hrefs of its batch in `hrefs`, so a failed chunk is attributable
+to the hrefs to re-fetch. Multiget REPORTs are sent with `Depth: 0` (RFC 4791 §7.9, RFC 6352
+§8.7). Pick `batch_size` (e.g. 100 hrefs per REPORT) and `max_concurrency` (e.g. 4) to match your
+server's limits.
 
 ## Advanced Configuration
 
@@ -555,8 +558,10 @@ The method is available on `WebDavClientBuilder`, `CalDavClientBuilder`, and
 
 HTTP redirects (301/302/303/307/308) are followed automatically in `send`/`send_stream`,
 up to a configurable limit. On 303 the request is re-sent as `GET` without a body, and
-when a redirect crosses origins (scheme, host, or port change) the `Authorization` and
-`Cookie` headers are stripped for the remainder of the chain. Exceeding the limit fails
+when a redirect crosses origins (scheme, host, or port change) the `Authorization`,
+`Cookie`, `If-Match`, and `If-None-Match` headers are stripped for the remainder of the
+chain. An `https`→`http` downgrade is never followed (RFC 6764 §6 is TLS-first): the 3xx
+response is returned as-is so the caller can observe it. Exceeding the limit fails
 with `Error::TooManyRedirects`:
 
 ```rust
@@ -571,10 +576,14 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
 `discover_caldav` and `discover_carddav` (free functions taking `&WebDavClient`) locate the
 service "context path" for a base URL per RFC 6764 §5: a `PROPFIND` with `Depth: 0` and a
 `DAV:current-user-principal` body is sent to `{base}/.well-known/caldav` (or `/carddav`).
-Redirects are followed by the client's redirect pipeline, so the **final** request URL is the
-discovered service URL. A `404` (or a success answered directly on the `.well-known` URI)
-returns the base URL unchanged as a documented fallback; any other non-success status fails
-with `Error::UnexpectedStatus`. Client credentials are attached to the probe and stripped
+Redirects are followed by the client's redirect pipeline when `follow_redirects` is
+enabled (the builder default — RFC 6764 §5 requires clients to handle `.well-known`
+redirects), so the **final** request URL is the discovered service URL. A `404` (or a
+success answered directly on the `.well-known` URI) returns the base URL unchanged as a
+documented fallback; any other non-success status fails with `Error::UnexpectedStatus`,
+except a 3xx that could not be followed (redirect following disabled, unresolvable
+`Location`, or an https→http downgrade), which fails with a descriptive error. Client
+credentials are attached to the probe and stripped
 automatically on cross-origin redirect hops. DNS SRV record lookup (RFC 6764 §3) is not
 implemented:
 
@@ -772,9 +781,14 @@ async fn main() -> Result<()> {
 - `sync_collection_with_level` (all clients) sends a configurable `sync-level` (RFC 6578 §3.3):
   `SyncLevel::One` restricts the sync to the collection members, `SyncLevel::Infinite` includes
   all descendants.
-- `sync_collection_resilient` (all clients) recovers automatically from `410 Gone` (stale sync
-  token, RFC 6578 §3.11) by re-issuing the report as an initial sync and returning the full
-  result set with the new token; any other error propagates unchanged.
+- `sync_collection_resilient` (all clients) recovers automatically from a stale sync token —
+  `410 Gone` (RFC 6578 §3.11) or `403 Forbidden` + `valid-sync-token` (§3.2) — by re-issuing the
+  report as an initial sync and returning the full result set with the new token; any other error
+  propagates unchanged. The response is flagged: the `WebDavClient` variant returns a 4-tuple whose
+  last element is the `resynced` flag, and `caldav::SyncResponse`/`carddav::SyncResponse` expose
+  `resynced == true`. Per RFC 6578 §3.4 an initial sync MUST NOT report deletions that predate the
+  stale token, so rebuild your caches from `items` instead of applying them incrementally when the
+  flag is set.
 - **Result truncation (RFC 6578 §3.6):** when the server truncates a sync result set it reports
   `507 Insufficient Storage` inside the 207 multistatus (normally on the request-URI).
   `caldav::SyncResponse`/`carddav::SyncResponse` expose this as `truncated == true`; the 507
@@ -789,11 +803,17 @@ async fn main() -> Result<()> {
 ### WebDAV locking (class 2)
 
 All clients (`WebDavClient`, `CalDavClient`, `CardDavClient`) support WebDAV locking (RFC 4918
-class 2). `lock` sends `LOCK` with a `Timeout: Second-N` header and a `<D:lockinfo>` body and
-returns the parsed `<D:activelock>` (`LockInfo`: token, timeout, scope, owner); `refresh_lock`
-re-issues the `LOCK` with the token in an `If` header (RFC 4918 §9.10.7); `unlock` sends `UNLOCK`
-with the token in a `Lock-Token` header. Non-success statuses — including `423 Locked` — surface
-as `Error::UnexpectedStatus` with `Operation::Lock`/`Operation::Unlock`.
+class 2). `lock` sends `LOCK` with an explicit `Depth: 0` header (RFC 4918 §9.10.4), a
+`Timeout: Second-N` header (clamped to `u32::MAX` seconds, RFC 4918 §10.7) and a `<D:lockinfo>`
+body and returns the parsed `<D:activelock>` (`LockInfo`: token, timeout, scope, owner, lockroot,
+depth); `refresh_lock` re-issues the `LOCK` with the token in an `If` header (RFC 4918 §9.10.7)
+and falls back to the request token when the server omits `<D:locktoken>` in the response;
+`unlock` sends `UNLOCK` with the token in a `Lock-Token` header. Tokens are validated
+(RFC 4918 §10.5 Coded-URL grammar) before being embedded in a header. Non-success statuses
+surface as `Error::UnexpectedStatus` with `Operation::Lock`/`Operation::Unlock` — or as
+`Error::UnexpectedStatusWithDav` when the error body carries a `<D:error>` precondition (e.g.
+`423 Locked` + `no-conflicting-lock`, RFC 4918 §16). A successful `LOCK` response without a lock
+token fails with `Error::InvalidInput` (RFC 4918 §9.10.9).
 
 The client keeps **no implicit lock state**: callers keep the token and pass it to
 `refresh_lock`/`unlock`, or send it in an `If` header via the low-level `send` on conditional

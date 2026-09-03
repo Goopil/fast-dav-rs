@@ -261,8 +261,12 @@ impl CalDavClient {
     /// contains characters outside ASCII alphanumerics and `-`, if `start`
     /// /`end` is provided but is not a valid iCalendar UTC date-time
     /// (`YYYYMMDDTHHMMSSZ`), or if `expand` is provided but its start/end are
-    /// not valid iCalendar UTC date-times. Also returns an error if the
-    /// REPORT request fails or the server responds with a non-success status.
+    /// not valid iCalendar UTC date-times. When `expand` is provided without
+    /// an `end` (mandatory per RFC 4791 §9.6.5) the call fails with
+    /// [`Error::InvalidInput`]; when `end <= start` (or the time-range `end`
+    /// precedes `start`) it fails with [`Error::InvalidDateTime`]. Also
+    /// returns an error if the REPORT request fails or the server responds
+    /// with a non-success status.
     pub async fn calendar_query_timerange(
         &self,
         calendar_path: &str,
@@ -279,11 +283,9 @@ impl CalDavClient {
         if let Some(e) = end {
             validate_utc_datetime(e, "invalid calendar-query end")?;
         }
-        if let Some(tr) = &expand {
-            validate_utc_datetime(&tr.start, "invalid calendar-query expand start")?;
-            if let Some(e) = &tr.end {
-                validate_utc_datetime(e, "invalid calendar-query expand end")?;
-            }
+        validate_expand("invalid calendar-query", expand.as_ref())?;
+        if let (Some(s), Some(e)) = (start, end) {
+            validate_time_range_order("invalid calendar-query time-range", s, e)?;
         }
 
         let xml = build_calendar_query_body(component, start, end, include_data, expand.as_ref());
@@ -308,10 +310,14 @@ impl CalDavClient {
     /// # Errors
     ///
     /// Returns an error **before any network I/O** if the component name is
-    /// empty or contains characters outside ASCII alphanumerics and `-`, or if
-    /// any time-range value is not a valid iCalendar UTC date-time. Also
-    /// returns an error if the REPORT request fails or the server responds
-    /// with a non-success status.
+    /// empty or contains characters outside ASCII alphanumerics and `-`, if
+    /// any time-range value is not a valid iCalendar UTC date-time, if a
+    /// `prop-filter` violates the RFC 4791 §9.7.2 child exclusivity
+    /// (`is-not-defined` excludes everything else; `text-match` and
+    /// `time-range` are mutually exclusive) with [`Error::InvalidInput`], or
+    /// if a time-range `end` precedes its `start` with
+    /// [`Error::InvalidDateTime`]. Also returns an error if the REPORT
+    /// request fails or the server responds with a non-success status.
     pub async fn calendar_query(
         &self,
         calendar_path: &str,
@@ -323,9 +329,28 @@ impl CalDavClient {
             validate_utc_datetime(&tr.start, "invalid calendar-query time-range start")?;
             if let Some(end) = &tr.end {
                 validate_utc_datetime(end, "invalid calendar-query time-range end")?;
+                validate_time_range_order("invalid calendar-query time-range", &tr.start, end)?;
             }
         }
         for pf in &filter.prop_filters {
+            if pf.is_not_defined
+                && (pf.text_match.is_some()
+                    || pf.time_range.is_some()
+                    || !pf.param_filters.is_empty())
+            {
+                return Err(Error::InvalidInput(format!(
+                    "calendar-query prop-filter `{}`: is-not-defined excludes \
+                     text-match, time-range, and param-filter children (RFC 4791 §9.7.2)",
+                    pf.name
+                )));
+            }
+            if pf.text_match.is_some() && pf.time_range.is_some() {
+                return Err(Error::InvalidInput(format!(
+                    "calendar-query prop-filter `{}`: text-match and time-range \
+                     are mutually exclusive (RFC 4791 §9.7.2)",
+                    pf.name
+                )));
+            }
             if let Some(tr) = &pf.time_range {
                 validate_utc_datetime(
                     &tr.start,
@@ -335,6 +360,11 @@ impl CalDavClient {
                     validate_utc_datetime(
                         end,
                         "invalid calendar-query prop-filter time-range end",
+                    )?;
+                    validate_time_range_order(
+                        "invalid calendar-query prop-filter time-range",
+                        &tr.start,
+                        end,
                     )?;
                 }
             }
@@ -355,6 +385,9 @@ impl CalDavClient {
 
     /// Fetch specific calendar objects via `calendar-multiget`.
     ///
+    /// The REPORT is sent with `Depth: 0` (RFC 4791 §7.9) and answers with one
+    /// multistatus element per requested href.
+    ///
     /// `expand` asks the server to expand recurring components into their
     /// individual instances covering the given range (RFC 4791 §9.6,
     /// `<C:expand>`). When it is `Some`, `include_data` is implied `true`
@@ -363,9 +396,11 @@ impl CalDavClient {
     /// # Errors
     ///
     /// Returns an error **before any network I/O** if `expand` is provided
-    /// but its start/end are not valid iCalendar UTC date-times. Also returns
-    /// an error if the REPORT request fails or the server responds with a
-    /// non-success status.
+    /// but its start/end are not valid iCalendar UTC date-times, if `expand`
+    /// has no `end` (mandatory per RFC 4791 §9.6.5 — [`Error::InvalidInput`]),
+    /// or if its `end` is not after its `start` ([`Error::InvalidDateTime`]).
+    /// Also returns an error if the REPORT request fails or the server
+    /// responds with a non-success status.
     pub async fn calendar_multiget<I, S>(
         &self,
         calendar_path: &str,
@@ -377,18 +412,13 @@ impl CalDavClient {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        if let Some(tr) = &expand {
-            validate_utc_datetime(&tr.start, "invalid calendar-multiget expand start")?;
-            if let Some(e) = &tr.end {
-                validate_utc_datetime(e, "invalid calendar-multiget expand end")?;
-            }
-        }
+        validate_expand("invalid calendar-multiget", expand.as_ref())?;
 
         let Some(body) = build_calendar_multiget_body(hrefs, include_data, expand.as_ref()) else {
             return Ok(Vec::new());
         };
 
-        let resp = self.report(calendar_path, Depth::One, &body).await?;
+        let resp = self.report(calendar_path, Depth::Zero, &body).await?;
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
                 operation: Operation::ReportCalendarMultiget,
@@ -417,7 +447,8 @@ impl CalDavClient {
     ///
     /// Each item of the returned vector is one [`CalendarObject`] wrapped in a
     /// [`BatchItem`]: `pub_path` is the `calendar_path` the REPORT was sent
-    /// to, and the object's own URL is in [`CalendarObject::href`]. Results
+    /// to, `hrefs` holds the exact hrefs the chunk's REPORT requested, and
+    /// the object's own URL is in [`CalendarObject::href`]. Results
     /// are **deterministically ordered by chunk index first**, then by the
     /// order in which the server returned the objects within that chunk's
     /// multistatus (which matches the request href order for compliant
@@ -428,14 +459,18 @@ impl CalDavClient {
     /// A failed chunk (transport error, non-success status, or an
     /// unparsable response body) produces exactly **one** error [`BatchItem`];
     /// sibling chunks are unaffected and still contribute their results. The
+    /// failing chunk's `hrefs` field carries the requested hrefs, so callers
+    /// know exactly which objects to re-fetch. The
     /// method itself only fails before any network I/O (see below).
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidConfig`] **before any network I/O** if
-    /// `batch_size` is 0. Returns [`Error::InvalidDateTime`] **before any
-    /// network I/O** if `expand` is provided but its start/end are not valid
-    /// iCalendar UTC date-times.
+    /// `batch_size` is 0. Returns [`Error::InvalidDateTime`] or
+    /// [`Error::InvalidInput`] **before any network I/O** if `expand` is
+    /// provided but its start/end are not valid iCalendar UTC date-times,
+    /// `end` is missing (mandatory per RFC 4791 §9.6.5), or `end` is not
+    /// after `start`.
     ///
     /// # Example
     ///
@@ -473,17 +508,13 @@ impl CalDavClient {
                 "calendar_multiget_many: batch_size must be greater than zero".to_owned(),
             ));
         }
-        if let Some(tr) = &expand {
-            validate_utc_datetime(&tr.start, "invalid calendar-multiget expand start")?;
-            if let Some(e) = &tr.end {
-                validate_utc_datetime(e, "invalid calendar-multiget expand end")?;
-            }
-        }
+        validate_expand("invalid calendar-multiget", expand.as_ref())?;
         if hrefs.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut requests = Vec::new();
+        let mut chunk_hrefs = Vec::new();
         for chunk in hrefs.chunks(batch_size) {
             let Some(xml) =
                 build_calendar_multiget_body(chunk.iter(), include_data, expand.as_ref())
@@ -491,12 +522,18 @@ impl CalDavClient {
                 continue;
             };
             requests.push((calendar_path.to_owned(), Arc::new(Bytes::from(xml))));
+            chunk_hrefs.push(chunk.to_vec());
         }
 
-        let batches = self
+        let mut batches = self
             .webdav
             .report_many_bodies(requests, max_concurrency)
             .await;
+        // `report_many_bodies` only knows the request path; stamp each batch
+        // with the hrefs its chunk requested so failures are attributable.
+        for (batch, hrefs) in batches.iter_mut().zip(chunk_hrefs) {
+            batch.hrefs = hrefs;
+        }
 
         let mut out = Vec::with_capacity(hrefs.len());
         for batch in batches {
@@ -514,10 +551,12 @@ impl CalDavClient {
             match result {
                 Ok(objects) => out.extend(objects.into_iter().map(|o| BatchItem {
                     pub_path: batch.pub_path.clone(),
+                    hrefs: batch.hrefs.clone(),
                     result: Ok(o),
                 })),
                 Err(e) => out.push(BatchItem {
                     pub_path: batch.pub_path,
+                    hrefs: batch.hrefs,
                     result: Err(e),
                 }),
             }
@@ -542,9 +581,11 @@ impl CalDavClient {
     /// # Errors
     ///
     /// Returns an error **before any network I/O** if `expand` is provided
-    /// but its start/end are not valid iCalendar UTC date-times. Also returns
-    /// an error if the REPORT request fails or the server responds with a
-    /// non-success status.
+    /// but its start/end are not valid iCalendar UTC date-times, if `expand`
+    /// has no `end` (mandatory per RFC 4791 §9.6.5 — [`Error::InvalidInput`]),
+    /// or if its `end` is not after its `start` ([`Error::InvalidDateTime`]).
+    /// Also returns an error if the REPORT request fails or the server
+    /// responds with a non-success status.
     pub async fn sync_collection(
         &self,
         calendar_path: &str,
@@ -553,12 +594,7 @@ impl CalDavClient {
         include_data: bool,
         expand: Option<TimeRange>,
     ) -> Result<SyncResponse> {
-        if let Some(tr) = &expand {
-            validate_utc_datetime(&tr.start, "invalid sync-collection expand start")?;
-            if let Some(e) = &tr.end {
-                validate_utc_datetime(e, "invalid sync-collection expand end")?;
-            }
-        }
+        validate_expand("invalid sync-collection", expand.as_ref())?;
 
         let body = build_sync_collection_body(sync_token, limit, include_data, expand.as_ref());
 
@@ -587,9 +623,10 @@ impl CalDavClient {
     /// # Errors
     ///
     /// Returns an error **before any network I/O** if `start` or `end` is not
-    /// a valid iCalendar UTC date-time (`YYYYMMDDTHHMMSSZ`). Also returns an
-    /// error if the REPORT request fails or the server responds with a
-    /// non-success status.
+    /// a valid iCalendar UTC date-time (`YYYYMMDDTHHMMSSZ`) or if `end` is not
+    /// after `start` ([`Error::InvalidDateTime`]). Also returns an error if
+    /// the REPORT request fails or the server responds with a non-success
+    /// status.
     ///
     /// # Example
     /// ```no_run
@@ -616,6 +653,7 @@ impl CalDavClient {
     ) -> Result<Vec<FreeBusyPeriod>> {
         validate_utc_datetime(start, "invalid free-busy-query start")?;
         validate_utc_datetime(end, "invalid free-busy-query end")?;
+        validate_time_range_order("invalid free-busy-query time-range", start, end)?;
 
         let body = format!(
             r#"<C:free-busy-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">{}</C:free-busy-query>"#,
@@ -654,6 +692,38 @@ impl CalDavClient {
 
 pub fn escape_xml(input: &str) -> String {
     crate::webdav::xml::escape_xml(input)
+}
+
+/// Reject `end <= start` for structurally valid iCalendar UTC date-times
+/// (RFC 4791 §9.9). Both values are fixed-format `YYYYMMDDTHHMMSSZ`, so
+/// lexicographic order is chronological.
+fn validate_time_range_order(context: &str, start: &str, end: &str) -> Result<()> {
+    if end <= start {
+        return Err(Error::InvalidDateTime {
+            context: context.to_owned(),
+            value: end.to_owned(),
+            reason: "end must be after start",
+        });
+    }
+    Ok(())
+}
+
+/// Validate an `expand` time-range before any network I/O (RFC 4791 §9.6.5):
+/// both `start` and `end` are `#REQUIRED` attributes of `<C:expand>` and
+/// `end` must be after `start`.
+fn validate_expand(context: &str, expand: Option<&TimeRange>) -> Result<()> {
+    let Some(tr) = expand else {
+        return Ok(());
+    };
+    validate_utc_datetime(&tr.start, &format!("{context} expand start"))?;
+    let Some(end) = tr.end.as_deref() else {
+        return Err(Error::InvalidInput(format!(
+            "{context} expand requires an `end`: RFC 4791 §9.6.5 makes both \
+             start and end mandatory on <C:expand>"
+        )));
+    };
+    validate_utc_datetime(end, &format!("{context} expand end"))?;
+    validate_time_range_order(&format!("{context} expand"), &tr.start, end)
 }
 
 /// Extract `FreeBusyPeriod`s from the `FREEBUSY` properties of a `VFREEBUSY`
@@ -880,6 +950,7 @@ pub fn map_sync_response(
             })
             .collect(),
         truncated,
+        resynced: false,
     }
 }
 

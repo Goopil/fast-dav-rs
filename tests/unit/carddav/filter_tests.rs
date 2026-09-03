@@ -216,6 +216,19 @@ fn carddav_filter_is_not_defined() {
 }
 
 #[test]
+fn carddav_filter_is_not_defined_excludes_param_filters() {
+    // RFC 6352 §10.5.1: is-not-defined is exclusive — the text-match child
+    // and any param-filter children must not be serialized.
+    let filter = CardDavFilter::new("NICKNAME", "ignored")
+        .with_param_filters(vec![ParamFilter::not_defined("TYPE")])
+        .with_is_not_defined(true);
+    let xml = filter.to_filter_xml();
+    assert!(xml.contains("<C:is-not-defined/>"));
+    assert!(!xml.contains("text-match"));
+    assert!(!xml.contains("param-filter"));
+}
+
+#[test]
 fn carddav_filter_negate() {
     let filter = CardDavFilter::new("EMAIL", "spam@example.com").with_negate(true);
     let xml = filter.to_filter_xml();

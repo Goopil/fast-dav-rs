@@ -111,7 +111,7 @@ async fn webdav_sync_collection_resilient_recovers_from_410_gone() {
     .await;
     let client = make_client(&base);
 
-    let (headers, items, token) = client
+    let (headers, items, token, resynced) = client
         .sync_collection_resilient(
             "cal/",
             Some("http://example.com/sync/stale"),
@@ -126,6 +126,7 @@ async fn webdav_sync_collection_resilient_recovers_from_410_gone() {
     assert_eq!(items.len(), 2);
     assert_eq!(token.as_deref(), Some("http://example.com/sync/2"));
     assert!(headers.get("Sync-Token").is_none());
+    assert!(resynced, "a 410-triggered initial sync must be flagged");
 
     let reqs = captured.lock().unwrap();
     assert_eq!(
@@ -147,6 +148,94 @@ async fn webdav_sync_collection_resilient_recovers_from_410_gone() {
         second.contains("<D:sync-token/>"),
         "retry must be an initial sync with an empty token: {second}"
     );
+}
+
+#[tokio::test]
+async fn webdav_sync_collection_resilient_resyncs_on_403_valid_sync_token() {
+    const VALID_SYNC_TOKEN_BODY: &str = r#"<?xml version="1.0"?>
+<D:error xmlns:D="DAV:">
+  <D:valid-sync-token/>
+</D:error>
+"#;
+    let forbidden_head = format!(
+        "HTTP/1.1 403 Forbidden\r\nContent-Type: application/xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        VALID_SYNC_TOKEN_BODY.len()
+    );
+
+    let ok_head = crate::common::http_helpers::response_head("", INITIAL_SYNC_BODY.len());
+    let (base, captured) = crate::common::http_helpers::serve_sequence(vec![
+        (forbidden_head, VALID_SYNC_TOKEN_BODY.as_bytes().to_vec()),
+        (ok_head, INITIAL_SYNC_BODY.as_bytes().to_vec()),
+    ])
+    .await;
+    let client = make_client(&base);
+
+    let (_, items, token, resynced) = client
+        .sync_collection_resilient(
+            "cal/",
+            Some("http://example.com/sync/stale"),
+            None,
+            false,
+            "urn:ietf:params:xml:ns:caldav",
+            "calendar-data",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(items.len(), 2);
+    assert_eq!(token.as_deref(), Some("http://example.com/sync/2"));
+    assert!(
+        resynced,
+        "403 + valid-sync-token must be treated as a stale token (RFC 6578 §3.2)"
+    );
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 2, "the stale signal must trigger one retry");
+    let second = String::from_utf8_lossy(&reqs[1]);
+    assert!(
+        second.contains("<D:sync-token/>"),
+        "retry must be an initial sync with an empty token: {second}"
+    );
+}
+
+#[tokio::test]
+async fn webdav_sync_collection_resilient_propagates_403_without_valid_sync_token() {
+    const OTHER_PRECONDITION_BODY: &str = r#"<?xml version="1.0"?>
+<D:error xmlns:D="DAV:">
+  <D:need-privileges/>
+</D:error>
+"#;
+    let forbidden_head = format!(
+        "HTTP/1.1 403 Forbidden\r\nContent-Type: application/xml; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        OTHER_PRECONDITION_BODY.len()
+    );
+
+    let (base, captured) = crate::common::http_helpers::serve_sequence(vec![(
+        forbidden_head,
+        OTHER_PRECONDITION_BODY.as_bytes().to_vec(),
+    )])
+    .await;
+    let client = make_client(&base);
+
+    let err = client
+        .sync_collection_resilient(
+            "cal/",
+            Some("http://example.com/sync/t"),
+            None,
+            false,
+            "urn:ietf:params:xml:ns:caldav",
+            "calendar-data",
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, Error::UnexpectedStatus { status, .. } if status == StatusCode::FORBIDDEN),
+        "a 403 without valid-sync-token is not a stale signal: {err}"
+    );
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 1, "no retry for a plain 403");
 }
 
 #[tokio::test]
@@ -185,7 +274,7 @@ async fn webdav_sync_collection_resilient_does_not_retry_on_success() {
             .await;
     let client = make_client(&base);
 
-    let (_, items, token) = client
+    let (_, items, token, resynced) = client
         .sync_collection_resilient(
             "cal/",
             Some("http://example.com/sync/fresh"),
@@ -199,6 +288,7 @@ async fn webdav_sync_collection_resilient_does_not_retry_on_success() {
 
     assert_eq!(items.len(), 2);
     assert_eq!(token.as_deref(), Some("http://example.com/sync/2"));
+    assert!(!resynced, "a successful incremental sync is not a resync");
 
     let guard = captured.lock().unwrap();
     let req = String::from_utf8_lossy(&guard);

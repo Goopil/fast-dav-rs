@@ -1,6 +1,6 @@
-use fast_dav_rs::webdav::client::{resolve_location, same_origin};
+use fast_dav_rs::webdav::client::{is_https_to_http_downgrade, resolve_location, same_origin};
 use fast_dav_rs::{Error, WebDavClient};
-use hyper::{HeaderMap, Method};
+use hyper::{HeaderMap, Method, header};
 
 const REDIRECT_302: &str =
     "HTTP/1.1 302 Found\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -42,6 +42,94 @@ fn resolve_location_variants() {
 }
 
 #[test]
+fn resolve_location_rfc3986_5_4_merge_and_dot_segment_matrix() {
+    // RFC 3986 §5.4.1 normal examples, base = "http://a/b/c/d;p?q".
+    let base: hyper::Uri = "http://a/b/c/d;p?q".parse().unwrap();
+    let r = |loc: &str| resolve_location(&base, loc).unwrap().to_string();
+
+    assert_eq!(r("g"), "http://a/b/c/g");
+    assert_eq!(r("./g"), "http://a/b/c/g");
+    assert_eq!(r("g/"), "http://a/b/c/g/");
+    assert_eq!(r("/g"), "http://a/g");
+    assert_eq!(r("?y"), "http://a/b/c/d;p?y");
+    assert_eq!(r("g?y"), "http://a/b/c/g?y");
+    assert_eq!(r("g?y#s"), "http://a/b/c/g?y");
+    // An empty reference keeps the base path (the base query is not
+    // inherited — pre-existing behavior outside issue #139's scope).
+    assert_eq!(r(""), "http://a/b/c/d;p");
+    assert_eq!(r("."), "http://a/b/c/");
+    assert_eq!(r("./"), "http://a/b/c/");
+    assert_eq!(r(".."), "http://a/b/");
+    assert_eq!(r("../"), "http://a/b/");
+    assert_eq!(r("../g"), "http://a/b/g");
+    assert_eq!(r("../.."), "http://a/");
+    assert_eq!(r("../../"), "http://a/");
+    assert_eq!(r("../../g"), "http://a/g");
+
+    // §5.4.2 abnormal examples: climbing past the root is ignored.
+    assert_eq!(r("../../../g"), "http://a/g");
+    assert_eq!(r("../../../../g"), "http://a/g");
+    assert_eq!(r("/./g"), "http://a/g");
+    assert_eq!(r("/../g"), "http://a/g");
+
+    // Dot-segments must be removed wherever they appear.
+    assert_eq!(r("g."), "http://a/b/c/g.");
+    assert_eq!(r(".g"), "http://a/b/c/.g");
+    assert_eq!(r("g.."), "http://a/b/c/g..");
+    assert_eq!(r("./../g"), "http://a/b/g");
+    assert_eq!(r("./g."), "http://a/b/c/g.");
+    assert_eq!(r("g/./h"), "http://a/b/c/g/h");
+    assert_eq!(r("g/../h"), "http://a/b/c/h");
+    assert_eq!(r("g;x=1/./y"), "http://a/b/c/g;x=1/y");
+    assert_eq!(r("g;x=1/../y"), "http://a/b/c/y");
+    assert_eq!(r("g?y/./x"), "http://a/b/c/g?y/./x");
+    assert_eq!(r("g?y/../x"), "http://a/b/c/g?y/../x");
+    assert_eq!(r("g#s/./x"), "http://a/b/c/g");
+
+    // Empty segments are not dot-segments: internal `//` is preserved.
+    assert_eq!(r("/a//b/../c"), "http://a/a//c");
+}
+
+#[test]
+fn resolve_location_dot_segments_in_issue_scenario() {
+    // Issue #139: `Location: ../caldav/` from `/.well-known/caldav` must
+    // resolve to `/caldav/`, not the literal `/.well-known/../caldav/`.
+    let base: hyper::Uri = "http://h.example/.well-known/caldav".parse().unwrap();
+    let u = resolve_location(&base, "../caldav/").unwrap();
+    assert_eq!(u.to_string(), "http://h.example/caldav/");
+}
+
+#[test]
+fn resolve_location_network_path_reference() {
+    // RFC 3986 §4.2: `//host/path` keeps the current scheme.
+    let http: hyper::Uri = "http://127.0.0.1:9000/base/".parse().unwrap();
+    let u = resolve_location(&http, "//mirror.example.com/dav/").unwrap();
+    assert_eq!(u.to_string(), "http://mirror.example.com/dav/");
+
+    let https: hyper::Uri = "https://dav.example/dav/".parse().unwrap();
+    let u = resolve_location(&https, "//mirror.example.com/dav/").unwrap();
+    assert_eq!(u.to_string(), "https://mirror.example.com/dav/");
+}
+
+#[test]
+fn resolve_location_uppercase_scheme_is_absolute() {
+    // RFC 3986 §3.1: the scheme is case-insensitive.
+    let base: hyper::Uri = "http://127.0.0.1:9000/base/".parse().unwrap();
+    let u = resolve_location(&base, "HTTPS://Other.Example.com/x").unwrap();
+    assert_eq!(
+        u.scheme_str(),
+        Some("https"),
+        "Uri canonicalizes the scheme"
+    );
+    assert_eq!(u.host(), Some("Other.Example.com"));
+    assert_eq!(u.path(), "/x");
+
+    let u = resolve_location(&base, "Http://other.example.com/y").unwrap();
+    assert_eq!(u.scheme_str(), Some("http"));
+    assert_eq!(u.path(), "/y");
+}
+
+#[test]
 fn resolve_location_unresolvable_returns_none() {
     let base: hyper::Uri = "http://127.0.0.1:9000/base/".parse().unwrap();
 
@@ -51,6 +139,36 @@ fn resolve_location_unresolvable_returns_none() {
     // Scheme-less current URI has nothing to resolve against.
     let schemeless: hyper::Uri = "/onlypath".parse().unwrap();
     assert!(resolve_location(&schemeless, "/x").is_none());
+    // …including for network-path references, which need the scheme.
+    assert!(resolve_location(&schemeless, "//mirror/x").is_none());
+}
+
+#[test]
+fn same_origin_host_comparison_is_case_insensitive() {
+    let upper: hyper::Uri = "http://H.Example/".parse().unwrap();
+    let lower: hyper::Uri = "http://h.example/".parse().unwrap();
+    assert!(
+        same_origin(&upper, &lower),
+        "host is case-insensitive (RFC 3986 §3.2.2): credentials must survive"
+    );
+    assert!(same_origin(&lower, &upper));
+
+    let other: hyper::Uri = "http://a.example/".parse().unwrap();
+    assert!(!same_origin(&upper, &other));
+}
+
+#[test]
+fn https_to_http_downgrade_is_detected() {
+    let https: hyper::Uri = "https://dav.example/a".parse().unwrap();
+    let http: hyper::Uri = "http://dav.example/a".parse().unwrap();
+    let https_other_path: hyper::Uri = "https://dav.example/b".parse().unwrap();
+
+    assert!(is_https_to_http_downgrade(&https, &http));
+    assert!(!is_https_to_http_downgrade(&https, &https_other_path));
+    assert!(
+        !is_https_to_http_downgrade(&http, &http),
+        "http→http is not a downgrade"
+    );
 }
 
 #[test]
@@ -248,6 +366,49 @@ async fn redirect_cross_origin_strips_authorization() {
     assert!(
         !second.to_ascii_lowercase().contains("cookie:"),
         "cookies must be stripped on cross-origin redirects: {second}"
+    );
+}
+
+#[tokio::test]
+async fn redirect_cross_origin_strips_conditional_headers() {
+    // Destination server: answers 200 and captures the redirected request.
+    let ok_body = b"ok".to_vec();
+    let (target_base, captured_b) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", ok_body.len()),
+        ok_body,
+    )
+    .await;
+
+    // Origin server: redirects (absolute URL) to the destination server.
+    let location = format!("{target_base}target");
+    let (origin_base, _captured_a) = crate::common::http_helpers::serve_capture(
+        redirect_head(REDIRECT_302, &location),
+        Vec::new(),
+    )
+    .await;
+
+    let client = WebDavClient::builder(&origin_base).build().unwrap();
+    client.set_request_compression_mode(fast_dav_rs::RequestCompressionMode::Disabled);
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::IF_MATCH, "\"v1\"".parse().unwrap());
+    headers.insert(header::IF_NONE_MATCH, "\"v2\"".parse().unwrap());
+
+    let resp = client
+        .send(Method::GET, "", headers, None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let guard = captured_b.lock().unwrap();
+    let second = String::from_utf8_lossy(&guard);
+    assert!(
+        !second.to_ascii_lowercase().contains("if-match:"),
+        "If-Match must not leak across origins (RFC 9110 §13.1.1): {second}"
+    );
+    assert!(
+        !second.to_ascii_lowercase().contains("if-none-match:"),
+        "If-None-Match must not leak across origins (RFC 9110 §13.1.1): {second}"
     );
 }
 
