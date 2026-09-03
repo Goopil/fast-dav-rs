@@ -1,5 +1,6 @@
 use fast_dav_rs::webdav::retry::{
     backoff_delay, is_idempotent_method, is_retryable_status, parse_http_date, retry_after_delay,
+    retry_delay,
 };
 use fast_dav_rs::{RequestCompressionMode, WebDavClient};
 use hyper::{HeaderMap, Method};
@@ -128,6 +129,78 @@ fn retry_after_http_date_is_parsed() {
     assert_eq!(parse_http_date("32 Jan 2020 00:00:00 GMT"), None);
     assert_eq!(parse_http_date("06 Xyz 2020 00:00:00 GMT"), None);
     assert_eq!(parse_http_date("06 Nov 2020 25:00:00 GMT"), None);
+}
+
+// ---------------------------------------------------------------------------
+// Retry delay policy (`retry_delay`)
+// ---------------------------------------------------------------------------
+
+fn retry_after_headers(value: &str) -> HeaderMap {
+    HeaderMap::from_iter([(
+        hyper::header::RETRY_AFTER,
+        hyper::header::HeaderValue::from_str(value).unwrap(),
+    )])
+}
+
+#[test]
+fn retry_delay_honors_small_retry_after_on_429_503_504() {
+    let headers = retry_after_headers("5");
+    for code in [429u16, 503, 504] {
+        let status = hyper::StatusCode::from_u16(code).unwrap();
+        assert_eq!(
+            retry_delay(
+                status,
+                &headers,
+                3,
+                Duration::from_millis(250),
+                Duration::from_secs(8)
+            ),
+            Duration::from_secs(5),
+            "{code} must honor a small Retry-After"
+        );
+    }
+}
+
+#[test]
+fn retry_delay_clamps_huge_retry_after_to_backoff_cap() {
+    let cap = Duration::from_secs(8);
+    let far_future = (chrono::Utc::now() + chrono::Duration::seconds(86_400 * 365 * 10))
+        .format("%a, %d %b %Y %H:%M:%S GMT")
+        .to_string();
+    for value in ["999999999999", &far_future] {
+        let headers = retry_after_headers(value);
+        for code in [429u16, 503, 504] {
+            let status = hyper::StatusCode::from_u16(code).unwrap();
+            assert_eq!(
+                retry_delay(status, &headers, 0, Duration::from_millis(250), cap),
+                cap,
+                "{code} must clamp a huge Retry-After ({value}) to the cap"
+            );
+        }
+    }
+}
+
+#[test]
+fn retry_delay_falls_back_to_backoff_without_usable_retry_after() {
+    let absent = HeaderMap::new();
+    let unparseable = retry_after_headers("soon");
+    for headers in [&absent, &unparseable] {
+        for code in [429u16, 503, 504] {
+            let status = hyper::StatusCode::from_u16(code).unwrap();
+            // attempt 1 → 500 ms base, ±25 % jitter.
+            let delay = retry_delay(
+                status,
+                headers,
+                1,
+                Duration::from_millis(250),
+                Duration::from_secs(8),
+            );
+            assert!(
+                delay >= Duration::from_millis(375) && delay <= Duration::from_millis(625),
+                "{code} must fall back to backoff with {headers:?}, got {delay:?}"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

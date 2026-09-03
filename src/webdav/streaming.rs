@@ -1,6 +1,6 @@
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{normalize_etag, normalize_sync_token};
-use crate::webdav::types::{DavItemCommon, LockInfo, LockScope, PropStat, WebDavError};
+use crate::webdav::types::{DavItemCommon, Depth, LockInfo, LockScope, PropStat, WebDavError};
 use crate::{Error, Result};
 use quick_xml::escape::unescape;
 use std::time::Duration;
@@ -915,18 +915,29 @@ pub(crate) fn parse_lock_timeout(value: &str) -> Option<u64> {
     })
 }
 
+/// Parse a `<D:depth>` value (RFC 4918 §14.3): `"0"`, `"1"`, or `"infinity"`.
+/// Anything else (including absent) yields `None`.
+fn parse_lock_depth(value: &str) -> Option<Depth> {
+    match value {
+        "0" => Some(Depth::Zero),
+        "1" => Some(Depth::One),
+        "infinity" => Some(Depth::Infinity),
+        _ => None,
+    }
+}
+
 /// Parse the first `<D:activelock>` of a `<D:lockdiscovery>` body (RFC 4918
 /// §14.1) into a [`LockInfo`].
 ///
 /// Lenient by design: missing `<D:locktoken>`, `<D:timeout>`,
-/// `<D:lockscope>`, and `<D:owner>` elements leave the corresponding
-/// [`LockInfo`] fields empty or `None` rather than failing. A body without
-/// any `<D:activelock>` (or an empty body) yields a default (empty)
-/// [`LockInfo`]. Useful on `LOCK` responses and on `PROPFIND` responses that
-/// request the `lockdiscovery` property (RFC 4918 §8.10.9).
+/// `<D:lockscope>`, `<D:owner>`, `<D:lockroot>`, and `<D:depth>` elements
+/// leave the corresponding [`LockInfo`] fields empty or `None` rather than
+/// failing. A body without any `<D:activelock>` (or an empty body) yields a
+/// default (empty) [`LockInfo`]. Useful on `LOCK` responses and on `PROPFIND`
+/// responses that request the `lockdiscovery` property (RFC 4918 §8.10.9).
 ///
 /// ```
-/// use fast_dav_rs::webdav::{LockScope, parse_lock_discovery_bytes};
+/// use fast_dav_rs::webdav::{Depth, LockScope, parse_lock_discovery_bytes};
 ///
 /// let xml = br#"<D:prop xmlns:D="DAV:">
 ///   <D:lockdiscovery>
@@ -935,6 +946,8 @@ pub(crate) fn parse_lock_timeout(value: &str) -> Option<u64> {
 ///       <D:owner><D:href>https://example.com/alice</D:href></D:owner>
 ///       <D:timeout>Second-300</D:timeout>
 ///       <D:locktoken><D:href>opaquelocktoken:abc</D:href></D:locktoken>
+///       <D:lockroot><D:href>https://example.com/docs/plan.txt</D:href></D:lockroot>
+///       <D:depth>0</D:depth>
 ///     </D:activelock>
 ///   </D:lockdiscovery>
 /// </D:prop>"#;
@@ -943,6 +956,11 @@ pub(crate) fn parse_lock_timeout(value: &str) -> Option<u64> {
 /// assert_eq!(lock.timeout_secs, Some(300));
 /// assert_eq!(lock.scope, Some(LockScope::Exclusive));
 /// assert_eq!(lock.owner.as_deref(), Some("https://example.com/alice"));
+/// assert_eq!(
+///     lock.lockroot.as_deref(),
+///     Some("https://example.com/docs/plan.txt")
+/// );
+/// assert_eq!(lock.depth, Some(Depth::Zero));
 /// ```
 pub fn parse_lock_discovery_bytes(body: &[u8]) -> Result<LockInfo> {
     use quick_xml::Reader;
@@ -1001,6 +1019,8 @@ pub fn parse_lock_discovery_bytes(body: &[u8]) -> Result<LockInfo> {
                 if in_activelock(&stack) {
                     if local.eq_ignore_ascii_case(b"timeout") {
                         info.timeout_secs = parse_lock_timeout(text.trim());
+                    } else if local.eq_ignore_ascii_case(b"depth") {
+                        info.depth = parse_lock_depth(text.trim());
                     } else if local.eq_ignore_ascii_case(b"href") {
                         if stack
                             .iter()
@@ -1013,6 +1033,16 @@ pub fn parse_lock_discovery_bytes(body: &[u8]) -> Result<LockInfo> {
                                 None
                             } else {
                                 Some(owner.to_string())
+                            };
+                        } else if stack
+                            .iter()
+                            .any(|name| name.eq_ignore_ascii_case(b"lockroot"))
+                        {
+                            let lockroot = text.trim();
+                            info.lockroot = if lockroot.is_empty() {
+                                None
+                            } else {
+                                Some(lockroot.to_string())
                             };
                         }
                     } else if local.eq_ignore_ascii_case(b"locktoken") && info.token.is_empty() {

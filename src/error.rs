@@ -1,3 +1,4 @@
+use crate::webdav::WebDavError;
 use hyper::StatusCode;
 use std::time::Duration;
 
@@ -192,6 +193,26 @@ pub enum Error {
         operation: Operation,
         /// The status returned by the server.
         status: StatusCode,
+    },
+
+    /// A DAV operation returned an unexpected HTTP status with a `<D:error>`
+    /// body identifying the failed precondition/postcondition
+    /// (RFC 4918 §16, §14.12).
+    ///
+    /// Returned by the locking API (`LOCK`/`UNLOCK`) when the server reports
+    /// e.g. `423 Locked` with `<D:no-conflicting-lock/>`. Bodies without a
+    /// `<D:error>` element keep surfacing as [`Error::UnexpectedStatus`].
+    #[error("{operation} failed with {status}: {dav}")]
+    #[non_exhaustive]
+    UnexpectedStatusWithDav {
+        /// The operation that failed.
+        operation: Operation,
+        /// The status returned by the server.
+        status: StatusCode,
+        /// The parsed `<D:error>` body (RFC 4918 §14.12); inspect
+        /// `precondition_code` for the failed precondition (e.g.
+        /// `no-conflicting-lock`).
+        dav: WebDavError,
     },
 
     /// A request phase exceeded its configured time limit.

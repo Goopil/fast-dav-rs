@@ -235,11 +235,15 @@ async fn unreachable_server_returns_errors_from_all_verbs() {
         .propfind_many(vec!["a".into(), "b".into()], Depth::One, body.clone(), 2)
         .await;
     assert!(results.iter().all(|b| b.result.is_err()));
+    assert_eq!(results[0].pub_path, "a");
+    assert_eq!(results[0].hrefs, vec!["a".to_string()]);
+    assert_eq!(results[1].hrefs, vec!["b".to_string()]);
 
     let results = client
         .report_many(vec!["a".into()], Depth::One, body, 1)
         .await;
     assert!(results.iter().all(|b| b.result.is_err()));
+    assert_eq!(results[0].hrefs, vec!["a".to_string()]);
 }
 
 #[tokio::test]

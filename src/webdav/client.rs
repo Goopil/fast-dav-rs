@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::{StreamExt, stream::FuturesOrdered};
 use http_body_util::Full;
-use hyper::body::Incoming;
+use hyper::body::{Body as _, Incoming};
 use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
 use parking_lot::RwLock;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
@@ -31,10 +31,12 @@ use crate::{Error, Operation, Result};
 /// Strategy for compressing outgoing request bodies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RequestCompressionMode {
-    /// Negotiate automatically: attempt gzip on first use, honor the server's advertised
-    /// `Accept-Encoding` preference on success, and cache the result; fall back to identity
-    /// on 415/501. A transient probe failure (transport error, timeout, other non-success
-    /// status) is not cached — the next body-carrying request re-probes, while the current
+    /// Negotiate automatically: attempt gzip on first use and cache only what
+    /// the probe proved — gzip when the server's advertised `Accept-Encoding`
+    /// preference names it, `Identity` otherwise (including when the probe
+    /// meets a redirect); fall back to identity on 415/501. A transient probe
+    /// failure (transport error, timeout, other non-success status) is not
+    /// cached — the next body-carrying request re-probes, while the current
     /// request proceeds uncompressed.
     #[default]
     Auto,
@@ -153,6 +155,15 @@ pub fn normalize_sync_token(token: &str) -> String {
     token.trim().trim_matches('"').to_string()
 }
 
+/// Split a successful sync-collection response into its raw parts
+/// (headers, multistatus items, sync token).
+fn parse_sync_response(resp: Response<Bytes>) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
+    let headers = resp.headers().clone();
+    let body = resp.into_body();
+    let parsed = crate::webdav::streaming::parse_multistatus_bytes(&body)?;
+    Ok((headers, parsed.items, parsed.sync_token))
+}
+
 /// Extract the `ETag` from a response header map, if present.
 ///
 /// The returned value is **normalized**: surrounding double quotes are
@@ -229,6 +240,22 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
 /// `/` separators are preserved, already-valid `%XX` sequences are kept
 /// verbatim, bare `%` becomes `%25`, and everything in
 /// [`PATH_SEGMENT_ENCODE_SET`] (plus non-ASCII bytes) is percent-encoded.
+/// In particular `?` and `#` are encoded, so a resource name can never
+/// leak into the query or fragment position.
+///
+/// # `%XX` escapes are kept verbatim — know what you pass
+///
+/// Already-valid escapes are **never decoded or re-encoded**: the caller is
+/// expected to pass either raw text or a correctly pre-encoded path. A
+/// literal `%41` in the input therefore still addresses `A` on the server —
+/// this crate does not rewrite existing escapes, so passing pre-encoded
+/// input addresses exactly the resource named by the encoded form.
+///
+/// ```
+/// # use fast_dav_rs::webdav::client::encode_path_segments;
+/// assert_eq!(encode_path_segments("a%41b.txt"), "a%41b.txt");
+/// assert_eq!(encode_path_segments("report?q.ics"), "report%3Fq.ics");
+/// ```
 #[doc(hidden)]
 pub fn encode_path_segments(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
@@ -255,6 +282,10 @@ fn is_redirect_status(status: StatusCode) -> bool {
 }
 
 /// Compare the origins (scheme + host + effective port) of two URIs.
+///
+/// The host comparison is ASCII-case-insensitive (RFC 3986 §3.2.2: host
+/// names are case-insensitive; `Uri` hosts are already punycode/ASCII), so
+/// a redirect that merely re-cases the host stays same-origin.
 #[doc(hidden)]
 pub fn same_origin(a: &Uri, b: &Uri) -> bool {
     let effective_port = |u: &Uri| {
@@ -264,20 +295,37 @@ pub fn same_origin(a: &Uri, b: &Uri) -> bool {
             _ => 0,
         })
     };
-    a.scheme_str() == b.scheme_str()
-        && a.host() == b.host()
-        && effective_port(a) == effective_port(b)
+    let host = |u: &Uri| u.host().map(str::to_ascii_lowercase);
+    a.scheme_str() == b.scheme_str() && host(a) == host(b) && effective_port(a) == effective_port(b)
 }
 
 /// Resolve a `Location` header value against the URI that produced it.
 ///
-/// Supports absolute URLs, root-relative paths, bare query references, and
-/// relative segment references (merged against the current directory, RFC
-/// 3986 §5). Returns `None` when the reference cannot be resolved.
+/// Supports absolute URLs with case-insensitive schemes (RFC 3986 §3.1 —
+/// `HTTPS://…` is absolute just like `https://…`), network-path references
+/// (`//host/path`, RFC 3986 §4.2 — resolved against the current scheme),
+/// root-relative paths, bare query references, and relative segment
+/// references (merged against the current directory, RFC 3986 §5). The
+/// merged path is normalized with the RFC 3986 §5.2.4 `remove_dot_segments`
+/// algorithm, so the resolved URI never contains `.` or `..` segments
+/// (`../caldav/` against `/.well-known/` yields `/caldav/`). Returns `None`
+/// when the reference cannot be resolved.
 #[doc(hidden)]
 pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
-    if location.starts_with("http://") || location.starts_with("https://") {
-        return location.parse().ok();
+    if let Some((scheme, rest)) = location.split_once(':') {
+        if rest.starts_with("//") && is_uri_scheme(scheme) {
+            // Absolute URL: the `Uri` parser canonicalizes `http`/`https`
+            // schemes to lowercase, so case differences (RFC 3986 §3.1)
+            // need no special handling here.
+            return location.parse().ok();
+        }
+    }
+
+    // Network-path reference (RFC 3986 §4.2): `//host/path` reuses the
+    // current scheme.
+    if location.starts_with("//") {
+        let scheme = current.scheme_str()?;
+        return format!("{scheme}:{location}").parse().ok();
     }
 
     let scheme = current.scheme_str()?;
@@ -289,7 +337,7 @@ pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
         None => (path_q, None),
     };
 
-    let resolved = if path.is_empty() {
+    let merged = if path.is_empty() {
         current.path().to_owned()
     } else if path.starts_with('/') {
         path.to_owned()
@@ -297,6 +345,9 @@ pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
         let dir = current.path().rsplit_once('/').map_or("", |(d, _)| d);
         format!("{dir}/{path}")
     };
+
+    // RFC 3986 §5.2.4: the resolution output must not contain dot-segments.
+    let resolved = remove_dot_segments(&merged);
 
     let path_and_query = match query {
         Some(q) => format!("{resolved}?{q}"),
@@ -309,6 +360,55 @@ pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
         .path_and_query(path_and_query)
         .build()
         .ok()
+}
+
+/// True when `s` is a valid URI scheme (RFC 3986 §3.1): an ASCII letter
+/// followed by ASCII letters, digits, `+`, `-`, or `.`.
+fn is_uri_scheme(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// RFC 3986 §5.2.4 `remove_dot_segments`: collapse `.` and `..` segments.
+///
+/// Empty segments (`//` inside the path) are preserved verbatim — the
+/// algorithm only removes dot-segments. A `..` climbing past the root is
+/// ignored (the leading `/` of an absolute path is never consumed), and a
+/// trailing `.`/`..` keeps the trailing slash (`/a/./` → `/a/`,
+/// `/a/..` → `/`).
+fn remove_dot_segments(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let mut segments: Vec<&str> = Vec::with_capacity(8);
+    let segs: Vec<&str> = path.split('/').collect();
+    let last = segs.len() - 1;
+    for (i, segment) in segs.iter().enumerate() {
+        match *segment {
+            "." => {
+                if i == last {
+                    segments.push("");
+                }
+            }
+            ".." => {
+                if segments.len() > usize::from(absolute) {
+                    segments.pop();
+                }
+                if i == last {
+                    segments.push("");
+                }
+            }
+            other => segments.push(other),
+        }
+    }
+    segments.join("/")
+}
+
+/// True when following `next` would downgrade the connection from HTTPS to
+/// plain HTTP. Such redirects are never followed (RFC 6764 §6 is
+/// TLS-first); the redirect response is returned to the caller instead.
+#[doc(hidden)]
+pub fn is_https_to_http_downgrade(current: &Uri, next: &Uri) -> bool {
+    next.scheme_str() == Some("http") && current.scheme_str() == Some("https")
 }
 
 fn normalize_decompressed_headers(
@@ -504,6 +604,20 @@ impl WebDavClient {
         self.resolve_request_encoding()
     }
 
+    /// Build the full request URI for `path` against the client's base URL.
+    ///
+    /// `path` may be empty, absolute (`/…`), or relative (merged into the
+    /// base path's directory). The whole input is treated as a **path**:
+    /// `?` and `#` inside a resource name are percent-encoded (`%3F` /
+    /// `%23`) so they cannot change resource identity — a query string is
+    /// not part of the path contract. Already-valid `%XX` escapes pass
+    /// through verbatim (see [`encode_path_segments`]). An absolute URL
+    /// (`http://`/`https://…`) is parsed as-is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidUrl`](crate::Error::InvalidUrl) when the
+    /// resulting URI is malformed.
     pub fn build_uri(&self, path: &str) -> Result<Uri> {
         if path.starts_with("http://") || path.starts_with("https://") {
             return path
@@ -518,16 +632,10 @@ impl WebDavClient {
             .map(|pq| pq.path())
             .unwrap_or("/");
 
-        let (path_only, query) = if let Some((p, q)) = path.split_once('?') {
-            (p, Some(q))
-        } else {
-            (path, None)
-        };
-
-        let mut combined = if path_only.is_empty() {
+        let mut combined = if path.is_empty() {
             existing_path.to_string()
-        } else if path_only.starts_with('/') {
-            path_only.to_string()
+        } else if path.starts_with('/') {
+            path.to_string()
         } else {
             let mut base = existing_path.trim_end_matches('/').to_string();
             if base.is_empty() {
@@ -536,7 +644,7 @@ impl WebDavClient {
             if !base.ends_with('/') {
                 base.push('/');
             }
-            base.push_str(path_only);
+            base.push_str(path);
             base
         };
 
@@ -544,19 +652,14 @@ impl WebDavClient {
             combined.push('/');
         }
 
-        // Percent-encode the path (per segment, preserving valid `%XX`);
-        // the query string is forwarded untouched.
+        // Percent-encode the path (per segment, preserving valid `%XX`).
+        // `?` and `#` are encoded too, so a resource name can never be
+        // mistaken for a query or fragment.
         let encoded = encode_path_segments(&combined);
 
-        let path_and_query = if let Some(q) = query {
-            format!("{}?{}", encoded, q)
-                .parse()
-                .map_err(|source| Error::invalid_url(path, source))?
-        } else {
-            encoded
-                .parse()
-                .map_err(|source| Error::invalid_url(path, source))?
-        };
+        let path_and_query = encoded
+            .parse::<hyper::http::uri::PathAndQuery>()
+            .map_err(|source| Error::invalid_url(path, source))?;
 
         parts.path_and_query = Some(path_and_query);
         Uri::from_parts(parts).map_err(|source| Error::invalid_url(path, source))
@@ -585,15 +688,19 @@ impl WebDavClient {
     /// Probe whether the server accepts compressed request bodies.
     ///
     /// Sends a small gzip-compressed `PROPFIND` to the base URL. On success,
-    /// the cached encoding honors the server's advertised `Accept-Encoding`
-    /// preference (q-factors applied, `br` > `zstd` > `gzip`) when present,
-    /// and keeps gzip — proven to work by the probe — otherwise.
+    /// the cached encoding keeps gzip — the only encoding the probe actually
+    /// proved the server accepts — and only when the server's advertised
+    /// `Accept-Encoding` preference names gzip; anything else (including
+    /// `br`/`zstd` picks the header might suggest) is unproven and caches
+    /// `Identity` instead, so later requests cannot fail with `415` on an
+    /// encoding the server never agreed to.
     ///
     /// Returns `true` when a definitive answer was cached (including
-    /// `Identity` when the server advertises no compression support), and
-    /// `false` when the probe failed: nothing is cached then, so the next
-    /// body-carrying request re-probes. The caller sends the current request
-    /// uncompressed in that case.
+    /// `Identity` when the server advertises no compression support, or
+    /// answers the probe with a redirect — see below), and `false` when the
+    /// probe failed: nothing is cached then, so the next body-carrying
+    /// request re-probes. The caller sends the current request uncompressed
+    /// in that case.
     ///
     /// The caller guarantees `Auto` mode and an uncached negotiation (checked
     /// under the probe lock) before invoking this.
@@ -610,6 +717,12 @@ impl WebDavClient {
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/xml; charset=utf-8"),
         );
+        // RFC 9110 §10.1.5: identify like every other request, so
+        // User-Agent-aware servers (throttling, filtering) do not treat the
+        // probe differently from the real pipeline.
+        if let Some(ua) = &self.user_agent {
+            headers.insert(header::USER_AGENT, ua.clone());
+        }
 
         let mut req_builder = Request::builder().method(propfind).uri(uri);
         if let Some(auth) = &self.auth_header {
@@ -639,15 +752,33 @@ impl WebDavClient {
 
         match result {
             Ok(Ok(resp)) if resp.status().is_success() => {
-                // The gzip probe succeeded. Prefer the encoding the server
-                // advertises via `Accept-Encoding`; keep gzip (proven to work
-                // by the probe) when it does not advertise a preference.
-                let negotiated = detect_request_compression_preference(resp.headers())
-                    .unwrap_or(AUTO_DEFAULT_ENCODING);
+                // The gzip probe succeeded. Only cache what was proven:
+                // keep gzip when the server advertises it as its preference,
+                // `Identity` otherwise — an `Accept-Encoding` listing
+                // `br`/`zstd` is not evidence the server accepts them for
+                // request bodies (a later PUT could fail with `415`).
+                let negotiated = match detect_request_compression_preference(resp.headers()) {
+                    Some(ContentEncoding::Gzip) => ContentEncoding::Gzip,
+                    _ => ContentEncoding::Identity,
+                };
                 self.set_negotiated_encoding(Some(negotiated));
                 dav_debug!(
                     encoding = negotiated.as_str(),
                     "request compression probe succeeded"
+                );
+                true
+            }
+            // A 3xx is not transient: the probe deliberately bypasses the
+            // redirect pipeline, and the base URL's redirect is a stable
+            // property of the deployment — leaving the cache empty would
+            // re-pay the same doomed probe before every body-carrying
+            // request. Pin `Identity`, the same steady state requests reach
+            // today (uncompressed), without the per-request tax.
+            Ok(Ok(resp)) if is_redirect_status(resp.status()) => {
+                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
+                dav_debug!(
+                    status = %resp.status(),
+                    "request compression probe hit a redirect; pinning identity"
                 );
                 true
             }
@@ -673,11 +804,13 @@ impl WebDavClient {
             return false;
         };
 
+        // Only a compression-specific rejection (`415`, or `501` for servers
+        // that do not implement the request at all) may disable compression
+        // for the client's lifetime: a `400` can come from an unrelated
+        // malformed body and must not pin `Identity`.
         if matches!(
             status,
-            StatusCode::UNSUPPORTED_MEDIA_TYPE
-                | StatusCode::NOT_IMPLEMENTED
-                | StatusCode::BAD_REQUEST
+            StatusCode::UNSUPPORTED_MEDIA_TYPE | StatusCode::NOT_IMPLEMENTED
         ) {
             self.set_negotiated_encoding(Some(ContentEncoding::Identity));
             dav_debug!(
@@ -691,12 +824,24 @@ impl WebDavClient {
         false
     }
 
+    /// Prepare an outgoing body for sending.
+    ///
+    /// A caller-supplied `Content-Encoding` header means the body is already
+    /// encoded: it is honored as-is — no automatic compression, no probe, and
+    /// the header is forwarded untouched. Otherwise the negotiated request
+    /// encoding is applied (probing first in `Auto` mode when nothing is
+    /// cached yet).
     async fn prepare_request_body(
         &self,
         payload: Bytes,
         headers: &mut HeaderMap,
     ) -> (Bytes, Option<ContentEncoding>) {
-        headers.remove(header::CONTENT_ENCODING);
+        // Re-compressing an already-encoded body would silently corrupt the
+        // payload (double encoding behind a 2xx), so a caller-supplied
+        // `Content-Encoding` skips the automatic path entirely.
+        if headers.contains_key(header::CONTENT_ENCODING) {
+            return (payload, None);
+        }
 
         let mode = *self.request_compression_mode.read();
 
@@ -738,8 +883,12 @@ impl WebDavClient {
     /// Redirect handling (301/302/303/307/308): the request is re-sent to the
     /// `Location` target up to `max_redirects` times. On 303 the method
     /// switches to `GET` and the body is dropped. When a hop crosses origins
-    /// (scheme, host, or port change), `Authorization` and `Cookie` headers
-    /// are stripped for the remainder of the chain.
+    /// (scheme, host, or port change), `Authorization`, `Cookie`,
+    /// `If-Match`, and `If-None-Match` headers are stripped for the
+    /// remainder of the chain. An `https`→`http` downgrade is **never**
+    /// followed (RFC 6764 §6 is TLS-first): the 3xx response is returned
+    /// as-is so the caller can observe it, mirroring the
+    /// unresolvable-`Location` behavior.
     ///
     /// Transient-failure retry (429/503/504): when `max_retries` > 0 and the
     /// method is retryable per the idempotency policy, the request is re-sent
@@ -850,8 +999,9 @@ impl WebDavClient {
                 continue;
             }
 
-            // Transient-failure retry (429/503/504): honor `Retry-After` on
-            // 429, exponential backoff + jitter otherwise. The budget is
+            // Transient-failure retry (429/503/504): honor `Retry-After`
+            // (clamped to the backoff cap), exponential backoff + jitter
+            // otherwise. The budget is
             // shared across the whole redirect chain; exhausted retries fall
             // through and the last response is returned as-is.
             let retryable = is_retryable_status(resp.status())
@@ -905,10 +1055,22 @@ impl WebDavClient {
                 return Ok((uri, resp));
             };
 
+            // Never follow an https→http downgrade (RFC 6764 §6 is
+            // TLS-first): return the 3xx so the caller observes the redirect
+            // instead of silently sending the request — body included —
+            // over plaintext.
+            if is_https_to_http_downgrade(&uri, &next) {
+                return Ok((uri, resp));
+            }
+
             if !strip_credentials && !same_origin(&uri, &next) {
                 strip_credentials = true;
                 base_headers.remove(header::AUTHORIZATION);
                 base_headers.remove(header::COOKIE);
+                // Conditional validators are bound to the origin's resource
+                // (RFC 9110 §13.1.1) and must not leak to a new origin.
+                base_headers.remove(header::IF_MATCH);
+                base_headers.remove(header::IF_NONE_MATCH);
             }
             if resp.status() == StatusCode::SEE_OTHER {
                 method = Method::GET;
@@ -934,14 +1096,30 @@ impl WebDavClient {
     ///
     /// Follows HTTP redirects (301/302/303/307/308) up to the configured
     /// `max_redirects` when `follow_redirects` is enabled; on 303 the request
-    /// is re-sent as `GET` without a body, and `Authorization`/`Cookie`
-    /// headers are stripped when a hop crosses origins. Exceeding the limit
+    /// is re-sent as `GET` without a body, and `Authorization`/`Cookie`/
+    /// `If-Match`/`If-None-Match` headers are stripped when a hop crosses
+    /// origins. An `https`→`http` downgrade is never followed — the 3xx
+    /// response is returned as-is. Exceeding the limit
     /// fails with [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
     ///
     /// Transient failures (`429`/`503`/`504`) are retried up to
     /// `max_retries` times (default 0 = disabled) when the method is
     /// retryable per the idempotency policy; see
     /// [`WebDavClientBuilder::max_retries`](crate::WebDavClientBuilder::max_retries).
+    ///
+    /// # Request body compression
+    ///
+    /// A caller-supplied `Content-Encoding` header is honored as-is: the body
+    /// is forwarded verbatim and automatic compression (and its probe) is
+    /// skipped — the body is assumed to be already encoded. Otherwise the
+    /// negotiated request encoding is applied (see
+    /// [`RequestCompressionMode`](crate::RequestCompressionMode)).
+    ///
+    /// # Response body
+    ///
+    /// The body is decompressed (br/zstd/gzip) when the response carries a
+    /// `Content-Encoding`; empty bodies (e.g. `HEAD`, `204`) are returned
+    /// as-is with their headers untouched.
     pub async fn send(
         &self,
         method: Method,
@@ -953,6 +1131,17 @@ impl WebDavClient {
         let (_, resp) = self
             .build_and_send(method, path, headers, body_bytes, per_req_timeout)
             .await?;
+
+        // RFC 9110 §9.3.2: a `HEAD` response may advertise `Content-Encoding`
+        // while carrying an empty body — feeding that to a decoder fails, and
+        // the header rewrite below would mask the server-reported
+        // `Content-Length`. An empty body needs no decompression, so it is
+        // returned as-is with its headers untouched (covers `HEAD`, `204`,
+        // and `304`).
+        if resp.body().is_end_stream() {
+            let (parts, _) = resp.into_parts();
+            return Ok(Response::from_parts(parts, Bytes::new()));
+        }
 
         let encodings = detect_encodings(resp.headers());
         let (mut parts, body) = resp.into_parts();
@@ -972,6 +1161,23 @@ impl WebDavClient {
     /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
     /// The caller must enforce its own read deadline on the returned body; the
     /// per-request timeout covers headers only.
+    ///
+    /// # Response encoding
+    ///
+    /// The client advertises `Accept-Encoding` on every request
+    /// (RFC 9110 §12.5.3) but does **not** decompress streaming bodies: when
+    /// the server compresses, the returned `Incoming` is still encoded.
+    /// Inspect `Content-Encoding` (e.g. with
+    /// [`detect_encoding`](crate::detect_encoding)) and wrap the body before
+    /// parsing — see the "Streaming Large Responses" example in the crate
+    /// root docs, which passes the detected encoding to
+    /// `parse_multistatus_stream`.
+    ///
+    /// # Request body compression
+    ///
+    /// As in [`send`](Self::send), a caller-supplied `Content-Encoding` is
+    /// honored as-is: the body is forwarded verbatim without automatic
+    /// compression.
     ///
     /// Redirects are followed exactly as in [`send`](Self::send) before the
     /// final response is returned.
@@ -1091,6 +1297,15 @@ impl WebDavClient {
     }
 
     /// Send a WebDAV `COPY` from `src_path` to an absolute `Destination` URL.
+    ///
+    /// `dest_absolute_url` must be an **absolute URI with scheme and
+    /// authority, already percent-encoded** (RFC 4918 §10.3 Simple-ref): the
+    /// value is validated and sent verbatim as the `Destination` header —
+    /// resource names containing spaces, non-ASCII characters, `?`, or `#`
+    /// must be encoded by the caller beforehand (e.g. with
+    /// [`encode_path_segments`]). It is **not** percent-encoded here. Any
+    /// other value fails with [`Error::InvalidInput`](crate::Error::InvalidInput)
+    /// before any network I/O.
     pub async fn copy(
         &self,
         src_path: &str,
@@ -1102,6 +1317,11 @@ impl WebDavClient {
     }
 
     /// Send a WebDAV `MOVE` from `src_path` to an absolute `Destination` URL.
+    ///
+    /// `dest_absolute_url` follows the same contract as
+    /// [`copy`](Self::copy): an absolute, already percent-encoded URI with
+    /// scheme and authority, validated before any network I/O
+    /// ([`Error::InvalidInput`](crate::Error::InvalidInput) otherwise).
     pub async fn r#move(
         &self,
         src_path: &str,
@@ -1119,6 +1339,19 @@ impl WebDavClient {
         dest_absolute_url: &str,
         overwrite: bool,
     ) -> Result<Response<Bytes>> {
+        // RFC 4918 §10.3 Simple-ref: the Destination is an absolute URI.
+        // It is sent verbatim (no percent-encoding here), so reject values
+        // that are not absolute URIs up front.
+        let dest = dest_absolute_url
+            .parse::<Uri>()
+            .map_err(|_| Error::InvalidInput(format!(
+                "Destination must be an absolute, already percent-encoded URI, got {dest_absolute_url:?}"
+            )))?;
+        if dest.scheme_str().is_none() || dest.host().is_none() {
+            return Err(Error::InvalidInput(format!(
+                "Destination must be an absolute URI with scheme and authority, got {dest_absolute_url:?}"
+            )));
+        }
         let mut h = HeaderMap::new();
         h.insert(
             "Destination",
@@ -1215,26 +1448,71 @@ impl WebDavClient {
 
     // ----------- WebDAV locking (RFC 4918 class 2) -----------
 
+    /// Map a non-success response to an error, surfacing a `<D:error>`
+    /// precondition body (RFC 4918 §16, §14.12) when the body carries one.
+    fn status_error(operation: Operation, resp: Response<Bytes>) -> Error {
+        let status = resp.status();
+        match crate::webdav::streaming::parse_error_body(&resp.into_body()) {
+            Ok(dav) if dav.precondition_code.is_some() => Error::UnexpectedStatusWithDav {
+                operation,
+                status,
+                dav,
+            },
+            _ => Error::UnexpectedStatus { operation, status },
+        }
+    }
+
+    /// Reject lock tokens that cannot appear in a Coded-URL (RFC 4918
+    /// §10.5): empty, `<`, `>`, `(`, `)`, or any non-visible-ASCII
+    /// character.
+    fn validate_lock_token(token: &str) -> Result<()> {
+        if token.is_empty() {
+            return Err(Error::InvalidInput(
+                "lock token cannot be empty".to_string(),
+            ));
+        }
+        if !token
+            .chars()
+            .all(|c| c.is_ascii_graphic() && !matches!(c, '<' | '>' | '(' | ')'))
+        {
+            return Err(Error::InvalidInput(format!(
+                "lock token contains characters invalid in a Coded-URL (RFC 4918 §10.5): {token:?}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// `Timeout: Second-N` header value, clamped to `u32::MAX` seconds
+    /// (RFC 4918 §10.7: the value MUST NOT exceed 2^32-1).
+    fn timeout_header_value(secs: u64) -> Result<header::HeaderValue> {
+        Ok(header::HeaderValue::from_str(&format!(
+            "Second-{}",
+            secs.min(u64::from(u32::MAX))
+        ))?)
+    }
+
     /// Shared LOCK pipeline behind [`lock`](Self::lock) and
     /// [`refresh_lock`](Self::refresh_lock): sends the request, maps a
     /// non-success status (including `423 Locked`) to
-    /// [`Error::UnexpectedStatus`], parses the `lockdiscovery`/`activelock`
-    /// response, and fills `timeout_secs` from the `Timeout` response header
-    /// when the body omits `<D:timeout>`.
+    /// [`Error::UnexpectedStatus`] — or [`Error::UnexpectedStatusWithDav`]
+    /// when the body carries a `<D:error>` precondition — parses the
+    /// `lockdiscovery`/`activelock` response, and fills `timeout_secs` from
+    /// the `Timeout` response header when the body omits `<D:timeout>`.
+    /// A successful response without a lock token falls back to
+    /// `fallback_token` (refresh path, RFC 4918 §9.10.2) or fails with
+    /// [`Error::InvalidInput`] when there is none to fall back to.
     async fn lock_request(
         &self,
         path: &str,
         headers: HeaderMap,
         body: Option<Bytes>,
+        fallback_token: Option<&str>,
     ) -> Result<LockInfo> {
         let resp = self
             .send(Method::from_bytes(b"LOCK")?, path, headers, body, None)
             .await?;
         if !resp.status().is_success() {
-            return Err(Error::UnexpectedStatus {
-                operation: Operation::Lock,
-                status: resp.status(),
-            });
+            return Err(Self::status_error(Operation::Lock, resp));
         }
         let header_timeout = resp
             .headers()
@@ -1245,31 +1523,47 @@ impl WebDavClient {
         if info.timeout_secs.is_none() {
             info.timeout_secs = header_timeout;
         }
+        if info.token.is_empty() {
+            match fallback_token {
+                Some(token) if !token.is_empty() => info.token = token.to_string(),
+                _ => {
+                    return Err(Error::InvalidInput(
+                        "server returned no lock token for the LOCK response".to_string(),
+                    ));
+                }
+            }
+        }
         Ok(info)
     }
 
     /// Acquire a WebDAV lock on a resource (RFC 4918 §9.10).
     ///
-    /// Sends `LOCK` with a `Timeout: Second-N` header (when `timeout_secs`
-    /// is given) and a `<D:lockinfo>` body built from `scope` and
+    /// Sends `LOCK` with a `Depth: 0` header (RFC 4918 §9.10.4 — without it
+    /// a collection lock would default to `infinity` and silently lock the
+    /// whole subtree), a `Timeout: Second-N` header (when `timeout_secs` is
+    /// given; the value is clamped to `u32::MAX` seconds per RFC 4918
+    /// §10.7), and a `<D:lockinfo>` body built from `scope` and
     /// `owner_xml`. `owner_xml` is a raw XML fragment inserted inside
     /// `<D:owner>` (e.g. `<D:href>https://example.com/alice</D:href>`) — it
     /// is **not** escaped; escape plain-text owners with
     /// [`escape_xml`](crate::webdav::escape_xml). Pass an empty string to
-    /// omit the `<D:owner>` element. No `Depth` header is sent (resource
-    /// locking; collection locking with `Depth: infinity` is out of scope).
+    /// omit the `<D:owner>` element. Collection locking with
+    /// `Depth: infinity` is out of scope.
     ///
     /// Returns the parsed `<D:activelock>`: the server-assigned lock `token`
     /// (send it in an `If` header on subsequent conditional writes — this
     /// client keeps **no implicit lock state**), the granted `timeout_secs`,
-    /// `scope`, and `owner`.
+    /// `scope`, `owner`, `lockroot`, and `depth`.
     ///
     /// # Errors
     ///
     /// Returns [`Error::UnexpectedStatus`] (operation
     /// [`Operation::Lock`](crate::Operation::Lock)) when the server rejects
     /// the lock — notably `423 Locked` when an incompatible lock already
-    /// exists.
+    /// exists — or [`Error::UnexpectedStatusWithDav`] when the error body
+    /// carries a `<D:error>` precondition (e.g. `no-conflicting-lock`,
+    /// RFC 4918 §16). A 2xx response without a lock token fails with
+    /// [`Error::InvalidInput`] (RFC 4918 §9.10.9).
     ///
     /// # Example
     ///
@@ -1298,11 +1592,9 @@ impl WebDavClient {
         timeout_secs: Option<u64>,
     ) -> Result<LockInfo> {
         let mut h = HeaderMap::new();
+        h.insert("Depth", header::HeaderValue::from_static("0"));
         if let Some(secs) = timeout_secs {
-            h.insert(
-                "Timeout",
-                header::HeaderValue::from_str(&format!("Second-{secs}"))?,
-            );
+            h.insert("Timeout", Self::timeout_header_value(secs)?);
         }
         h.insert(
             header::CONTENT_TYPE,
@@ -1323,22 +1615,28 @@ impl WebDavClient {
             scope.as_str(),
             owner_el,
         );
-        self.lock_request(path, h, Some(Bytes::from(body))).await
+        self.lock_request(path, h, Some(Bytes::from(body)), None)
+            .await
     }
 
     /// Refresh an existing WebDAV lock (RFC 4918 §7.7 / §9.10.7): the `LOCK`
     /// request is re-issued **without a body**, carrying the lock token in an
     /// `If` header and the requested `Timeout` (when `timeout_secs` is
-    /// given). Returns the refreshed `<D:activelock>` — the server may grant
+    /// given; the value is clamped to `u32::MAX` seconds per RFC 4918
+    /// §10.7). Returns the refreshed `<D:activelock>` — the server may grant
     /// a new timeout and may rotate the token, so use the returned `LockInfo`
-    /// afterwards.
+    /// afterwards. A conforming server may omit `<D:locktoken>` on refresh
+    /// (RFC 4918 §9.10.2), in which case the request token is returned
+    /// unchanged.
     ///
     /// # Errors
     ///
     /// Returns [`Error::UnexpectedStatus`] (operation
     /// [`Operation::Lock`](crate::Operation::Lock)) on non-success statuses,
-    /// including `412 Precondition Failed` when the lock no longer exists,
-    /// and [`Error::InvalidInput`] for an empty token.
+    /// [`Error::UnexpectedStatusWithDav`] when the error body carries a
+    /// `<D:error>` precondition, `412 Precondition Failed` when the lock no
+    /// longer exists, and [`Error::InvalidInput`] for an empty token or a
+    /// token containing characters invalid in a Coded-URL (RFC 4918 §10.5).
     ///
     /// # Example
     ///
@@ -1358,23 +1656,16 @@ impl WebDavClient {
         timeout_secs: Option<u64>,
     ) -> Result<LockInfo> {
         let token = token.trim();
-        if token.is_empty() {
-            return Err(Error::InvalidInput(
-                "lock token cannot be empty".to_string(),
-            ));
-        }
+        Self::validate_lock_token(token)?;
         let mut h = HeaderMap::new();
         h.insert(
             "If",
             header::HeaderValue::from_str(&format!("(<{token}>)"))?,
         );
         if let Some(secs) = timeout_secs {
-            h.insert(
-                "Timeout",
-                header::HeaderValue::from_str(&format!("Second-{secs}"))?,
-            );
+            h.insert("Timeout", Self::timeout_header_value(secs)?);
         }
-        self.lock_request(path, h, None).await
+        self.lock_request(path, h, None, Some(token)).await
     }
 
     /// Remove a WebDAV lock (RFC 4918 §9.11): sends `UNLOCK` with the lock
@@ -1386,14 +1677,13 @@ impl WebDavClient {
     /// Returns [`Error::UnexpectedStatus`] (operation
     /// [`Operation::Unlock`](crate::Operation::Unlock)) on non-success
     /// statuses — e.g. `409 Conflict` when the lock token does not match an
-    /// existing lock — and [`Error::InvalidInput`] for an empty token.
+    /// existing lock — [`Error::UnexpectedStatusWithDav`] when the error
+    /// body carries a `<D:error>` precondition, and [`Error::InvalidInput`]
+    /// for an empty token or a token containing characters invalid in a
+    /// Coded-URL (RFC 4918 §10.5).
     pub async fn unlock(&self, path: &str, token: &str) -> Result<()> {
         let token = token.trim();
-        if token.is_empty() {
-            return Err(Error::InvalidInput(
-                "lock token cannot be empty".to_string(),
-            ));
-        }
+        Self::validate_lock_token(token)?;
         let mut h = HeaderMap::new();
         h.insert(
             "Lock-Token",
@@ -1403,10 +1693,7 @@ impl WebDavClient {
             .send(Method::from_bytes(b"UNLOCK")?, path, h, None, None)
             .await?;
         if !resp.status().is_success() {
-            return Err(Error::UnexpectedStatus {
-                operation: Operation::Unlock,
-                status: resp.status(),
-            });
+            return Err(Self::status_error(Operation::Unlock, resp));
         }
         Ok(())
     }
@@ -1451,7 +1738,9 @@ impl WebDavClient {
 
     /// Run many `REPORT`s to the same collection with per-request bodies,
     /// concurrently bounded by a semaphore (same machinery as
-    /// [`Self::report_many`], used by the CalDAV batched multiget).
+    /// [`Self::report_many`], used by the CalDAV batched multiget). Sent with
+    /// `Depth: 0` (multiget REPORTs SHOULD NOT use `Depth: 1`, RFC 4791 §7.9 /
+    /// RFC 6352 §8.7).
     pub(crate) async fn report_many_bodies(
         &self,
         requests: impl IntoIterator<Item = (String, Arc<Bytes>)>,
@@ -1461,7 +1750,7 @@ impl WebDavClient {
             // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"REPORT").unwrap(),
             requests,
-            Depth::One,
+            Depth::Zero,
             max_concurrency,
         )
         .await
@@ -1498,7 +1787,8 @@ impl WebDavClient {
                 );
                 let res = this.send(method, &p, h, Some((*body).clone()), None).await;
                 BatchItem {
-                    pub_path: p,
+                    pub_path: p.clone(),
+                    hrefs: vec![p],
                     result: res,
                 }
             });
@@ -1637,9 +1927,16 @@ impl WebDavClient {
     /// 410-Gone-resilient variant of
     /// [`sync_collection_with_level`](Self::sync_collection_with_level)
     /// (RFC 6578 §3.11): when the server rejects the incremental request
-    /// with `410 Gone` (stale sync token), the report is re-issued with an
-    /// empty sync token (initial sync) and the full result set with the new
-    /// token is returned. Uses [`SyncLevel::One`].
+    /// with `410 Gone` (stale sync token), or with `403 Forbidden` plus the
+    /// `valid-sync-token` precondition (§3.2 alternative stale signal), the
+    /// report is re-issued with an empty sync token (initial sync), the full
+    /// result set with the new token is returned, and the last tuple element
+    /// (`resynced`) is `true`. Uses [`SyncLevel::One`].
+    ///
+    /// A `resynced == true` result is an **initial sync**: per RFC 6578 §3.4
+    /// it MUST NOT report deletions that predate the stale token, so callers
+    /// must rebuild their caches from the returned items instead of applying
+    /// them incrementally.
     ///
     /// Result-set truncation (RFC 6578 §3.6) surfaces as an item with a
     /// `HTTP/1.1 507 Insufficient Storage` status (see
@@ -1649,8 +1946,9 @@ impl WebDavClient {
     ///
     /// # Errors
     ///
-    /// Returns the error of the underlying report; a `410 Gone` triggers one
-    /// retry as an initial sync, and the second failure is returned as-is.
+    /// Returns the error of the underlying report; a `410 Gone` (or a `403`
+    /// with `valid-sync-token`) triggers one retry as an initial sync, and
+    /// the second failure is returned as-is.
     ///
     /// # Example
     ///
@@ -1659,7 +1957,7 @@ impl WebDavClient {
     ///
     /// # async fn run() -> fast_dav_rs::Result<()> {
     /// let client = WebDavClient::new("https://dav.example.com/cal/", None, None)?;
-    /// let (headers, items, sync_token) = client
+    /// let (headers, items, sync_token, resynced) = client
     ///     .sync_collection_resilient(
     ///         "calendars/user/work/",
     ///         Some("http://example.com/sync/stale"),
@@ -1669,7 +1967,11 @@ impl WebDavClient {
     ///         "calendar-data",
     ///     )
     ///     .await?;
-    /// println!("token: {sync_token:?}, items: {}", items.len());
+    /// if resynced {
+    ///     println!("stale token: rebuild caches from {} items", items.len());
+    /// } else {
+    ///     println!("token: {sync_token:?}, items: {}", items.len());
+    /// }
     /// # Ok(())
     /// # }
     /// ```
@@ -1681,7 +1983,7 @@ impl WebDavClient {
         include_data: bool,
         namespace: &str,
         data_element: &str,
-    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
+    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>, bool)> {
         self.sync_collection_resilient_report(path, sync_token, |token| {
             crate::webdav::xml::build_sync_collection_body(
                 token,
@@ -1712,31 +2014,45 @@ impl WebDavClient {
                 status: resp.status(),
             });
         }
-        let headers = resp.headers().clone();
-        let body = resp.into_body();
-        let parsed = crate::webdav::streaming::parse_multistatus_bytes(&body)?;
-        Ok((headers, parsed.items, parsed.sync_token))
+        parse_sync_response(resp)
     }
 
     /// Shared implementation behind `sync_collection_resilient`: issues the
-    /// report built by `build_body(sync_token)`; on `410 Gone` (stale sync
-    /// token, RFC 6578 §3.11) re-issues it once with an empty sync token
-    /// (initial sync). Any other error propagates unchanged.
+    /// report built by `build_body(sync_token)`; on a stale sync token
+    /// (RFC 6578 §3.11: `410 Gone`; §3.2 alternative: `403 Forbidden` +
+    /// `valid-sync-token` precondition) re-issues it once with an empty sync
+    /// token (initial sync) and sets the `resynced` flag. Any other error
+    /// propagates unchanged.
     pub(crate) async fn sync_collection_resilient_report(
         &self,
         path: &str,
         sync_token: Option<&str>,
         build_body: impl Fn(Option<&str>) -> String,
-    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>)> {
-        match self
-            .sync_collection_report(path, &build_body(sync_token))
-            .await
-        {
-            Err(Error::UnexpectedStatus { status, .. }) if status == StatusCode::GONE => {
-                self.sync_collection_report(path, &build_body(None)).await
+    ) -> Result<(HeaderMap, Vec<DavItem>, Option<String>, bool)> {
+        let resp = self
+            .report(path, Depth::Zero, &build_body(sync_token))
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let stale = status == StatusCode::GONE
+                || (status == StatusCode::FORBIDDEN && {
+                    let err =
+                        crate::webdav::streaming::parse_error_body(resp.body()).unwrap_or_default();
+                    err.precondition_code.as_deref() == Some("valid-sync-token")
+                });
+            if !stale {
+                return Err(Error::UnexpectedStatus {
+                    operation: Operation::ReportSyncCollection,
+                    status,
+                });
             }
-            other => other,
+            // Stale token: re-issue once as an initial sync (empty token);
+            // the second failure propagates unchanged.
+            let (headers, items, token) =
+                self.sync_collection_report(path, &build_body(None)).await?;
+            return Ok((headers, items, token, true));
         }
+        parse_sync_response(resp).map(|(headers, items, token)| (headers, items, token, false))
     }
 
     /// Discover the current user's principal URL via `current-user-principal`.
@@ -1762,6 +2078,10 @@ impl WebDavClient {
     }
 
     /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
+    ///
+    /// The body may still be compressed when the server honors the
+    /// `Accept-Encoding` the client advertises: check `Content-Encoding` and
+    /// decode before parsing (see [`send_stream`](Self::send_stream)).
     pub async fn propfind_stream(
         &self,
         path: &str,
@@ -1785,6 +2105,10 @@ impl WebDavClient {
     }
 
     /// Streaming variant of `REPORT`, returning the non-aggregated body.
+    ///
+    /// The body may still be compressed when the server honors the
+    /// `Accept-Encoding` the client advertises: check `Content-Encoding` and
+    /// decode before parsing (see [`send_stream`](Self::send_stream)).
     pub async fn report_stream(
         &self,
         path: &str,
@@ -1868,7 +2192,10 @@ macro_rules! impl_dav_client_delegates {
                 self.webdav.build_uri(path)
             }
 
-            /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
+            /// Generic **aggregated send** with automatic decompression
+            /// (br/zstd/gzip). A caller-supplied `Content-Encoding` on the
+            /// request is honored: the body is sent verbatim without
+            /// automatic compression.
             pub async fn send(
                 &self,
                 method: hyper::Method,
@@ -1885,6 +2212,10 @@ macro_rules! impl_dav_client_delegates {
             /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
             /// The caller must enforce its own read deadline on the returned body; the
             /// per-request timeout covers headers only.
+            ///
+            /// The body may still be encoded when the server compresses: the
+            /// client advertises `Accept-Encoding` but leaves response
+            /// decoding to the caller — see [`WebDavClient::send_stream`].
             pub async fn send_stream(
                 &self,
                 method: hyper::Method,
@@ -2168,6 +2499,10 @@ macro_rules! impl_dav_client_delegates {
             }
 
             /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
+            ///
+            /// The body may still be compressed when the server honors the
+            /// `Accept-Encoding` the client advertises — decode before
+            /// parsing (see [`WebDavClient::send_stream`]).
             pub async fn propfind_stream(
                 &self,
                 path: &str,
@@ -2178,6 +2513,10 @@ macro_rules! impl_dav_client_delegates {
             }
 
             /// Streaming variant of `REPORT`, returning the non-aggregated body.
+            ///
+            /// The body may still be compressed when the server honors the
+            /// `Accept-Encoding` the client advertises — decode before
+            /// parsing (see [`WebDavClient::send_stream`]).
             pub async fn report_stream(
                 &self,
                 path: &str,
@@ -2246,10 +2585,17 @@ macro_rules! impl_dav_client_delegates {
 
             /// 410-Gone-resilient sync-collection (RFC 6578 §3.11): when the
             /// server rejects the incremental request with `410 Gone` (stale
-            /// sync token), the report is automatically re-issued with an
-            /// empty sync token (initial sync) and the full result set with
-            /// the new token is returned. Any other error propagates
-            /// unchanged.
+            /// sync token), or with `403 Forbidden` plus the
+            /// `valid-sync-token` precondition (§3.2 alternative stale
+            /// signal), the report is automatically re-issued with an empty
+            /// sync token (initial sync) and the full result set with the new
+            /// token is returned with the `resynced` field set to `true`.
+            /// Any other error propagates unchanged.
+            ///
+            /// A `resynced == true` response is an **initial sync**: per
+            /// RFC 6578 §3.4 it MUST NOT report deletions that predate the
+            /// stale token, so callers must rebuild their caches from the
+            /// returned items instead of applying them incrementally.
             ///
             /// Result-set truncation (RFC 6578 §3.6) sets `truncated == true`
             /// on the returned sync response; the returned token remains
@@ -2257,9 +2603,9 @@ macro_rules! impl_dav_client_delegates {
             ///
             /// # Errors
             ///
-            /// Returns the error of the underlying report; a `410 Gone`
-            /// triggers one retry as an initial sync, and the second failure
-            /// is returned as-is.
+            /// Returns the error of the underlying report; a `410 Gone` (or
+            /// a `403` with `valid-sync-token`) triggers one retry as an
+            /// initial sync, and the second failure is returned as-is.
             ///
             /// # Example
             ///
@@ -2270,7 +2616,11 @@ macro_rules! impl_dav_client_delegates {
             /// let sync = client
             ///     .sync_collection_resilient("calendars/user/work/", Some("stale-token"), None, true)
             ///     .await?;
-            /// println!("token: {:?}", sync.sync_token);
+            /// if sync.resynced {
+            ///     println!("stale token: rebuild caches from {} items", sync.items.len());
+            /// } else {
+            ///     println!("token: {:?}", sync.sync_token);
+            /// }
             /// # Ok(())
             /// # }
             /// ```
@@ -2281,11 +2631,13 @@ macro_rules! impl_dav_client_delegates {
                 limit: Option<u32>,
                 include_data: bool,
             ) -> $crate::Result<$sync_response> {
-                let (headers, items, token) = self
+                let (headers, items, token, resynced) = self
                     .webdav
                     .sync_collection_resilient(path, sync_token, limit, include_data, $namespace, $data_element)
                     .await?;
-                Ok($map_sync_response(&headers, items, token))
+                let mut response = $map_sync_response(&headers, items, token);
+                response.resynced = resynced;
+                Ok(response)
             }
         }
     };
@@ -2684,11 +3036,13 @@ mod tests {
     }
 
     #[test]
-    fn build_uri_empty_combined_with_query() {
+    fn build_uri_question_mark_is_part_of_the_path() {
+        // Query strings are not part of the path contract: a `?` is a
+        // resource-name character and must not change resource identity.
         let client = make_client("http://127.0.0.1:8080/");
         let uri = client.build_uri("?query").unwrap();
-        assert_eq!(uri.path(), "/");
-        assert_eq!(uri.query().unwrap(), "query");
+        assert_eq!(uri.path(), "/%3Fquery");
+        assert!(uri.query().is_none());
     }
 
     #[test]

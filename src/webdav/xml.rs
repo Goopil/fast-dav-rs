@@ -1,4 +1,4 @@
-use crate::webdav::types::SyncLevel;
+use crate::webdav::types::{Collation, MatchType, SyncLevel};
 use crate::{Error, Result};
 
 pub fn escape_xml(input: &str) -> String {
@@ -155,15 +155,38 @@ pub fn build_sync_collection_body(
     body
 }
 
+/// Render a `<C:text-match>` element.
+///
+/// CalDAV (RFC 4791 §9.7.5) has no `match-type` attribute and defaults the
+/// collation to `i;ascii-casemap`, so with `caldav == true` `match-type` is
+/// never emitted and the `collation` attribute is omitted when it is the
+/// CalDAV default (an explicitly selected non-default collation is still
+/// sent). CardDAV (RFC 6352 §10.4) always carries both attributes.
 pub(crate) fn text_match_xml(
     value: &str,
-    collation: &str,
-    match_type: &str,
+    collation: Collation,
+    match_type: MatchType,
     negate: bool,
+    caldav: bool,
 ) -> String {
     let mut attrs = String::new();
-    attrs.push_str(&format!(" collation=\"{}\"", escape_xml(collation)));
-    attrs.push_str(&format!(" match-type=\"{}\"", escape_xml(match_type)));
+    if caldav {
+        if collation != Collation::AsciiCasemap {
+            attrs.push_str(&format!(
+                " collation=\"{}\"",
+                escape_xml(collation.as_str())
+            ));
+        }
+    } else {
+        attrs.push_str(&format!(
+            " collation=\"{}\"",
+            escape_xml(collation.as_str())
+        ));
+        attrs.push_str(&format!(
+            " match-type=\"{}\"",
+            escape_xml(match_type.as_str())
+        ));
+    }
     if negate {
         attrs.push_str(" negate-condition=\"yes\"");
     }

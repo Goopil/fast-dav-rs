@@ -21,9 +21,12 @@ pub struct CardDavFilter {
     pub match_type: MatchType,
     /// If `true`, the `text-match` condition is negated.
     pub negate: bool,
-    /// Nested `param-filter` elements.
+    /// Nested `param-filter` elements. Ignored (not serialized) when
+    /// `is_not_defined` is set.
     pub param_filters: Vec<ParamFilter>,
-    /// If `true`, matches cards where the property is **absent**.
+    /// If `true`, matches cards where the property is **absent**. Excludes
+    /// the `text-match` child and any `param-filter` children
+    /// (RFC 6352 §10.5.1).
     pub is_not_defined: bool,
 }
 
@@ -73,6 +76,11 @@ impl CardDavFilter {
     }
 
     /// Build the `<C:filter>` XML fragment for an `addressbook-query` REPORT.
+    ///
+    /// Per the RFC 6352 §10.5.1 DTD (`is-not-defined | (text-match?,
+    /// param-filter*)`), when `is_not_defined` is set only
+    /// `<C:is-not-defined/>` is emitted — the `text-match` child and the
+    /// `param-filter` children are dropped.
     pub fn to_filter_xml(&self) -> String {
         let mut prop_inner = String::new();
         if self.is_not_defined {
@@ -85,9 +93,9 @@ impl CardDavFilter {
                 negate: self.negate,
             };
             prop_inner.push_str(&tm.to_xml());
-        }
-        for pf in &self.param_filters {
-            prop_inner.push_str(&pf.to_xml());
+            for pf in &self.param_filters {
+                prop_inner.push_str(&pf.to_xml());
+            }
         }
         format!(
             "<C:filter><C:prop-filter name=\"{}\">{prop_inner}</C:prop-filter></C:filter>",
@@ -148,4 +156,12 @@ pub struct SyncResponse {
     /// `true` when the server truncated the result set (RFC 6578 §3.6, a
     /// `507 Insufficient Storage` status inside the multistatus).
     pub truncated: bool,
+    /// `true` when this response is the result of an initial sync triggered
+    /// by a stale sync token (`410 Gone` per RFC 6578 §3.11, or `403` +
+    /// `valid-sync-token` per §3.2) — i.e. the report was re-issued with an
+    /// empty token. Per RFC 6578 §3.4 such a response MUST NOT report
+    /// deletions that predate the stale token, so callers must rebuild their
+    /// caches from `items` instead of applying them incrementally. Always
+    /// `false` for incremental syncs.
+    pub resynced: bool,
 }
