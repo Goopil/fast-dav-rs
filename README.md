@@ -169,6 +169,43 @@ async fn main() -> Result<()> {
 }
 ```
 
+### Discovery order and principal-404 hardening
+
+`discover_current_user_principal` probes the **authenticated root URL
+directly** — a single credentialed `PROPFIND`, and the primary discovery
+step. The RFC 6764 `.well-known` probes (`discover_caldav` /
+`discover_carddav`) are the fallback for servers that host DAV under a
+context path; some providers answer `.well-known` unreliably.
+
+If authentication succeeds but the principal `PROPFIND` returns `404` (the
+server never answers `401`), discovery fails with `Error::PrincipalNotFound`.
+On some providers this is the signature of a wrong username form — e.g. an
+email address where the provider expects an internal short account ID:
+
+```rust
+use fast_dav_rs::Error;
+
+match client.discover_current_user_principal().await {
+    Err(Error::PrincipalNotFound { url, .. }) => {
+        eprintln!(
+            "auth OK but no principal at {url}: retry with the provider's \
+             canonical account ID"
+        );
+    }
+    other => {
+        other?;
+    }
+}
+```
+
+The `OPTIONS` `DAV:` compliance header (RFC 4918 §10.1) is available as a
+typed view: `WebDavClient::capabilities` parses the header into
+`DavCapabilities`, and `DavCapabilities::compliance()` maps it to
+`DavCompliance` values (`One`, `Two` (locking), `Three`, `AccessControl`,
+`CalendarAccess`, `Addressbook`, `ExtendedMkcol`, `CalendarProxy`), with
+`calendarserver-*` vendor tokens and unknown extensions passing through as
+`DavCompliance::Other`.
+
 ## Error Handling & Migration
 
 Public APIs return `fast_dav_rs::Result<T>`, whose error type is the public
@@ -206,6 +243,7 @@ fn is_retryable(error: &Error) -> bool {
 | `Transport`            | A request was sent but the response stream broke                      |
 | `UnexpectedStatus`     | The server returned an unexpected HTTP status code                    |
 | `UnexpectedStatusWithDav` | Unexpected status with a `<D:error>` body (e.g. `423` + `no-conflicting-lock`) |
+| `PrincipalNotFound`    | Authentication succeeded but `current-user-principal` PROPFIND returned 404 — on some providers the signature of a wrong username form (e.g. email instead of the account ID) |
 | `Timeout`              | An operation exceeded its configured time limit                      |
 | `BodyTooLarge`         | A decompressed response body exceeded the 256 MiB limit              |
 | `Xml`                  | Parsing or decoding XML failed                                        |

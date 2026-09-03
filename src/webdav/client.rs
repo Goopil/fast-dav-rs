@@ -1209,7 +1209,8 @@ impl WebDavClient {
     /// The `DAV` header is a comma-separated list of compliance class tokens
     /// (`1`, `2`, `3`) and optional extension tokens (e.g. `calendar-access`,
     /// `addressbook`). When the server omits the `DAV` header, all flags are
-    /// `false` and `extensions` is empty.
+    /// `false` and `extensions` is empty. For a typed view, see
+    /// [`DavCapabilities::compliance`](crate::webdav::DavCapabilities::compliance).
     ///
     /// # Example
     ///
@@ -2069,9 +2070,25 @@ impl WebDavClient {
         parse_sync_response(resp).map(|(headers, items, token)| (headers, items, token, false))
     }
 
-    /// Discover the current user's principal URL via `current-user-principal`.
+    /// Discover the current user's principal URL via `current-user-principal`
+    /// (RFC 5397 §3), probing the **authenticated root URL directly**. This
+    /// credentialed principal probe is the primary discovery step — the
+    /// `.well-known` helpers
+    /// ([`discover_caldav`](crate::discover_caldav) /
+    /// [`discover_carddav`](crate::discover_carddav)) only resolve the service
+    /// context path (RFC 6764 §5) and are the documented fallback for servers
+    /// that do not host DAV at the root, not a prerequisite.
     ///
     /// Returns `None` if the server omits the property.
+    ///
+    /// # Errors
+    ///
+    /// A `404` answer — with the credentials accepted, since the server never
+    /// returned `401` — surfaces as [`Error::PrincipalNotFound`], not a bare
+    /// [`Error::UnexpectedStatus`]: on some providers this is the signature of
+    /// a wrong username form (e.g. the email address where an internal short
+    /// account ID is expected). Other non-success statuses map to
+    /// [`Error::UnexpectedStatus`] with [`Operation::PropfindCurrentUserPrincipal`].
     pub async fn discover_current_user_principal(&self) -> Result<Option<String>> {
         let body = r#"
 <D:propfind xmlns:D="DAV:">
@@ -2081,6 +2098,12 @@ impl WebDavClient {
 </D:propfind>
 "#;
         let resp = self.propfind("", Depth::Zero, body).await?;
+        if resp.status() == StatusCode::NOT_FOUND {
+            // Auth was accepted (no 401) but no principal exists for this
+            // account: on some providers this is the signature of a wrong
+            // username form (email instead of the internal short account ID).
+            return Err(Error::principal_not_found(self.base()));
+        }
         if !resp.status().is_success() {
             return Err(Error::UnexpectedStatus {
                 operation: Operation::PropfindCurrentUserPrincipal,
