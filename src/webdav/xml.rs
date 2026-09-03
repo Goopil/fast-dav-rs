@@ -158,10 +158,13 @@ pub fn build_sync_collection_body(
 /// Render a `<C:text-match>` element.
 ///
 /// CalDAV (RFC 4791 §9.7.5) has no `match-type` attribute and defaults the
-/// collation to `i;ascii-casemap`, so with `caldav == true` `match-type` is
-/// never emitted and the `collation` attribute is omitted when it is the
-/// CalDAV default (an explicitly selected non-default collation is still
-/// sent). CardDAV (RFC 6352 §10.4) always carries both attributes.
+/// collation to `i;ascii-casemap` (§7.5 only requires servers to support
+/// `i;ascii-casemap` and `i;octet`), so with `caldav == true` neither
+/// attribute is emitted: the enum default `i;unicode-casemap` is treated as
+/// unset, and sending it could be rejected by minimally conforming servers
+/// with a `400 valid-collation` (the enum cannot distinguish an explicitly
+/// selected default). CardDAV (RFC 6352 §10.4) always carries both
+/// attributes.
 pub(crate) fn text_match_xml(
     value: &str,
     collation: Collation,
@@ -170,14 +173,7 @@ pub(crate) fn text_match_xml(
     caldav: bool,
 ) -> String {
     let mut attrs = String::new();
-    if caldav {
-        if collation != Collation::AsciiCasemap {
-            attrs.push_str(&format!(
-                " collation=\"{}\"",
-                escape_xml(collation.as_str())
-            ));
-        }
-    } else {
+    if !caldav {
         attrs.push_str(&format!(
             " collation=\"{}\"",
             escape_xml(collation.as_str())

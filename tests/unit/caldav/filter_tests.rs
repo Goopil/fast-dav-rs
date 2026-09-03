@@ -250,12 +250,15 @@ fn caldav_text_match_omits_match_type_and_default_collation() {
 }
 
 #[test]
-fn caldav_text_match_keeps_explicit_non_default_collation() {
-    // An explicitly selected non-default collation is still sent (without
-    // match-type, which CalDAV does not define).
+fn caldav_text_match_never_emits_collation() {
+    // RFC 4791 §9.7.5 defaults the collation to i;ascii-casemap and §7.5
+    // only requires servers to support i;ascii-casemap/i;octet — the
+    // i;unicode-casemap enum default is treated as unset and never sent
+    // (the enum cannot distinguish an explicitly selected default).
     let xml = PropFilter::new("SUMMARY", TextMatch::new("meeting")).to_xml();
-    assert!(xml.contains("collation=\"i;unicode-casemap\""));
+    assert!(xml.contains("<C:text-match>meeting</C:text-match>"));
     assert!(!xml.contains("match-type"));
+    assert!(!xml.contains("collation"));
 }
 
 #[test]

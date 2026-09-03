@@ -64,10 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new `max_retries(usize)` and `retry_all(bool)` builder options on `WebDavClientBuilder`,
   `CalDavClientBuilder`, and `CardDavClientBuilder` (defaults `0` / `false` — retrying
   disabled, the previous behavior). When enabled, `429`, `503`, and `504` responses are
-  retried in the shared request pipeline: a `429` honors the server's `Retry-After` header
-  (integer seconds or HTTP-date; absent → exponential backoff), while `503`/`504` always
-  use an exponential backoff (base 2, initial ~250 ms, doubling per attempt, capped at
-  ~8 s) with ±25 % jitter (no new dependency). By default only idempotent methods (`GET`,
+  retried in the shared request pipeline: when the server sends a `Retry-After` header
+  (integer seconds or HTTP-date) the honored delay is capped at the backoff ceiling (~8 s);
+  without the header, an exponential backoff is used (base 2, initial ~250 ms, doubling per
+  attempt, capped at ~8 s) with ±25 % jitter (no new dependency). By default only
+  idempotent methods (`GET`,
   `HEAD`, `OPTIONS`, `PROPFIND`, `REPORT`) are retried; `retry_all(true)` extends retrying
   to every method. The retry budget counts every HTTP attempt across the whole redirect
   chain (total attempts = `1 + max_retries`), each attempt runs under the same per-request
@@ -153,6 +154,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Error::UnexpectedStatusWithDav` never carried the failed precondition and
   the `403 valid-sync-token` resilient re-sync never fired against SabreDAV
   (e2e-caught; previously only unit-tested with hand-crafted bodies)
+- CalDAV `text-match` serialization no longer emits `collation="i;unicode-casemap"`
+  (issue #138, roast R14): the CalDAV wire form never carries the attribute —
+  RFC 4791 §9.7.5 defaults it to `i;ascii-casemap` and §7.5 only requires
+  servers to support `i;ascii-casemap`/`i;octet`, so a default query could be
+  rejected by a minimally conforming server with `400 valid-collation`. The
+  enum cannot distinguish an explicitly selected default, so the default
+  `i;unicode-casemap` is treated as unset in CalDAV (CardDAV output is
+  unchanged, RFC 6352 §10.4 always sends both attributes)
+- CardDAV `put_if_match`/`put_if_match_prefer` now derive the `Content-Type`
+  version parameter from the body's `VERSION` property like
+  `put`/`put_if_none_match` (issue #138, roast R16): a conditional write of a
+  vCard 3.0 body no longer sends a lying `version=4.0`
+- `copy`/`move` now reject a `Destination` carrying userinfo **before any
+  network I/O** with `Error::InvalidInput` (RFC 9110 §3.2 — senders MUST NOT
+  generate it) and redact credentials in their validation error messages, so
+  a `Destination` built from user config or discovery output can no longer
+  leak credentials into errors or outgoing headers (roast finding)
 - `send` no longer feeds empty response bodies to a decompressor (issue #142):
   a conforming `HEAD` response may carry `Content-Encoding` with an empty body
   (RFC 9110 §9.3.2), which previously failed with a decoder error; empty
