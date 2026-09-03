@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-03
+
 ### Added
 - Optional `tracing` instrumentation behind the new `tracing` feature
   (issue #91, audit AUDIT-010): with `features = ["tracing"]`, the shared
