@@ -200,3 +200,76 @@ async fn discover_carddav_probes_well_known_carddav_and_resolves() {
         "the probe must target .well-known/carddav (RFC 6764 §5): {req}"
     );
 }
+
+// Provider-A-shaped fixtures (anonymous): the auth layer accepts the
+// credentials — the server never answers 401 — but the
+// `current-user-principal` PROPFIND returns 404. This is the signature of a
+// wrong username form (e.g. an email address where the provider expects an
+// internal short account ID) and must surface as a first-class, actionable
+// error, not a bare `UnexpectedStatus`.
+
+#[tokio::test]
+async fn discover_current_user_principal_404_after_auth_is_principal_not_found() {
+    let (base, captured) = serve_capture(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+        Vec::new(),
+    )
+    .await;
+    let client = WebDavClient::builder(&base)
+        .basic_auth("user@example.com", "app-password")
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+
+    let err = client
+        .discover_current_user_principal()
+        .await
+        .expect_err("404 after successful auth must fail with PrincipalNotFound");
+
+    match &err {
+        Error::PrincipalNotFound { url, .. } => {
+            assert_eq!(url, &base, "the error carries the probed (redacted) URL");
+        }
+        other => panic!("expected Error::PrincipalNotFound, got: {other:?}"),
+    }
+    let msg = err.to_string();
+    assert!(
+        msg.contains("404") && msg.contains("authentication succeeded"),
+        "the message must name the auth-OK-but-404 failure mode: {msg}"
+    );
+    assert!(
+        msg.contains("username form"),
+        "the message must point at the wrong username form cause: {msg}"
+    );
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(
+        req.to_ascii_lowercase().contains("authorization: basic"),
+        "the fixture shape requires credentials attached (auth layer passes, server \
+         still answers 404 — never 401): {req}"
+    );
+    assert!(
+        req.contains("PROPFIND / HTTP/1.1"),
+        "the principal probe targets the authenticated root: {req}"
+    );
+}
+
+#[tokio::test]
+async fn discover_current_user_principal_401_stays_unexpected_status() {
+    // A real credentials rejection must remain distinguishable from the
+    // principal-404-after-auth failure mode.
+    let (base, _captured) = serve_capture(
+        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"dav\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_owned(),
+        Vec::new(),
+    )
+    .await;
+    let client = make_client(&base);
+
+    let err = client.discover_current_user_principal().await.unwrap_err();
+    assert!(
+        matches!(err, Error::UnexpectedStatus { .. }),
+        "401 is an auth failure and must NOT surface as PrincipalNotFound, got: {err:?}"
+    );
+}

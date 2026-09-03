@@ -742,8 +742,8 @@ pub use common::compression::{
 };
 pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
-    DavCapabilities, HyperClient, LockInfo, LockScope, OAuth2RefreshProvider, Prefer, PropStat,
-    RequestCompressionMode, SyncCapability, SyncLevel, TokenProvider, WebDavClient, WebDavError,
-    discover_caldav, discover_carddav, etag_from_headers, normalize_etag, normalize_sync_token,
-    preference_applied_from_headers,
+    DavCapabilities, DavCompliance, HyperClient, LockInfo, LockScope, OAuth2RefreshProvider,
+    Prefer, PropStat, RequestCompressionMode, SyncCapability, SyncLevel, TokenProvider,
+    WebDavClient, WebDavError, discover_caldav, discover_carddav, etag_from_headers,
+    normalize_etag, normalize_sync_token, preference_applied_from_headers,
 };

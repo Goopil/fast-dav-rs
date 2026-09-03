@@ -1,0 +1,24 @@
+services:
+  nextcloud:
+    image: nextcloud:stable-apache
+    container_name: fast-dav-nextcloud
+    ports:
+      - "8083:80"
+    environment:
+      # SQLite keeps the fixture as light as possible; MariaDB is not needed
+      # for DAV interop testing.
+      - SQLITE_DATABASE=nextcloud
+      - NEXTCLOUD_ADMIN_USER=admin
+      - NEXTCLOUD_ADMIN_PASSWORD=admin-password
+      - NEXTCLOUD_TRUSTED_DOMAINS=localhost
+    volumes:
+      - nc_data:/var/www/html
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost/status.php || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 150s
+
+volumes:
+  nc_data:

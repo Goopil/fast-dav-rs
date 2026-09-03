@@ -462,3 +462,19 @@ fn operation_display_covers_all_variants() {
         "REPORT sync-collection"
     );
 }
+
+#[test]
+fn principal_not_found_redacts_userinfo() {
+    let error = Error::principal_not_found("https://user:hunter2@dav.example.com/principals/");
+
+    assert!(matches!(error, Error::PrincipalNotFound { .. }));
+    let msg = error.to_string();
+    assert!(
+        !msg.contains("hunter2"),
+        "credentials embedded in the probed URL must be redacted: {msg}"
+    );
+    assert!(
+        msg.contains("https://***@dav.example.com/principals/"),
+        "the redacted URL should still identify the probed location: {msg}"
+    );
+}

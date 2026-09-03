@@ -13,6 +13,17 @@
 //!
 //! DNS SRV record lookup (RFC 6764 §3/§6 step 2) is not implemented — the
 //! caller supplies the base URL.
+//!
+//! # Discovery order
+//!
+//! For the common authenticated bootstrap, probe the principal at the base
+//! URL first with
+//! [`discover_current_user_principal`](crate::WebDavClient::discover_current_user_principal)
+//! — a single credentialed PROPFIND that works on every RFC-compliant
+//! server, including servers where the `.well-known` URIs are unreliable.
+//! The `.well-known` probes below are the fallback for servers that host
+//! DAV under a context path (they resolve `{base}/.well-known/{service}` →
+//! service URL); their own fallback on a `404` is the base URL (RFC 6764 §6).
 
 use bytes::Bytes;
 use hyper::{HeaderMap, Method, StatusCode, header};

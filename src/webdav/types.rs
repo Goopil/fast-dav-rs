@@ -461,6 +461,114 @@ pub fn parse_dav_header(value: &str) -> Result<DavCapabilities> {
     Ok(caps)
 }
 
+/// A single DAV compliance class or extension advertised by a server,
+/// in typed form.
+///
+/// Typed view over [`DavCapabilities`]: the numeric compliance classes
+/// ([`One`](DavCompliance::One), [`Two`](DavCompliance::Two),
+/// [`Three`](DavCompliance::Three)) and the common extension tokens are
+/// named variants, everything else — `calendarserver-*` vendor tokens and
+/// unknown future extensions — passes through as
+/// [`Other`](DavCompliance::Other) with the token verbatim. Produced by
+/// [`DavCapabilities::compliance`].
+///
+/// ```
+/// use fast_dav_rs::webdav::{DavCompliance, parse_dav_header};
+///
+/// let caps = parse_dav_header("1, 3, extended-mkcol, calendar-access").unwrap();
+/// let classes = caps.compliance();
+/// assert_eq!(classes[0], DavCompliance::One);
+/// assert!(classes.contains(&DavCompliance::ExtendedMkcol));
+/// assert!(classes.contains(&DavCompliance::CalendarAccess));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DavCompliance {
+    /// Class 1 compliance (RFC 4918 baseline WebDAV).
+    One,
+    /// Class 2 compliance (RFC 4918 §5 locking).
+    Two,
+    /// Class 3 compliance (RFC 4918 extended core).
+    Three,
+    /// `access-control` — WebDAV ACL (RFC 3744).
+    AccessControl,
+    /// `calendar-access` — CalDAV (RFC 4791).
+    CalendarAccess,
+    /// `addressbook` — CardDAV (RFC 6352).
+    Addressbook,
+    /// `extended-mkcol` — extended `MKCOL` (RFC 5689).
+    ExtendedMkcol,
+    /// `calendar-proxy` — CalDAV calendar proxy (RFC 6638 companion
+    /// extension; advertised by SabreDAV/CalendarServer).
+    CalendarProxy,
+    /// Any other advertised token, passed through verbatim —
+    /// `calendarserver-*` vendor extensions (e.g.
+    /// `calendarserver-principal-property-search`) and unknown future
+    /// tokens. Held as an owned string because the token comes from the
+    /// wire and cannot be `'static`.
+    Other(String),
+}
+
+impl DavCapabilities {
+    /// Typed view of the advertised compliance classes and extensions.
+    ///
+    /// The numeric classes come first in ascending order
+    /// ([`One`](DavCompliance::One), [`Two`](DavCompliance::Two),
+    /// [`Three`](DavCompliance::Three)) when advertised, followed by the
+    /// extension tokens in the order the server listed them: known tokens
+    /// map to their named variants, everything else to
+    /// [`DavCompliance::Other`]. An empty header yields an empty `Vec`.
+    ///
+    /// ```
+    /// use fast_dav_rs::webdav::{DavCompliance, parse_dav_header};
+    ///
+    /// // A Provider-shaped CalDAV server:
+    /// let caps = parse_dav_header(
+    ///     "1, 3, extended-mkcol, access-control, calendarserver-principal-property-search, \
+    ///      calendar-access, calendar-proxy, addressbook, 2",
+    /// )
+    /// .unwrap();
+    /// let classes = caps.compliance();
+    /// assert_eq!(
+    ///     classes,
+    ///     vec![
+    ///         DavCompliance::One,
+    ///         DavCompliance::Two,
+    ///         DavCompliance::Three,
+    ///         DavCompliance::ExtendedMkcol,
+    ///         DavCompliance::AccessControl,
+    ///         DavCompliance::Other("calendarserver-principal-property-search".to_string()),
+    ///         DavCompliance::CalendarAccess,
+    ///         DavCompliance::CalendarProxy,
+    ///         DavCompliance::Addressbook,
+    ///     ]
+    /// );
+    /// ```
+    pub fn compliance(&self) -> Vec<DavCompliance> {
+        let mut classes = Vec::with_capacity(3 + self.extensions.len());
+        if self.class1 {
+            classes.push(DavCompliance::One);
+        }
+        if self.class2 {
+            classes.push(DavCompliance::Two);
+        }
+        if self.class3 {
+            classes.push(DavCompliance::Three);
+        }
+        for token in &self.extensions {
+            classes.push(match token.as_str() {
+                "access-control" => DavCompliance::AccessControl,
+                "calendar-access" => DavCompliance::CalendarAccess,
+                "addressbook" => DavCompliance::Addressbook,
+                "extended-mkcol" => DavCompliance::ExtendedMkcol,
+                "calendar-proxy" => DavCompliance::CalendarProxy,
+                other => DavCompliance::Other(other.to_string()),
+            });
+        }
+        classes
+    }
+}
+
 /// A media type advertised by a calendar collection via `supported-calendar-data`
 /// (RFC 4791 §5.2.6).
 ///

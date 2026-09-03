@@ -29,6 +29,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens and secrets never appear in errors, `Debug` output, or tracing
   events. Client clones share the provider's cache and single-flight
   refresh.
+- First-class `Error::PrincipalNotFound` for "authentication succeeded but
+  the `current-user-principal` PROPFIND returned 404" (issue #159): on some
+  providers this is the signature of a wrong username form — authenticating
+  with an email address where the provider expects an internal short account
+  ID makes the auth layer succeed (never `401`) and principal discovery then
+  answers `404`. The variant carries the credential-redacted probed URL and
+  an actionable message; a real credentials rejection (`401`) still surfaces
+  as `Error::UnexpectedStatus`. `discover_current_user_principal` on
+  `WebDavClient` (and the `CalDavClient`/`CardDavClient` wrappers) now maps
+  this shape to the new variant
+- Typed `DAV:` compliance view (issue #159): `#[non_exhaustive]` enum
+  `webdav::DavCompliance` (`One`, `Two` (locking), `Three`, `AccessControl`,
+  `CalendarAccess`, `Addressbook`, `ExtendedMkcol`, `CalendarProxy`, plus an
+  `Other(String)` passthrough for `calendarserver-*` vendor tokens and
+  unknown extensions) with `DavCapabilities::compliance()` as the typed view
+  over the parsed `DAV:` header (RFC 4918 §10.1) — the building block for
+  capability probing. `parse_dav_header` is unchanged
+
+### Changed
+- Discovery ordering documented: the credentialed root principal probe
+  (`discover_current_user_principal`) is the primary, most reliable discovery
+  step; the `.well-known` probes (`discover_caldav`/`discover_carddav`) are
+  the fallback for servers hosting DAV under a context path (some providers
+  answer `.well-known` unreliably). No behavioral change to existing discovery
+  functions
 
 ## [0.11.0] - 2026-09-03
 

@@ -169,6 +169,43 @@ async fn main() -> Result<()> {
 }
 ```
 
+### Discovery order and principal-404 hardening
+
+`discover_current_user_principal` probes the **authenticated root URL
+directly** — a single credentialed `PROPFIND`, and the primary discovery
+step. The RFC 6764 `.well-known` probes (`discover_caldav` /
+`discover_carddav`) are the fallback for servers that host DAV under a
+context path; some providers answer `.well-known` unreliably.
+
+If authentication succeeds but the principal `PROPFIND` returns `404` (the
+server never answers `401`), discovery fails with `Error::PrincipalNotFound`.
+On some providers this is the signature of a wrong username form — e.g. an
+email address where the provider expects an internal short account ID:
+
+```rust
+use fast_dav_rs::Error;
+
+match client.discover_current_user_principal().await {
+    Err(Error::PrincipalNotFound { url, .. }) => {
+        eprintln!(
+            "auth OK but no principal at {url}: retry with the provider's \
+             canonical account ID"
+        );
+    }
+    other => {
+        other?;
+    }
+}
+```
+
+The `OPTIONS` `DAV:` compliance header (RFC 4918 §10.1) is available as a
+typed view: `WebDavClient::capabilities` parses the header into
+`DavCapabilities`, and `DavCapabilities::compliance()` maps it to
+`DavCompliance` values (`One`, `Two` (locking), `Three`, `AccessControl`,
+`CalendarAccess`, `Addressbook`, `ExtendedMkcol`, `CalendarProxy`), with
+`calendarserver-*` vendor tokens and unknown extensions passing through as
+`DavCompliance::Other`.
+
 ## Error Handling & Migration
 
 Public APIs return `fast_dav_rs::Result<T>`, whose error type is the public
@@ -206,6 +243,7 @@ fn is_retryable(error: &Error) -> bool {
 | `Transport`            | A request was sent but the response stream broke                      |
 | `UnexpectedStatus`     | The server returned an unexpected HTTP status code                    |
 | `UnexpectedStatusWithDav` | Unexpected status with a `<D:error>` body (e.g. `423` + `no-conflicting-lock`) |
+| `PrincipalNotFound`    | Authentication succeeded but `current-user-principal` PROPFIND returned 404 — on some providers the signature of a wrong username form (e.g. email instead of the account ID) |
 | `Timeout`              | An operation exceeded its configured time limit                      |
 | `BodyTooLarge`         | A decompressed response body exceeded the 256 MiB limit              |
 | `Xml`                  | Parsing or decoding XML failed                                        |
@@ -1006,6 +1044,34 @@ cargo test --doc
 
 ## End-to-End Testing
 
+The project ships three Docker e2e fixtures (SabreDAV, Radicale, Nextcloud)
+plus an opt-in, credential-free smoke tier against a real-world deployment
+(referred to as **Provider A** — never named in the repository).
+
+| Tier | Fixture dir | Test target | URL (env override) | Credentials |
+|------|-------------|-------------|--------------------|-------------|
+| SabreDAV | `sabredav-test/` | `--test e2e_tests` | http://localhost:8080 (`CALDAV_SERVER_URL`) | `test` / `test` |
+| Radicale | `radicale-test/` | `--test e2e_radicale` | http://localhost:8081 (`RADICALE_URL`) | `test` / `test` |
+| Nextcloud | `nextcloud-test/` | `--test e2e_nextcloud` | http://localhost:8083 (`NEXTCLOUD_URL`) | `test` / `fixture-dav-password` |
+| Provider A smoke | — (no fixture) | `--test e2e_provider_a_smoke -- --ignored` | `PROVIDER_A_DAV_URL` (required) | none |
+
+CI runs the SabreDAV, Radicale, and Nextcloud tiers (jobs `e2e-tests`,
+`e2e-radicale`, `e2e-nextcloud`); the Provider A smoke tier is `#[ignore]`-gated,
+never runs in CI, uses zero credentials, and skips itself when
+`PROVIDER_A_DAV_URL` is unset:
+
+```bash
+PROVIDER_A_DAV_URL=https://dav.example.test \
+  cargo test --test e2e_provider_a_smoke -- --ignored --nocapture
+```
+
+It probes only the unauthenticated surface (`OPTIONS /`, the two well-known
+URIs, an unauthenticated principal PROPFIND — 4 requests) and asserts the
+401 + `WWW-Authenticate: Basic` challenge while recording the well-known
+shape (redirect vs direct 401).
+
+### SabreDAV (primary fixture)
+
 This project includes a complete e2e testing environment with a SabreDAV server that supports CalDAV and CardDAV
 features including compression, WebDAV locking (class 2), and WebDAV sync.
 
@@ -1048,6 +1114,32 @@ To reset the database to a clean state:
 cd sabredav-test
 ./reset-db.sh
 ```
+
+### Radicale fixture
+
+```bash
+./radicale-test/setup.sh   # http://localhost:8081, user test/test
+./radicale-test/reset.sh   # restart wipes the tmpfs data, re-seeds
+cargo test --test e2e_radicale
+```
+
+Radicale is the second engine in the matrix and exercises different failure
+modes: sync-token invalidation (`403` + `valid-sync-token`), no LOCK support
+(405 despite an advertised class 2), and the auto-create-on-first-principal-
+access quirk. See `radicale-test/README.md` for the full quirk list.
+
+### Nextcloud fixture
+
+```bash
+./nextcloud-test/setup.sh   # http://localhost:8083, first boot installs the instance
+./nextcloud-test/reset.sh   # full wipe + reinstall (slow)
+cargo test --test e2e_nextcloud
+```
+
+Nextcloud is the real-world reference: DAV strictly under `/remote.php/dav/`,
+`principals/users/{uid}` paths, VTODO coverage, and Basic auth (with app
+passwords as the documented path for hardened instances; Bearer/OIDC is out
+of scope for the fixture). See `nextcloud-test/README.md`.
 
 ## Limitations & Non-Goals
 
