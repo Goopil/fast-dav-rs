@@ -144,6 +144,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Collation`/`MatchType` enums and their defaults are unchanged
 
 ### Fixed
+- `parse_error_body` now picks the precondition code from the **DAV:-namespaced**
+  child of `<D:error>` (RFC 4918 §16), falling back to the first child of any
+  namespace only when no DAV: element is present. Servers that prepend vendor
+  extension elements — SabreDAV always emits `<s:sabredav-version>`,
+  `<s:exception>`, `<s:message>` before the precondition — previously made
+  every caller see `"sabredav-version"` instead of the real precondition, so
+  `Error::UnexpectedStatusWithDav` never carried the failed precondition and
+  the `403 valid-sync-token` resilient re-sync never fired against SabreDAV
+  (e2e-caught; previously only unit-tested with hand-crafted bodies)
 - `send` no longer feeds empty response bodies to a decompressor (issue #142):
   a conforming `HEAD` response may carry `Content-Encoding` with an empty body
   (RFC 9110 §9.3.2), which previously failed with a decoder error; empty
