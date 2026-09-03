@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::{StreamExt, stream::FuturesOrdered};
 use http_body_util::Full;
-use hyper::body::Incoming;
+use hyper::body::{Body as _, Incoming};
 use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri, header};
 use parking_lot::RwLock;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
@@ -27,10 +27,12 @@ use crate::{Error, Operation, Result};
 /// Strategy for compressing outgoing request bodies.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RequestCompressionMode {
-    /// Negotiate automatically: attempt gzip on first use, honor the server's advertised
-    /// `Accept-Encoding` preference on success, and cache the result; fall back to identity
-    /// on 415/501. A transient probe failure (transport error, timeout, other non-success
-    /// status) is not cached — the next body-carrying request re-probes, while the current
+    /// Negotiate automatically: attempt gzip on first use and cache only what
+    /// the probe proved — gzip when the server's advertised `Accept-Encoding`
+    /// preference names it, `Identity` otherwise (including when the probe
+    /// meets a redirect); fall back to identity on 415/501. A transient probe
+    /// failure (transport error, timeout, other non-success status) is not
+    /// cached — the next body-carrying request re-probes, while the current
     /// request proceeds uncompressed.
     #[default]
     Auto,
@@ -682,15 +684,19 @@ impl WebDavClient {
     /// Probe whether the server accepts compressed request bodies.
     ///
     /// Sends a small gzip-compressed `PROPFIND` to the base URL. On success,
-    /// the cached encoding honors the server's advertised `Accept-Encoding`
-    /// preference (q-factors applied, `br` > `zstd` > `gzip`) when present,
-    /// and keeps gzip — proven to work by the probe — otherwise.
+    /// the cached encoding keeps gzip — the only encoding the probe actually
+    /// proved the server accepts — and only when the server's advertised
+    /// `Accept-Encoding` preference names gzip; anything else (including
+    /// `br`/`zstd` picks the header might suggest) is unproven and caches
+    /// `Identity` instead, so later requests cannot fail with `415` on an
+    /// encoding the server never agreed to.
     ///
     /// Returns `true` when a definitive answer was cached (including
-    /// `Identity` when the server advertises no compression support), and
-    /// `false` when the probe failed: nothing is cached then, so the next
-    /// body-carrying request re-probes. The caller sends the current request
-    /// uncompressed in that case.
+    /// `Identity` when the server advertises no compression support, or
+    /// answers the probe with a redirect — see below), and `false` when the
+    /// probe failed: nothing is cached then, so the next body-carrying
+    /// request re-probes. The caller sends the current request uncompressed
+    /// in that case.
     ///
     /// The caller guarantees `Auto` mode and an uncached negotiation (checked
     /// under the probe lock) before invoking this.
@@ -707,6 +713,12 @@ impl WebDavClient {
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/xml; charset=utf-8"),
         );
+        // RFC 9110 §10.1.5: identify like every other request, so
+        // User-Agent-aware servers (throttling, filtering) do not treat the
+        // probe differently from the real pipeline.
+        if let Some(ua) = &self.user_agent {
+            headers.insert(header::USER_AGENT, ua.clone());
+        }
 
         let mut req_builder = Request::builder().method(propfind).uri(uri);
         if let Some(auth) = &self.auth_header {
@@ -736,15 +748,33 @@ impl WebDavClient {
 
         match result {
             Ok(Ok(resp)) if resp.status().is_success() => {
-                // The gzip probe succeeded. Prefer the encoding the server
-                // advertises via `Accept-Encoding`; keep gzip (proven to work
-                // by the probe) when it does not advertise a preference.
-                let negotiated = detect_request_compression_preference(resp.headers())
-                    .unwrap_or(AUTO_DEFAULT_ENCODING);
+                // The gzip probe succeeded. Only cache what was proven:
+                // keep gzip when the server advertises it as its preference,
+                // `Identity` otherwise — an `Accept-Encoding` listing
+                // `br`/`zstd` is not evidence the server accepts them for
+                // request bodies (a later PUT could fail with `415`).
+                let negotiated = match detect_request_compression_preference(resp.headers()) {
+                    Some(ContentEncoding::Gzip) => ContentEncoding::Gzip,
+                    _ => ContentEncoding::Identity,
+                };
                 self.set_negotiated_encoding(Some(negotiated));
                 dav_debug!(
                     encoding = negotiated.as_str(),
                     "request compression probe succeeded"
+                );
+                true
+            }
+            // A 3xx is not transient: the probe deliberately bypasses the
+            // redirect pipeline, and the base URL's redirect is a stable
+            // property of the deployment — leaving the cache empty would
+            // re-pay the same doomed probe before every body-carrying
+            // request. Pin `Identity`, the same steady state requests reach
+            // today (uncompressed), without the per-request tax.
+            Ok(Ok(resp)) if is_redirect_status(resp.status()) => {
+                self.set_negotiated_encoding(Some(ContentEncoding::Identity));
+                dav_debug!(
+                    status = %resp.status(),
+                    "request compression probe hit a redirect; pinning identity"
                 );
                 true
             }
@@ -770,11 +800,13 @@ impl WebDavClient {
             return false;
         };
 
+        // Only a compression-specific rejection (`415`, or `501` for servers
+        // that do not implement the request at all) may disable compression
+        // for the client's lifetime: a `400` can come from an unrelated
+        // malformed body and must not pin `Identity`.
         if matches!(
             status,
-            StatusCode::UNSUPPORTED_MEDIA_TYPE
-                | StatusCode::NOT_IMPLEMENTED
-                | StatusCode::BAD_REQUEST
+            StatusCode::UNSUPPORTED_MEDIA_TYPE | StatusCode::NOT_IMPLEMENTED
         ) {
             self.set_negotiated_encoding(Some(ContentEncoding::Identity));
             dav_debug!(
@@ -788,12 +820,24 @@ impl WebDavClient {
         false
     }
 
+    /// Prepare an outgoing body for sending.
+    ///
+    /// A caller-supplied `Content-Encoding` header means the body is already
+    /// encoded: it is honored as-is — no automatic compression, no probe, and
+    /// the header is forwarded untouched. Otherwise the negotiated request
+    /// encoding is applied (probing first in `Auto` mode when nothing is
+    /// cached yet).
     async fn prepare_request_body(
         &self,
         payload: Bytes,
         headers: &mut HeaderMap,
     ) -> (Bytes, Option<ContentEncoding>) {
-        headers.remove(header::CONTENT_ENCODING);
+        // Re-compressing an already-encoded body would silently corrupt the
+        // payload (double encoding behind a 2xx), so a caller-supplied
+        // `Content-Encoding` skips the automatic path entirely.
+        if headers.contains_key(header::CONTENT_ENCODING) {
+            return (payload, None);
+        }
 
         let mode = *self.request_compression_mode.read();
 
@@ -1054,6 +1098,20 @@ impl WebDavClient {
     /// `max_retries` times (default 0 = disabled) when the method is
     /// retryable per the idempotency policy; see
     /// [`WebDavClientBuilder::max_retries`](crate::WebDavClientBuilder::max_retries).
+    ///
+    /// # Request body compression
+    ///
+    /// A caller-supplied `Content-Encoding` header is honored as-is: the body
+    /// is forwarded verbatim and automatic compression (and its probe) is
+    /// skipped — the body is assumed to be already encoded. Otherwise the
+    /// negotiated request encoding is applied (see
+    /// [`RequestCompressionMode`](crate::RequestCompressionMode)).
+    ///
+    /// # Response body
+    ///
+    /// The body is decompressed (br/zstd/gzip) when the response carries a
+    /// `Content-Encoding`; empty bodies (e.g. `HEAD`, `204`) are returned
+    /// as-is with their headers untouched.
     pub async fn send(
         &self,
         method: Method,
@@ -1065,6 +1123,17 @@ impl WebDavClient {
         let (_, resp) = self
             .build_and_send(method, path, headers, body_bytes, per_req_timeout)
             .await?;
+
+        // RFC 9110 §9.3.2: a `HEAD` response may advertise `Content-Encoding`
+        // while carrying an empty body — feeding that to a decoder fails, and
+        // the header rewrite below would mask the server-reported
+        // `Content-Length`. An empty body needs no decompression, so it is
+        // returned as-is with its headers untouched (covers `HEAD`, `204`,
+        // and `304`).
+        if resp.body().is_end_stream() {
+            let (parts, _) = resp.into_parts();
+            return Ok(Response::from_parts(parts, Bytes::new()));
+        }
 
         let encodings = detect_encodings(resp.headers());
         let (mut parts, body) = resp.into_parts();
@@ -1084,6 +1153,23 @@ impl WebDavClient {
     /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
     /// The caller must enforce its own read deadline on the returned body; the
     /// per-request timeout covers headers only.
+    ///
+    /// # Response encoding
+    ///
+    /// The client advertises `Accept-Encoding` on every request
+    /// (RFC 9110 §12.5.3) but does **not** decompress streaming bodies: when
+    /// the server compresses, the returned `Incoming` is still encoded.
+    /// Inspect `Content-Encoding` (e.g. with
+    /// [`detect_encoding`](crate::detect_encoding)) and wrap the body before
+    /// parsing — see the "Streaming Large Responses" example in the crate
+    /// root docs, which passes the detected encoding to
+    /// `parse_multistatus_stream`.
+    ///
+    /// # Request body compression
+    ///
+    /// As in [`send`](Self::send), a caller-supplied `Content-Encoding` is
+    /// honored as-is: the body is forwarded verbatim without automatic
+    /// compression.
     ///
     /// Redirects are followed exactly as in [`send`](Self::send) before the
     /// final response is returned.
@@ -1984,6 +2070,10 @@ impl WebDavClient {
     }
 
     /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
+    ///
+    /// The body may still be compressed when the server honors the
+    /// `Accept-Encoding` the client advertises: check `Content-Encoding` and
+    /// decode before parsing (see [`send_stream`](Self::send_stream)).
     pub async fn propfind_stream(
         &self,
         path: &str,
@@ -2007,6 +2097,10 @@ impl WebDavClient {
     }
 
     /// Streaming variant of `REPORT`, returning the non-aggregated body.
+    ///
+    /// The body may still be compressed when the server honors the
+    /// `Accept-Encoding` the client advertises: check `Content-Encoding` and
+    /// decode before parsing (see [`send_stream`](Self::send_stream)).
     pub async fn report_stream(
         &self,
         path: &str,
@@ -2090,7 +2184,10 @@ macro_rules! impl_dav_client_delegates {
                 self.webdav.build_uri(path)
             }
 
-            /// Generic **aggregated send** with automatic decompression (br/zstd/gzip).
+            /// Generic **aggregated send** with automatic decompression
+            /// (br/zstd/gzip). A caller-supplied `Content-Encoding` on the
+            /// request is honored: the body is sent verbatim without
+            /// automatic compression.
             pub async fn send(
                 &self,
                 method: hyper::Method,
@@ -2107,6 +2204,10 @@ macro_rules! impl_dav_client_delegates {
             /// Generic **streaming send**. Returns a `Response<Incoming>` (not aggregated).
             /// The caller must enforce its own read deadline on the returned body; the
             /// per-request timeout covers headers only.
+            ///
+            /// The body may still be encoded when the server compresses: the
+            /// client advertises `Accept-Encoding` but leaves response
+            /// decoding to the caller — see [`WebDavClient::send_stream`].
             pub async fn send_stream(
                 &self,
                 method: hyper::Method,
@@ -2390,6 +2491,10 @@ macro_rules! impl_dav_client_delegates {
             }
 
             /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
+            ///
+            /// The body may still be compressed when the server honors the
+            /// `Accept-Encoding` the client advertises — decode before
+            /// parsing (see [`WebDavClient::send_stream`]).
             pub async fn propfind_stream(
                 &self,
                 path: &str,
@@ -2400,6 +2505,10 @@ macro_rules! impl_dav_client_delegates {
             }
 
             /// Streaming variant of `REPORT`, returning the non-aggregated body.
+            ///
+            /// The body may still be compressed when the server honors the
+            /// `Accept-Encoding` the client advertises — decode before
+            /// parsing (see [`WebDavClient::send_stream`]).
             pub async fn report_stream(
                 &self,
                 path: &str,
