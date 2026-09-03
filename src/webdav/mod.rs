@@ -15,7 +15,7 @@ pub use client::{
 pub use discovery::{discover_caldav, discover_carddav};
 pub use streaming::{parse_error_body, parse_lock_discovery_bytes};
 pub use types::{
-    BatchItem, DavCapabilities, DavItem, DavItemCommon, Depth, LockInfo, LockScope, Prefer,
-    PropStat, SyncCapability, SyncLevel, WebDavError, parse_dav_header,
+    BatchItem, DavCapabilities, DavCompliance, DavItem, DavItemCommon, Depth, LockInfo, LockScope,
+    Prefer, PropStat, SyncCapability, SyncLevel, WebDavError, parse_dav_header,
 };
 pub use xml::{build_sync_collection_body, escape_xml};

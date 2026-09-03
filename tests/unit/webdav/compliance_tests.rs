@@ -1,5 +1,7 @@
 use fast_dav_rs::parse_multistatus_bytes;
-use fast_dav_rs::webdav::{DavCapabilities, PropStat, WebDavError, parse_dav_header};
+use fast_dav_rs::webdav::{
+    DavCapabilities, DavCompliance, PropStat, WebDavError, parse_dav_header,
+};
 
 #[test]
 fn parse_dav_header_class1_only() {
@@ -333,4 +335,84 @@ fn propstat_default_is_empty() {
     let ps = PropStat::default();
     assert!(ps.status.is_none());
     assert!(ps.prop_names.is_empty());
+}
+
+#[test]
+fn dav_compliance_full_matrix_maps_every_token() {
+    // Real CalDAV-server header shape (SabreDAV 4.x advertises exactly
+    // this list): numeric classes mixed with extensions and a
+    // `calendarserver-*` vendor token. Numeric classes are typed even
+    // when they appear last.
+    let caps = parse_dav_header(
+        "1, 3, extended-mkcol, access-control, calendarserver-principal-property-search, \
+         calendar-access, calendar-proxy, addressbook, 2",
+    )
+    .expect("parse succeeds");
+    assert_eq!(
+        caps.compliance(),
+        vec![
+            DavCompliance::One,
+            DavCompliance::Two,
+            DavCompliance::Three,
+            DavCompliance::ExtendedMkcol,
+            DavCompliance::AccessControl,
+            DavCompliance::Other("calendarserver-principal-property-search".to_string()),
+            DavCompliance::CalendarAccess,
+            DavCompliance::CalendarProxy,
+            DavCompliance::Addressbook,
+        ],
+        "numeric classes first (ascending), then extensions in header order; \
+         the calendarserver-* vendor token passes through as Other"
+    );
+}
+
+#[test]
+fn dav_compliance_degenerate_shapes() {
+    assert_eq!(
+        parse_dav_header("").unwrap().compliance(),
+        Vec::<DavCompliance>::new(),
+        "empty header yields no classes"
+    );
+    assert_eq!(
+        parse_dav_header("   ").unwrap().compliance(),
+        Vec::<DavCompliance>::new(),
+        "whitespace-only header yields no classes"
+    );
+    assert_eq!(
+        parse_dav_header(",").unwrap().compliance(),
+        Vec::<DavCompliance>::new(),
+        "empty tokens are skipped"
+    );
+    assert_eq!(
+        parse_dav_header("3").unwrap().compliance(),
+        vec![DavCompliance::Three],
+        "a class number alone still maps"
+    );
+    assert_eq!(
+        parse_dav_header("1, 1, 2").unwrap().compliance(),
+        vec![DavCompliance::One, DavCompliance::Two],
+        "duplicate tokens are idempotent"
+    );
+    assert_eq!(
+        parse_dav_header("calendarserver-subscribed")
+            .unwrap()
+            .compliance(),
+        vec![DavCompliance::Other(
+            "calendarserver-subscribed".to_string()
+        )],
+        "other calendarserver-* vendor tokens pass through as Other"
+    );
+    assert_eq!(
+        parse_dav_header("version-control").unwrap().compliance(),
+        vec![DavCompliance::Other("version-control".to_string())],
+        "unknown non-vendor extensions pass through as Other"
+    );
+}
+
+#[test]
+fn dav_compliance_default_capabilities_are_empty() {
+    assert_eq!(
+        DavCapabilities::default().compliance(),
+        Vec::<DavCompliance>::new()
+    );
 }

@@ -1,3 +1,4 @@
+use fast_dav_rs::webdav::DavCompliance;
 use fast_dav_rs::{WebDavClient, discover_caldav, discover_carddav};
 
 const SABREDAV_URL: &str = "http://localhost:8080/";
@@ -37,5 +38,45 @@ async fn test_discover_carddav_follows_well_known_redirect() {
     assert_eq!(
         service_url, "http://localhost:8080/principals/test/",
         "discover_carddav must return the final (post-redirect) request URI"
+    );
+}
+
+/// Typed `OPTIONS` compliance probe (RFC 4918 §10.1) against the live
+/// fixture: SabreDAV 4.x advertises `DAV: 1, 3, extended-mkcol,
+/// access-control, calendarserver-principal-property-search, calendar-access,
+/// calendar-proxy, addressbook, 2` — every named class plus one
+/// `calendarserver-*` vendor token that must pass through as
+/// [`DavCompliance::Other`].
+#[tokio::test]
+async fn test_options_dav_compliance_probe_is_typed() {
+    let client = WebDavClient::new(SABREDAV_URL, Some(TEST_USER), Some(TEST_PASS))
+        .expect("Failed to create WebDAV client");
+
+    let caps = client
+        .capabilities("/")
+        .await
+        .expect("OPTIONS compliance probe must succeed");
+    let classes = caps.compliance();
+
+    for expected in [
+        DavCompliance::One,
+        DavCompliance::Two,
+        DavCompliance::Three,
+        DavCompliance::ExtendedMkcol,
+        DavCompliance::AccessControl,
+        DavCompliance::CalendarAccess,
+        DavCompliance::CalendarProxy,
+        DavCompliance::Addressbook,
+    ] {
+        assert!(
+            classes.contains(&expected),
+            "SabreDAV advertises {expected:?}, got: {classes:?}"
+        );
+    }
+    assert!(
+        classes.contains(&DavCompliance::Other(
+            "calendarserver-principal-property-search".to_string()
+        )),
+        "the calendarserver-* vendor token must pass through as Other, got: {classes:?}"
     );
 }

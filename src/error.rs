@@ -215,6 +215,56 @@ pub enum Error {
         dav: WebDavError,
     },
 
+    /// Principal discovery returned `404 Not Found` even though
+    /// authentication succeeded.
+    ///
+    /// This is a failure mode of its own, distinct from
+    /// [`UnexpectedStatus`](Self::UnexpectedStatus): the server accepted the
+    /// credentials (it never answered `401`) but has no current-user
+    /// principal for this account. On some providers this is the signature
+    /// of a **wrong username form** — e.g. authenticating with an email
+    /// address where the provider expects an internal short account ID: the
+    /// auth layer succeeds anyway and the `current-user-principal` PROPFIND
+    /// then answers `404`. If you hit this error, retry discovery with the
+    /// provider's canonical account identifier before assuming a server
+    /// fault.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::{CalDavClient, Error};
+    ///
+    /// # async fn run() -> fast_dav_rs::Result<()> {
+    /// let client = CalDavClient::new(
+    ///     "https://dav.example.com/",
+    ///     Some("me@example.com"),
+    ///     Some("app-password"),
+    /// )?;
+    /// match client.discover_current_user_principal().await {
+    ///     Err(Error::PrincipalNotFound { url, .. }) => {
+    ///         eprintln!(
+    ///             "auth OK but no principal at {url}: \
+    ///              the username form is likely wrong for this provider"
+    ///         );
+    ///     }
+    ///     other => {
+    ///         other?;
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[error(
+        "current-user-principal discovery returned 404 for `{url}`: authentication \
+             succeeded but no principal exists at this URL — on some providers this means \
+             the username form is wrong (e.g. email instead of the account ID)"
+    )]
+    #[non_exhaustive]
+    PrincipalNotFound {
+        /// The (credential-redacted) URL that answered `404`.
+        url: String,
+    },
+
     /// A request phase exceeded its configured time limit.
     ///
     /// Covers receiving response headers and reading/decompressing an aggregated
@@ -502,6 +552,18 @@ impl Error {
             context: context.into(),
             value: value.into(),
             reason,
+        }
+    }
+
+    /// Create a [`PrincipalNotFound`](Self::PrincipalNotFound) error.
+    ///
+    /// This is the public constructor for the `PrincipalNotFound` variant,
+    /// which is `#[non_exhaustive]` and therefore cannot be constructed with
+    /// a struct expression outside this crate. The URL is credential-redacted
+    /// before being stored, like every URL carried by an [`Error`] variant.
+    pub fn principal_not_found(url: impl std::fmt::Display) -> Self {
+        Self::PrincipalNotFound {
+            url: crate::common::redact_userinfo(url.to_string()),
         }
     }
 
