@@ -71,9 +71,8 @@ fn print_entry(href: &str, data: Option<&str>) {
         Some(cal) => {
             for event in cal.events() {
                 println!(
-                    "  {href} -> {:?} ({})",
+                    "  {href} -> {:?}",
                     event.get_summary().unwrap_or("(no summary)"),
-                    event.get_uid().unwrap_or("(no uid)"),
                 );
             }
         }

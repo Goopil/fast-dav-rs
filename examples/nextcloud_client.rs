@@ -88,7 +88,7 @@ async fn main() -> fast_dav_rs::Result<()> {
                 Bytes::from(todo_ics(uid, summary)),
             )
             .await?;
-        println!("PUT {uid}: {}", resp.status());
+        println!("PUT {summary}: {}", resp.status());
     }
 
     // Fetch them back with a calendar-query restricted to VTODO components.
