@@ -1,3 +1,4 @@
+pub mod attachments_tests;
 pub mod caldav_helpers;
 pub mod client_tests;
 pub mod etag_tests;

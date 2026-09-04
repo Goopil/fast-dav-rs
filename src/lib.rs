@@ -727,9 +727,10 @@ pub use caldav::streaming::{
 // NOT re-exported here: CalDAV and CardDAV define distinct same-named items (AUDIT-014) —
 // import them from `caldav::` or `carddav::` instead.
 pub use caldav::{
-    BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, InboxItem, MediaType,
-    ScheduleEndpoints, SchedulingResponse, ValidationLevel, build_calendar_multiget_body,
-    build_calendar_query_body, map_calendar_list, map_calendar_objects, validate_icalendar,
+    BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, InboxItem,
+    ManagedAttachment, MediaType, ScheduleEndpoints, SchedulingResponse, ValidationLevel,
+    build_calendar_multiget_body, build_calendar_query_body, map_calendar_list,
+    map_calendar_objects, validate_icalendar,
 };
 pub use carddav::builder::CardDavClientBuilder;
 pub use carddav::{

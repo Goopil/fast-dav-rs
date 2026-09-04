@@ -17,6 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variant is reported on `Error::UnexpectedStatus` for this `PROPFIND`.
   Read-only for now: the write path is deferred until a fixture round-trips
   it
+- Managed attachments (RFC 8607, issue #172):
+  `CalDavClient::post_managed_attachment` stores an attachment on a
+  calendar object resource via `POST <calendar>?action=attachment-add&uid=…`
+  (plus `&recurrence-id=…` when given, all query values percent-encoded) and
+  parses the new `ManagedAttachment` result from the `Location` and
+  `Cal-Managed-ID` response headers — falling back to the `managed-id` query
+  parameter of the `Location` when the header is absent, and failing with
+  `Error::other` when the server reports neither. Non-success statuses map
+  to `Error::UnexpectedStatus` with the new `Operation::PostManagedAttachment`.
+  The streaming multistatus parser and `DavItem` gained the `managed-ids`
+  property (`managed_ids: Vec<String>`, RFC 8607 §10.2.4). `ManagedAttachment`
+  is re-exported from `caldav::` and the crate root. Note: Radicale 3.7.6
+  does not implement RFC 8607 (observed `405` on `?action=attachment-add`);
+  the e2e suite records that behavior, and the wire contract is covered by
+  unit tests
 - Scheduling (RFC 6638, issue #171): a new `caldav::scheduling` module for
   CalDAV `calendar-auto-schedule`. `CalDavClient::discover_schedule_endpoints`
   reads `schedule-inbox-URL`, `schedule-outbox-URL`, and

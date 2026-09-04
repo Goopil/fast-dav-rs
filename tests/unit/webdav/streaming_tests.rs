@@ -186,6 +186,28 @@ fn bytes_parse_reads_supported_address_data_attrs() {
     );
 }
 
+#[test]
+fn bytes_parse_reads_managed_ids() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/event.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:managed-ids>
+          <C:managed-id>abc</C:managed-id>
+          <C:managed-id>def-42</C:managed-id>
+        </C:managed-ids>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].managed_ids, vec!["abc", "def-42"]);
+}
+
 #[tokio::test]
 async fn visit_propagates_sink_error() {
     let base = serve_once(

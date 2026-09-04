@@ -285,6 +285,7 @@ pub enum ElementName {
     ScheduleInboxUrl,
     ScheduleOutboxUrl,
     CalendarUserAddressSet,
+    ManagedId,
 }
 
 pub fn element_from_bytes(raw: &[u8]) -> ElementName {
@@ -358,6 +359,8 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
         ElementName::ScheduleOutboxUrl
     } else if local.eq_ignore_ascii_case(b"calendar-user-address-set") {
         ElementName::CalendarUserAddressSet
+    } else if local.eq_ignore_ascii_case(b"managed-id") {
+        ElementName::ManagedId
     } else if local.eq_ignore_ascii_case(b"owner") {
         ElementName::Owner
     } else if local.eq_ignore_ascii_case(b"getcontenttype") {
@@ -741,6 +744,11 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             self.current
                 .calendar_user_addresses
                 .push(trimmed.to_string());
+        } else if self.path_ends_with(&[ElementName::ManagedId]) {
+            // `managed-id` elements live inside the `managed-ids` property
+            // (RFC 8607 §10.2.4); a suffix match on the element name keeps
+            // this independent of the parent nesting.
+            self.current.managed_ids.push(trimmed.to_string());
         }
     }
 }

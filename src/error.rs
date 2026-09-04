@@ -471,6 +471,9 @@ pub enum Operation {
     /// Conditional `PUT`/`DELETE` guarded by `If-Schedule-Tag-Match`
     /// (RFC 6638 §8.3, §3.2.10).
     ScheduleConditionalWrite,
+    /// `POST` of an attachment body to a calendar collection with
+    /// `?action=attachment-add` (RFC 8607 §6.1).
+    PostManagedAttachment,
 }
 
 impl std::fmt::Display for Operation {
@@ -495,6 +498,7 @@ impl std::fmt::Display for Operation {
             Self::PostSchedule => "POST scheduling outbox",
             Self::ScheduleInbox => "PROPFIND schedule inbox",
             Self::ScheduleConditionalWrite => "conditional write with schedule-tag",
+            Self::PostManagedAttachment => "POST managed attachment",
         };
         f.write_str(s)
     }
