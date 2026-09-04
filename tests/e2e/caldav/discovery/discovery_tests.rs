@@ -184,3 +184,25 @@ async fn test_discovery_operations() {
         }
     }
 }
+
+#[tokio::test]
+async fn test_current_user_privileges_on_calendar() {
+    let client = create_test_client();
+
+    // SabreDAV ships DAVACL natively (RFC 3744): the authenticated test user
+    // must hold at least `read` and `write` on their own calendar collection.
+    let privileges = client
+        .current_user_privileges("calendars/test/")
+        .await
+        .expect("current_user_privileges on the test user's calendar");
+
+    println!("Granted privileges: {privileges:?}");
+    assert!(
+        privileges.contains(&fast_dav_rs::webdav::Privilege::Read),
+        "expected at least read on the calendar, got: {privileges:?}"
+    );
+    assert!(
+        privileges.contains(&fast_dav_rs::webdav::Privilege::Write),
+        "expected at least write on the calendar, got: {privileges:?}"
+    );
+}

@@ -602,6 +602,53 @@ impl MediaType {
     }
 }
 
+/// A privilege granted to the authenticated user, as advertised by the
+/// `current-user-privilege-set` property (RFC 3744 §5.4).
+///
+/// The mapped variants cover the RFC 3744 core privileges the library
+/// recognizes plus the CalDAV `read-free-busy` extension (RFC 4791 §4.1);
+/// any other element local name is preserved verbatim in
+/// [`Privilege::Other`]. Note that a server may grant privileges through
+/// inherited or aggregated ACEs: the set is advisory, and an absent
+/// privilege does not prove an operation will be denied.
+///
+/// ```
+/// use fast_dav_rs::webdav::Privilege;
+///
+/// fn describe(privileges: &[Privilege]) {
+///     for privilege in privileges {
+///         match privilege {
+///             Privilege::Read => println!("can read"),
+///             Privilege::Write | Privilege::WriteContent => println!("can write"),
+///             Privilege::Other(name) => println!("server-specific: {name}"),
+///             _ => println!("other privilege"),
+///         }
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Privilege {
+    /// Read the resource content (`read`).
+    Read,
+    /// Modify the resource in any way, including its properties (`write`).
+    Write,
+    /// Modify the resource's dead properties (`write-properties`).
+    WriteProperties,
+    /// Modify the resource's content (`write-content`).
+    WriteContent,
+    /// Add internal members to the collection (`bind`).
+    Bind,
+    /// Remove internal members from the collection (`unbind`).
+    Unbind,
+    /// Unlock the resource without being the lock owner (`unlock`).
+    Unlock,
+    /// Read the calendar free-busy information (CalDAV, RFC 4791 §4.1).
+    ReadFreeBusy,
+    /// An unrecognized privilege: the element's local name, verbatim.
+    Other(String),
+}
+
 /// Item extracted from a WebDAV `207 Multi-Status` response.
 ///
 /// Superset of the CalDAV and CardDAV item fields: only the properties the
@@ -637,6 +684,10 @@ pub struct DavItem {
     pub schedule_outbox: Option<String>,
     /// `calendar-user-address-set` hrefs (RFC 6638 §2.4.1).
     pub calendar_user_addresses: Vec<String>,
+    /// Privileges granted to the authenticated user, from
+    /// `current-user-privilege-set` (RFC 3744 §5.4). Empty when the property
+    /// was not requested or the server omitted it.
+    pub current_user_privileges: Vec<Privilege>,
     pub current_user_principal: Vec<String>,
     pub owner: Option<String>,
     pub calendar_description: Option<String>,
@@ -679,6 +730,7 @@ impl DavItem {
             schedule_inbox: None,
             schedule_outbox: None,
             calendar_user_addresses: Vec::new(),
+            current_user_privileges: Vec::new(),
             current_user_principal: Vec::new(),
             owner: None,
             calendar_description: None,

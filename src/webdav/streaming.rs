@@ -223,7 +223,7 @@ impl CommonParser {
 // ---------------------------------------------------------------------------
 
 use crate::common::compression::{body_stream_reader, stack_decoders};
-use crate::webdav::types::{DavItem, MediaType};
+use crate::webdav::types::{DavItem, MediaType, Privilege};
 use hyper::body::Incoming;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Decoder, Reader, XmlVersion};
@@ -285,6 +285,8 @@ pub enum ElementName {
     ScheduleInboxUrl,
     ScheduleOutboxUrl,
     CalendarUserAddressSet,
+    CurrentUserPrivilegeSet,
+    Privilege,
 }
 
 pub fn element_from_bytes(raw: &[u8]) -> ElementName {
@@ -358,6 +360,10 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
         ElementName::ScheduleOutboxUrl
     } else if local.eq_ignore_ascii_case(b"calendar-user-address-set") {
         ElementName::CalendarUserAddressSet
+    } else if local.eq_ignore_ascii_case(b"current-user-privilege-set") {
+        ElementName::CurrentUserPrivilegeSet
+    } else if local.eq_ignore_ascii_case(b"privilege") {
+        ElementName::Privilege
     } else if local.eq_ignore_ascii_case(b"owner") {
         ElementName::Owner
     } else if local.eq_ignore_ascii_case(b"getcontenttype") {
@@ -371,6 +377,32 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
 
 pub(crate) trait ItemConsumer {
     fn consume(&mut self, item: DavItem) -> Result<()>;
+}
+
+/// Map a privilege element's raw name to the typed [`Privilege`] (RFC 3744
+/// §2.3, plus the CalDAV `read-free-busy` extension, RFC 4791 §4.1).
+/// Unknown local names fall back to [`Privilege::Other`].
+fn privilege_from_local_name(raw: &[u8]) -> Privilege {
+    let local = local_name(raw);
+    if local.eq_ignore_ascii_case(b"read") {
+        Privilege::Read
+    } else if local.eq_ignore_ascii_case(b"write") {
+        Privilege::Write
+    } else if local.eq_ignore_ascii_case(b"write-properties") {
+        Privilege::WriteProperties
+    } else if local.eq_ignore_ascii_case(b"write-content") {
+        Privilege::WriteContent
+    } else if local.eq_ignore_ascii_case(b"bind") {
+        Privilege::Bind
+    } else if local.eq_ignore_ascii_case(b"unbind") {
+        Privilege::Unbind
+    } else if local.eq_ignore_ascii_case(b"unlock") {
+        Privilege::Unlock
+    } else if local.eq_ignore_ascii_case(b"read-free-busy") {
+        Privilege::ReadFreeBusy
+    } else {
+        Privilege::Other(String::from_utf8_lossy(local).into_owned())
+    }
 }
 
 /// Parse the `content-type` (required) and `version` (optional) attributes
@@ -572,6 +604,27 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                 }
             }
             _ => {}
+        }
+
+        // `current-user-privilege-set` (RFC 3744 §5.4): the property wraps
+        // one or more `<D:privilege>` containers whose empty children name
+        // the granted privileges. Capture each direct child of a container.
+        let stack_len = self.stack.len();
+        if stack_len > 5
+            && path_ends_with(
+                &self.stack[..stack_len - 1],
+                &[
+                    ElementName::Response,
+                    ElementName::Propstat,
+                    ElementName::Prop,
+                    ElementName::CurrentUserPrivilegeSet,
+                    ElementName::Privilege,
+                ],
+            )
+        {
+            self.current
+                .current_user_privileges
+                .push(privilege_from_local_name(event.name().as_ref()));
         }
 
         Ok(())

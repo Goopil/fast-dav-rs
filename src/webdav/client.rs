@@ -25,8 +25,8 @@ use crate::webdav::auth::TokenProvider;
 use crate::webdav::builder::WebDavClientBuilder;
 use crate::webdav::retry::{is_idempotent_method, is_retryable_status, retry_delay};
 use crate::webdav::types::{
-    BatchItem, DavCapabilities, DavItem, Depth, LockInfo, LockScope, Prefer, SyncCapability,
-    SyncLevel,
+    BatchItem, DavCapabilities, DavItem, Depth, LockInfo, LockScope, Prefer, Privilege,
+    SyncCapability, SyncLevel,
 };
 use crate::{Error, Operation, Result};
 
@@ -2203,6 +2203,43 @@ impl WebDavClient {
         crate::webdav::streaming::parse_current_user_principal_bytes(&body)
     }
 
+    /// Read the privileges the authenticated user holds on `path` from the
+    /// `current-user-privilege-set` property (RFC 3744 §5.4).
+    ///
+    /// The set is advisory: a server may grant privileges through inherited
+    /// or aggregated ACEs, and an absent privilege does not prove an
+    /// operation will be denied. Unrecognized privilege elements are
+    /// reported as [`Privilege::Other`] with the element's local name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnexpectedStatus`] with
+    /// [`Operation::PropfindCurrentUserPrivilegeSet`] on non-success
+    /// statuses.
+    pub async fn current_user_privileges(&self, path: &str) -> Result<Vec<Privilege>> {
+        let body = r#"
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:current-user-privilege-set/>
+  </D:prop>
+</D:propfind>
+"#;
+        let resp = self.propfind(path, Depth::Zero, body).await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::PropfindCurrentUserPrivilegeSet,
+                status: resp.status(),
+            });
+        }
+        let body = resp.into_body();
+        Ok(crate::webdav::streaming::parse_multistatus_bytes(&body)?
+            .items
+            .into_iter()
+            .next()
+            .map(|item| item.current_user_privileges)
+            .unwrap_or_default())
+    }
+
     /// Streaming variant of `PROPFIND`, returning the non-aggregated body.
     ///
     /// The body may still be compressed when the server honors the
@@ -2592,6 +2629,15 @@ macro_rules! impl_dav_client_delegates {
             /// Discover the current user's principal URL via `current-user-principal`.
             pub async fn discover_current_user_principal(&self) -> $crate::Result<Option<String>> {
                 self.webdav.discover_current_user_principal().await
+            }
+
+            /// Read the privileges the authenticated user holds on `path`
+            /// from `current-user-privilege-set` (RFC 3744 §5.4).
+            pub async fn current_user_privileges(
+                &self,
+                path: &str,
+            ) -> $crate::Result<Vec<$crate::webdav::Privilege>> {
+                self.webdav.current_user_privileges(path).await
             }
 
             /// Run many `PROPFIND`s concurrently with a semaphore-bound concurrency limit.

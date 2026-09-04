@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Typed current-user privileges (issue #174): `WebDavClient::current_user_privileges(path)`
+  (delegated on `CalDavClient`/`CardDavClient`) `PROPFIND`s the
+  `current-user-privilege-set` property (RFC 3744 §5.4) and returns the typed
+  `Privilege` set the authenticated user holds on the path — the RFC 3744 core
+  privileges plus the CalDAV `read-free-busy` extension map to dedicated
+  variants, unknown element names are preserved as `Privilege::Other`. The
+  streaming multistatus parser and `DavItem` gained
+  `current_user_privileges`, and the `Operation` enum gained
+  `PropfindCurrentUserPrivilegeSet` (reported on `Error::UnexpectedStatus`).
+  Read-only exposure, no ACL writes. `Privilege` is re-exported from
+  `webdav::` and the crate root
 - Scheduling (RFC 6638, issue #171): a new `caldav::scheduling` module for
   CalDAV `calendar-auto-schedule`. `CalDavClient::discover_schedule_endpoints`
   reads `schedule-inbox-URL`, `schedule-outbox-URL`, and
