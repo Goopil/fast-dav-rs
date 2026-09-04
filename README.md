@@ -88,6 +88,7 @@ features, and major releases introduce breaking changes when needed.
 - HTTP/2 with connection pooling and automatic response decompression.
 - Streaming XML parsing for multistatus responses.
 - ETag helpers and conditional methods for safe updates.
+- Typed current-user privileges (`current_user_privileges`, RFC 3744 §5.4).
 
 ### Advanced Features
 
@@ -209,6 +210,32 @@ typed view: `WebDavClient::capabilities` parses the header into
 `CalendarAccess`, `Addressbook`, `ExtendedMkcol`, `CalendarProxy`), with
 `calendarserver-*` vendor tokens and unknown extensions passing through as
 `DavCompliance::Other`.
+
+### Current-user privileges (RFC 3744 §5.4)
+
+`current_user_privileges` (all clients) `PROPFIND`s the
+`current-user-privilege-set` property and returns the typed
+`Privilege` set the authenticated user holds on a path. The set is
+advisory — servers may grant privileges through inherited or aggregated
+ACEs, and an absent privilege does not prove an operation will be denied.
+Unrecognized privilege elements surface as `Privilege::Other(name)`:
+
+```rust
+use fast_dav_rs::webdav::Privilege;
+
+let privileges = client.current_user_privileges("calendars/alice/").await?;
+if privileges.contains(&Privilege::WriteContent) {
+    // safe to offer editing in the UI
+}
+// `#[non_exhaustive]`: always keep a wildcard arm when matching.
+for privilege in &privileges {
+    match privilege {
+        Privilege::Read => println!("read"),
+        Privilege::Other(name) => println!("server-specific: {name}"),
+        _ => println!("other"),
+    }
+}
+```
 
 ## Error Handling & Migration
 

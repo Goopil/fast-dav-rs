@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Typed current-user privileges (issue #174): `WebDavClient::current_user_privileges(path)`
+  (delegated on `CalDavClient`/`CardDavClient`) `PROPFIND`s the
+  `current-user-privilege-set` property (RFC 3744 §5.4) and returns the typed
+  `Privilege` set the authenticated user holds on the path — the RFC 3744 core
+  privileges plus the CalDAV `read-free-busy` extension map to dedicated
+  variants, unknown element names are preserved as `Privilege::Other`. The
+  streaming multistatus parser and `DavItem` gained
+  `current_user_privileges`, and the `Operation` enum gained
+  `PropfindCurrentUserPrivilegeSet` (reported on `Error::UnexpectedStatus`).
+  Read-only exposure, no ACL writes. `Privilege` is re-exported from
+  `webdav::` and the crate root
 - Timezones (RFC 7809, issue #173): `CalDavClient::calendar_timezone` reads a
   calendar's `calendar-timezone` property (`Depth: 0` `PROPFIND`) and returns
   the stored `VTIMEZONE` iCalendar object verbatim as `Option<String>`

@@ -5,6 +5,7 @@ pub mod compression_probe_tests;
 pub mod discovery_tests;
 pub mod locking_tests;
 pub mod prefer_tests;
+pub mod privileges_tests;
 pub mod protocol_tests;
 pub mod redirect_tests;
 pub mod retry_tests;

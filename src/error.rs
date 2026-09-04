@@ -474,6 +474,8 @@ pub enum Operation {
     /// `POST` of an attachment body to a calendar collection with
     /// `?action=attachment-add` (RFC 8607 §6.1).
     PostManagedAttachment,
+    /// `PROPFIND` to read `current-user-privilege-set` (RFC 3744 §5.4).
+    PropfindCurrentUserPrivilegeSet,
 }
 
 impl std::fmt::Display for Operation {
@@ -499,6 +501,7 @@ impl std::fmt::Display for Operation {
             Self::ScheduleInbox => "PROPFIND schedule inbox",
             Self::ScheduleConditionalWrite => "conditional write with schedule-tag",
             Self::PostManagedAttachment => "POST managed attachment",
+            Self::PropfindCurrentUserPrivilegeSet => "PROPFIND current-user-privilege-set",
         };
         f.write_str(s)
     }
