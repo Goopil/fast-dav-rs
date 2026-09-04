@@ -81,6 +81,7 @@ features, and major releases introduce breaking changes when needed.
 - CalDAV calendar discovery, queries, and event CRUD.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
 - CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, and `If-Schedule-Tag-Match` conditional writes.
+- CalDAV `calendar-timezone` read (RFC 7809 §5.1): per-calendar and via `CalendarInfo.timezone`.
 - CalDAV managed attachments (RFC 8607): `post_managed_attachment` stores an attachment on an event via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
 - Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`).
 - CardDAV addressbook discovery, queries, and contact CRUD.
@@ -857,6 +858,27 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+### Timezones (RFC 7809)
+
+`CalDavClient::calendar_timezone(path)` reads a calendar's `calendar-timezone`
+property (`Depth: 0` `PROPFIND`) and returns the stored iCalendar object —
+an ICS document with exactly one `VTIMEZONE` component — verbatim as
+`Option<String>` (`None` when the server does not store it). The same value is
+surfaced per calendar in `CalendarInfo.timezone` by `list_calendars`.
+
+Pair the returned object with a dedicated iCalendar parser (e.g. `icalendar`)
+to derive the UTC offset rules; this library does not interpret `VTIMEZONE`
+data. The write path (storing a `calendar-timezone` via `MKCALENDAR` or
+`PROPPATCH`) is not exposed.
+
+Server support:
+
+| Server | `calendar-timezone` support |
+| --- | --- |
+| Radicale | Not stored (the property is always absent; verified against the fixture) |
+| SabreDAV | Supported on calendar creation (set at `MKCALENDAR` time) |
+| Nextcloud | Partial (available on some calendars, not universally stored) |
 
 ### CalDAV scheduling (RFC 6638)
 
