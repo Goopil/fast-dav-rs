@@ -135,8 +135,9 @@ END:VCALENDAR"#
         .expect("event PUT");
     assert!(
         put.status().is_success(),
-        "event PUT must succeed, got {}",
-        put.status()
+        "event PUT must succeed, got {}, body: {}",
+        put.status(),
+        String::from_utf8_lossy(put.body())
     );
 
     let get = client.get(&event_path).await.expect("event GET");
@@ -172,8 +173,9 @@ END:VCALENDAR"#
         .expect("VTODO PUT");
     assert!(
         todo_put.status().is_success(),
-        "VTODO PUT must succeed, got {}",
-        todo_put.status()
+        "VTODO PUT must succeed, got {}, body: {}",
+        todo_put.status(),
+        String::from_utf8_lossy(todo_put.body())
     );
     let todo_get = client.get(&todo_path).await.expect("VTODO GET");
     assert!(todo_get.status().is_success(), "VTODO GET must succeed");
