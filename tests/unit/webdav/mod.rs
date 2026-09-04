@@ -10,6 +10,7 @@ pub mod redirect_tests;
 pub mod retry_tests;
 pub mod streaming_tests;
 pub mod sync_capability_tests;
+pub mod sync_session_tests;
 pub mod sync_tests;
 pub mod tracing_tests;
 pub mod uri_tests;

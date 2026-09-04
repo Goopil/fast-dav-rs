@@ -878,3 +878,102 @@ END:VCALENDAR"#,
     }
     let _ = client.delete(&calendar_path).await;
 }
+
+/// `SyncSession` happy path (issue #160) against Sabre/DAV: the initial
+/// snapshot lists the events, an incremental sync after a deletion reports
+/// the deletion, and the token carries across the session's calls.
+#[tokio::test]
+async fn test_sync_session_tracks_additions_and_deletions() {
+    let client = create_test_client();
+    let calendar_name = generate_unique_calendar_name();
+    let calendar_path = format!("calendars/test/{}/", calendar_name);
+
+    let calendar_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{}</D:displayname>
+    </D:prop>
+  </D:set>
+</C:mkcalendar>"#,
+        calendar_name
+    );
+    let mk_response = client.mkcalendar(&calendar_path, &calendar_xml).await;
+    assert!(
+        mk_response
+            .as_ref()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false),
+        "Expected successful calendar creation"
+    );
+
+    let mut event_paths = Vec::new();
+    let mut event_uids = Vec::new();
+    for i in 1..=2 {
+        let event_uid = format!("{}-session-{}", generate_unique_event_uid(), i);
+        let event_path = format!("{calendar_path}{event_uid}.ics");
+        let event_ics = format!(
+            r#"BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//SyncSession E2E//EN
+BEGIN:VEVENT
+UID:{}
+DTSTAMP:20230101T000000Z
+DTSTART:20231225T100000Z
+DTEND:20231225T110000Z
+SUMMARY:SyncSession e2e event {}
+END:VEVENT
+END:VCALENDAR"#,
+            event_uid, i
+        );
+        let response = client
+            .put(&event_path, Bytes::from(event_ics))
+            .await
+            .expect("event PUT request");
+        assert!(
+            response.status().is_success(),
+            "Expected successful event creation, got {}",
+            response.status()
+        );
+        event_paths.push(event_path);
+        event_uids.push(event_uid);
+    }
+
+    let session = client.sync_session(&calendar_path);
+    let snapshot = session.initial().await.expect("initial sync session");
+    for uid in &event_uids {
+        assert!(
+            snapshot.items.iter().any(|entry| entry.href.contains(uid)),
+            "initial snapshot must list {uid}, got {snapshot:?}"
+        );
+    }
+    assert!(
+        snapshot.sync_token.is_some(),
+        "Sabre/DAV must hand out a sync token for the session"
+    );
+
+    // Delete one event; the incremental delta must report it (server wins,
+    // no client-side merge logic).
+    let deleted_path = event_paths[0].clone();
+    let delete = client.delete(&deleted_path).await.expect("event DELETE");
+    assert!(delete.status().is_success(), "event DELETE must succeed");
+
+    let delta = session.incremental().await.expect("incremental sync");
+    assert!(!delta.resynced, "a healthy token must not trigger a resync");
+    assert!(
+        delta
+            .deleted
+            .iter()
+            .any(|href| href.contains(&event_uids[0])),
+        "the deletion must surface in delta.deleted, got {delta:?}"
+    );
+    assert!(
+        delta.added.is_empty(),
+        "no additions since the initial sync, got {delta:?}"
+    );
+
+    // Remaining event stays untouched.
+    let _ = client.delete(&event_paths[1]).await;
+    let _ = client.delete(&calendar_path).await;
+}
