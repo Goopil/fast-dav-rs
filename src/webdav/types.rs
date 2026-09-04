@@ -1,5 +1,5 @@
-use crate::webdav::xml;
 use crate::Result;
+use crate::webdav::xml;
 
 /// Outcome of the WebDAV-Sync (RFC 6578) support probe.
 ///
