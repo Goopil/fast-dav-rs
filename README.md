@@ -81,6 +81,7 @@ features, and major releases introduce breaking changes when needed.
 - CalDAV calendar discovery, queries, and event CRUD.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
 - CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, and `If-Schedule-Tag-Match` conditional writes.
+- CalDAV managed attachments (RFC 8607): `post_managed_attachment` stores an attachment on an event via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
 - Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`).
 - CardDAV addressbook discovery, queries, and contact CRUD.
 - HTTP/2 with connection pooling and automatic response decompression.
