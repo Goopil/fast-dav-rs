@@ -91,7 +91,7 @@ END:VCALENDAR"#,
             .iter()
             .all(|item| !item.is_deleted && item.etag.is_some()),
         "A fresh initial sync must list live items with ETags ({} items)",
-        delta.added.len()
+        delta.items.len()
     );
     assert!(
         delta.sync_token.is_some(),
