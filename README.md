@@ -81,8 +81,8 @@ features, and major releases introduce breaking changes when needed.
 - CalDAV calendar discovery, queries, and event CRUD.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
 - CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, and `If-Schedule-Tag-Match` conditional writes.
-- CalDAV `calendar-timezone` read (RFC 7809 §5.1): per-calendar and via `CalendarInfo.timezone`.
-- CalDAV managed attachments (RFC 8607): `post_managed_attachment` stores an attachment on an event via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
+- CalDAV `calendar-timezone` read (RFC 4791 §5.2.2): per-calendar and via `CalendarInfo.timezone`.
+- CalDAV managed attachments (RFC 8607, sent in the non-IETF CalendarServer collection-targeted form): `post_managed_attachment` stores an attachment via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
 - Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`).
 - CardDAV addressbook discovery, queries, and contact CRUD.
 - HTTP/2 with connection pooling and automatic response decompression.
@@ -290,7 +290,7 @@ fn is_retryable(error: &Error) -> bool {
 The `Operation` enum identifies which DAV operation produced an
 `UnexpectedStatus` (e.g. `PropfindCollections`, `ReportCalendarQuery`,
 `PropfindScheduleEndpoints`, `PostSchedule`, `ScheduleInbox`,
-`ScheduleConditionalWrite`, `Lock`, `Unlock`). The
+`PostManagedAttachment`, `Lock`, `Unlock`). The
 `EtagReason` enum describes why an ETag was rejected (`Empty`,
 `InvalidFormat`, `InvalidCharacters`, `InvalidHeaderValue`, `Weak`).
 
@@ -859,7 +859,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-### Timezones (RFC 7809)
+### Timezones (RFC 4791 §5.2.2)
 
 `CalDavClient::calendar_timezone(path)` reads a calendar's `calendar-timezone`
 property (`Depth: 0` `PROPFIND`) and returns the stored iCalendar object —
@@ -897,11 +897,14 @@ async fn main() -> Result<()> {
     let endpoints = client.discover_schedule_endpoints(&principal).await?;
 
     // Scheduling request against the outbox: `Originator` header (the
-    // sender's cal-address) plus one `Recipient` header per attendee; the
-    // raw iTIP body is sent verbatim, no parsing.
+    // sender's cal-address) plus one `Recipient` header per attendee (a
+    // widely-implemented CalendarServer extension, not defined by
+    // RFC 6638); the raw iTIP body is sent verbatim, no parsing.
+    // RFC 6638 §5 requires the outbox POST body to be a VFREEBUSY
+    // component with METHOD:REQUEST.
     if let Some(outbox) = &endpoints.outbox {
         let request = Bytes::from(
-            "BEGIN:VCALENDAR\nVERSION:2.0\nMETHOD:REQUEST\nBEGIN:VEVENT\nUID:kickoff\nDTSTAMP:20260101T000000Z\nDTSTART:20260104T140000Z\nDTEND:20260104T150000Z\nORGANIZER:mailto:alice@example.com\nATTENDEE:mailto:bob@example.com\nEND:VEVENT\nEND:VCALENDAR\n",
+            "BEGIN:VCALENDAR\nVERSION:2.0\nMETHOD:REQUEST\nBEGIN:VFREEBUSY\nUID:kickoff\nDTSTAMP:20260101T000000Z\nDTSTART:20260104T000000Z\nDTEND:20260105T000000Z\nORGANIZER:mailto:alice@example.com\nATTENDEE:mailto:bob@example.com\nEND:VFREEBUSY\nEND:VCALENDAR\n",
         );
         let response = client
             .post_schedule(

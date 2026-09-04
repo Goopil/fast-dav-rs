@@ -1,5 +1,5 @@
 //! Wire tests for [`CalDavClient::calendar_timezone`] (issue #173): a
-//! `Depth: 0` calendar `PROPFIND` for `calendar-timezone` (RFC 7809 §5.1)
+//! `Depth: 0` calendar `PROPFIND` for `calendar-timezone` (RFC 4791 §5.2.2)
 //! mapped to `Option<String>`.
 
 use fast_dav_rs::{CalDavClient, Error, Operation, RequestCompressionMode};

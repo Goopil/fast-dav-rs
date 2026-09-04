@@ -383,7 +383,7 @@ pub(crate) trait ItemConsumer {
 }
 
 /// Map a privilege element's raw name to the typed [`Privilege`] (RFC 3744
-/// §2.3, plus the CalDAV `read-free-busy` extension, RFC 4791 §4.1).
+/// §3, plus the CalDAV `read-free-busy` extension, RFC 4791 §6.1.1).
 /// Unknown local names fall back to [`Privilege::Other`].
 fn privilege_from_local_name(raw: &[u8]) -> Privilege {
     let local = local_name(raw);
@@ -799,8 +799,9 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                 .push(trimmed.to_string());
         } else if self.path_ends_with(&[ElementName::ManagedId]) {
             // `managed-id` elements live inside the `managed-ids` property
-            // (RFC 8607 §10.2.4); a suffix match on the element name keeps
-            // this independent of the parent nesting.
+            // (CalendarServer extension; RFC 8607 §4.3 defines MANAGED-ID
+            // only as an iCalendar ATTACH parameter); a suffix match on the
+            // element name keeps this independent of the parent nesting.
             self.current.managed_ids.push(trimmed.to_string());
         }
     }

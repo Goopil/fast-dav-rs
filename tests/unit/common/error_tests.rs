@@ -465,9 +465,35 @@ fn operation_display_covers_all_variants() {
         Operation::ReportSyncCollection.to_string(),
         "REPORT sync-collection"
     );
+    assert_eq!(Operation::Lock.to_string(), "LOCK");
+    assert_eq!(Operation::Unlock.to_string(), "UNLOCK");
+    assert_eq!(
+        Operation::DiscoverWellKnownCaldav.to_string(),
+        "PROPFIND .well-known/caldav"
+    );
+    assert_eq!(
+        Operation::DiscoverWellKnownCarddav.to_string(),
+        "PROPFIND .well-known/carddav"
+    );
+    assert_eq!(
+        Operation::PropfindScheduleEndpoints.to_string(),
+        "PROPFIND schedule endpoints"
+    );
+    assert_eq!(
+        Operation::PostSchedule.to_string(),
+        "POST scheduling outbox"
+    );
+    assert_eq!(
+        Operation::ScheduleInbox.to_string(),
+        "PROPFIND schedule inbox"
+    );
     assert_eq!(
         Operation::PostManagedAttachment.to_string(),
         "POST managed attachment"
+    );
+    assert_eq!(
+        Operation::PropfindCurrentUserPrivilegeSet.to_string(),
+        "PROPFIND current-user-privilege-set"
     );
 }
 
