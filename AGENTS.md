@@ -88,6 +88,7 @@ src/
 │   ├── client.rs       # CalDavClient
 │   ├── types.rs        # Calendar-specific types
 │   ├── streaming.rs    # Calendar-specific streaming
+│   ├── scheduling.rs   # RFC 6638 scheduling (endpoints, outbox, inbox, schedule-tag)
 │   └── mod.rs
 ├── carddav/            # CardDAV-specific functionality
 │   ├── client.rs       # CardDavClient

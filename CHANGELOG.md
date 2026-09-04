@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Scheduling (RFC 6638, issue #171): a new `caldav::scheduling` module for
+  CalDAV `calendar-auto-schedule`. `CalDavClient::discover_schedule_endpoints`
+  reads `schedule-inbox-URL`, `schedule-outbox-URL`, and
+  `calendar-user-address-set` from a principal `PROPFIND` into the new
+  `ScheduleEndpoints` type; `post_schedule` sends a raw iTIP message (e.g. a
+  free-busy request) to the scheduling outbox and returns the verbatim
+  `SchedulingResponse` (`StatusCode` + body, no iTIP parsing);
+  `list_inbox` `PROPFIND`s a schedule inbox (`Depth: 1`, inline
+  `getetag` + `calendar-data`) into `Vec<InboxItem>`, skipping the
+  collection entry and deleted items; `put_if_schedule_tag` /
+  `delete_if_schedule_tag` guard scheduling-object writes and removals with
+  the `If-Schedule-Tag-Match` header (RFC 6638 §8.3, schedule-tag supersedes
+  the ETag when attendees may have processed an invitation in between) and
+  reject empty tags with `Error::InvalidInput` before any I/O. The streaming
+  multistatus parser and `DavItem` gained the three new properties
+  (`schedule_inbox`, `schedule_outbox`, `calendar_user_addresses`), and the
+  `Operation` enum gained `PropfindScheduleEndpoints`, `PostSchedule`,
+  `ScheduleInbox`, and `ScheduleConditionalWrite` (reported on
+  `Error::UnexpectedStatus`). New public types are re-exported from
+  `caldav::` and the crate root
+
 ## [0.12.0] - 2026-09-04
 
 ### Added
