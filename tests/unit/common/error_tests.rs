@@ -461,6 +461,10 @@ fn operation_display_covers_all_variants() {
         Operation::ReportSyncCollection.to_string(),
         "REPORT sync-collection"
     );
+    assert_eq!(
+        Operation::PostManagedAttachment.to_string(),
+        "POST managed attachment"
+    );
 }
 
 #[test]

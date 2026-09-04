@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hyper::{HeaderMap, Method, Response, header};
+use percent_encoding::utf8_percent_encode;
 
 use crate::BatchItem;
 use crate::Depth;
@@ -9,7 +10,7 @@ use crate::caldav::builder::CalDavClientBuilder;
 use crate::caldav::streaming::parse_multistatus_bytes;
 use crate::caldav::types::{
     CalendarInfo, CalendarObject, CalendarQueryFilter, DavItem, FreeBusyPeriod, FreeBusyType,
-    SyncItem, SyncResponse, TimeRange,
+    ManagedAttachment, SyncItem, SyncResponse, TimeRange,
 };
 use crate::caldav::validation::{ValidationLevel, validate_icalendar_level};
 use crate::impl_dav_client_delegates;
@@ -712,10 +713,130 @@ impl CalDavClient {
         crate::webdav::sync::SyncSession::new(self.webdav.clone(), collection)
             .with_data_spec(crate::webdav::sync::CALENDAR_DATA_SPEC)
     }
+
+    /// Store an attachment on a calendar object resource via **managed
+    /// attachments** (RFC 8607 §6.1).
+    ///
+    /// Sends `POST <calendar_path>?action=attachment-add&uid=<ics_uid>`
+    /// (plus `&recurrence-id=<recurrence_id>` when given) with `body`
+    /// verbatim as the attachment content and `content_type` as its
+    /// `Content-Type`. On success the server-stored attachment is returned:
+    /// `href` (from the `Location` header) identifies the attachment
+    /// resource for later `GET`/`PUT`/`DELETE`, and `managed_id` (from the
+    /// `Cal-Managed-ID` header, or the `managed-id` query parameter of the
+    /// `Location` when the header is absent) must be sent back as the
+    /// `Cal-Managed-ID` header on subsequent updates/removals of the
+    /// attachment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`](crate::Error::InvalidInput) **before
+    /// any network I/O** when `content_type` cannot form a valid HTTP
+    /// header value. Returns
+    /// [`Error::UnexpectedStatus`](crate::Error::UnexpectedStatus) with
+    /// [`Operation::PostManagedAttachment`](crate::Operation::PostManagedAttachment)
+    /// when the server responds with a non-success status, and
+    /// [`Error::other`](crate::Error::other) when a success response carries
+    /// neither a `Cal-Managed-ID` header nor a `managed-id` `Location`
+    /// query parameter (the server does not implement managed attachments).
+    ///
+    /// # Example
+    /// ```no_run
+    /// use bytes::Bytes;
+    /// use fast_dav_rs::{CalDavClient, Result};
+    ///
+    /// # async fn example(client: &CalDavClient) -> Result<()> {
+    /// let attachment = client
+    ///     .post_managed_attachment(
+    ///         "calendars/work/",
+    ///         "20010712T182145Z-123401@example.com",
+    ///         None,
+    ///         Bytes::from_static(b"agenda attachment"),
+    ///         "text/plain",
+    ///     )
+    ///     .await?;
+    /// println!("stored at {} (managed id {})", attachment.href, attachment.managed_id);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn post_managed_attachment(
+        &self,
+        calendar_path: &str,
+        ics_uid: &str,
+        recurrence_id: Option<&str>,
+        body: Bytes,
+        content_type: &str,
+    ) -> Result<ManagedAttachment> {
+        let content_type_value = header::HeaderValue::from_str(content_type).map_err(|err| {
+            Error::InvalidInput(format!(
+                "content-type cannot form a valid header value: {err}"
+            ))
+        })?;
+        // `build_uri` treats its input as a path (`?` is percent-encoded), so
+        // resolve the collection to an absolute URI first and append the
+        // RFC 8607 §6.1 query afterwards — an absolute URL passes through
+        // `send` verbatim.
+        let mut url = format!(
+            "{}?action=attachment-add&uid={}",
+            self.build_uri(calendar_path)?,
+            utf8_percent_encode(ics_uid, QUERY_UNRESERVED)
+        );
+        if let Some(recurrence_id) = recurrence_id {
+            url.push_str("&recurrence-id=");
+            url.push_str(&utf8_percent_encode(recurrence_id, QUERY_UNRESERVED).to_string());
+        }
+        let mut h = HeaderMap::new();
+        h.insert(header::CONTENT_TYPE, content_type_value);
+        let resp = self.send(Method::POST, &url, h, Some(body), None).await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::PostManagedAttachment,
+                status,
+            });
+        }
+        let headers = resp.headers();
+        let href = headers
+            .get(header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let managed_id = headers
+            .get("cal-managed-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .or_else(|| href.as_deref().and_then(managed_id_from_location));
+        match (href, managed_id) {
+            (Some(href), Some(managed_id)) => Ok(ManagedAttachment { href, managed_id }),
+            (_, None) => Err(Error::other("attachment POST returned no managed id")),
+            (None, Some(_)) => Err(Error::other("attachment POST returned no Location header")),
+        }
+    }
 }
 
 pub fn escape_xml(input: &str) -> String {
     crate::webdav::xml::escape_xml(input)
+}
+
+/// RFC 3986 unreserved characters — the safe set for URL query values.
+const QUERY_UNRESERVED: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// Extract the percent-decoded `managed-id` query parameter from a
+/// `Location` URL (servers that omit the `Cal-Managed-ID` response header,
+/// RFC 8607 §6.1).
+fn managed_id_from_location(location: &str) -> Option<String> {
+    let query = location.split_once('?')?.1.split('#').next()?;
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == "managed-id").then(|| {
+            percent_encoding::percent_decode_str(value)
+                .decode_utf8_lossy()
+                .into_owned()
+        })
+    })
 }
 
 /// Reject `end <= start` for structurally valid iCalendar UTC date-times

@@ -210,7 +210,9 @@ jobs:
 
     - name: Run Nextcloud e2e tests
       run: |
-        cargo test --manifest-path Cargo.toml --test e2e_nextcloud
+        # Serialized: parallel test threads hit SQLite write contention in the
+        # Nextcloud fixture (sporadic 500s on PUT since the suite grew).
+        cargo test --manifest-path Cargo.toml --test e2e_nextcloud -- --test-threads=1
       env:
         NEXTCLOUD_URL: http://localhost:8083
 
