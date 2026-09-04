@@ -7,6 +7,15 @@ use crate::webdav::xml;
 /// An attachment stored via **managed attachments** (RFC 8607 §6.1),
 /// as returned by
 /// [`CalDavClient::post_managed_attachment`](crate::CalDavClient::post_managed_attachment).
+///
+/// # Example
+/// ```no_run
+/// use fast_dav_rs::caldav::ManagedAttachment;
+///
+/// # fn print_attachment(att: &ManagedAttachment) {
+/// println!("stored at {} (managed id {})", att.href, att.managed_id);
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ManagedAttachment {

@@ -35,11 +35,9 @@ async fn post_managed_attachment_returns_href_and_managed_id_from_headers() {
     assert_eq!(att.managed_id, "mid-42");
 
     let request = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
-    assert!(
-        request.starts_with("POST /c/?action=attachment-add&uid=uid-123 HTTP/1.1"),
-        "unexpected request line: {}",
-        request.lines().next().unwrap_or_default()
-    );
+    // No captured-request interpolation in the failure message (CodeQL:
+    // uids must not reach test logs); the pattern itself is the diagnostic.
+    assert!(request.starts_with("POST /c/?action=attachment-add&uid=uid-123 HTTP/1.1"));
     assert!(
         !request.contains("recurrence-id"),
         "recurrence-id must be absent when None"
@@ -76,9 +74,7 @@ async fn post_managed_attachment_percent_encodes_uid_and_sends_recurrence_id() {
     assert!(
         request.starts_with(
             "POST /c/?action=attachment-add&uid=uid%20with%20spaces%26co&recurrence-id=20260601T100000Z HTTP/1.1"
-        ),
-        "unexpected request line: {}",
-        request.lines().next().unwrap_or_default()
+        )
     );
 }
 
