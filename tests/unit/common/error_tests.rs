@@ -442,6 +442,10 @@ fn operation_display_covers_all_variants() {
         "PROPFIND collections"
     );
     assert_eq!(
+        Operation::PropfindCalendarTimezone.to_string(),
+        "PROPFIND calendar-timezone"
+    );
+    assert_eq!(
         Operation::ReportCalendarQuery.to_string(),
         "REPORT calendar-query"
     );
