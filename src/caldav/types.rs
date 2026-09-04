@@ -4,6 +4,21 @@ pub use crate::webdav::types::{
 
 use crate::webdav::xml;
 
+/// An attachment stored via **managed attachments** (RFC 8607 §6.1),
+/// as returned by
+/// [`CalDavClient::post_managed_attachment`](crate::CalDavClient::post_managed_attachment).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ManagedAttachment {
+    /// Href of the stored attachment resource, taken verbatim from the
+    /// `Location` response header (RFC 8607 §6.1).
+    pub href: String,
+    /// Opaque server-managed id, from the `Cal-Managed-ID` response header
+    /// or the `managed-id` query parameter of the `Location` URL. Send it
+    /// back as the `Cal-Managed-ID` header on updates/removals.
+    pub managed_id: String,
+}
+
 /// Summary of a calendar (collection) returned by a `PROPFIND` depth=1.
 #[derive(Debug, Clone)]
 #[non_exhaustive]

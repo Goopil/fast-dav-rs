@@ -637,6 +637,9 @@ pub struct DavItem {
     pub schedule_outbox: Option<String>,
     /// `calendar-user-address-set` hrefs (RFC 6638 §2.4.1).
     pub calendar_user_addresses: Vec<String>,
+    /// Managed attachment ids (RFC 8607 §10.2.4): the values of the
+    /// `managed-id` elements inside the `managed-ids` property.
+    pub managed_ids: Vec<String>,
     pub current_user_principal: Vec<String>,
     pub owner: Option<String>,
     pub calendar_description: Option<String>,
@@ -679,6 +682,7 @@ impl DavItem {
             schedule_inbox: None,
             schedule_outbox: None,
             calendar_user_addresses: Vec::new(),
+            managed_ids: Vec::new(),
             current_user_principal: Vec::new(),
             owner: None,
             calendar_description: None,

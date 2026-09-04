@@ -20,7 +20,7 @@ pub use streaming::{
 };
 pub use types::{
     BatchItem, CalendarInfo, CalendarObject, CalendarQueryFilter, Collation, DavItem, Depth,
-    FreeBusyPeriod, FreeBusyType, MatchType, MediaType, ParamFilter, PropFilter, SyncItem,
-    SyncResponse, TextMatch, TimeRange,
+    FreeBusyPeriod, FreeBusyType, ManagedAttachment, MatchType, MediaType, ParamFilter, PropFilter,
+    SyncItem, SyncResponse, TextMatch, TimeRange,
 };
 pub use validation::{ValidationLevel, validate_icalendar};
