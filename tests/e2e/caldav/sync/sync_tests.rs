@@ -946,7 +946,7 @@ END:VCALENDAR"#,
     for uid in &event_uids {
         assert!(
             snapshot.items.iter().any(|entry| entry.href.contains(uid)),
-            "initial snapshot must list {uid} ({} items)",
+            "initial snapshot must list all seeded events ({} items)",
             snapshot.items.len()
         );
     }
