@@ -631,6 +631,12 @@ pub struct DavItem {
     pub address_data: Option<String>,
     pub calendar_home_set: Vec<String>,
     pub addressbook_home_set: Vec<String>,
+    /// `schedule-inbox-URL` href (RFC 6638 §2.2.1); `None` when absent.
+    pub schedule_inbox: Option<String>,
+    /// `schedule-outbox-URL` href (RFC 6638 §2.1.1); `None` when absent.
+    pub schedule_outbox: Option<String>,
+    /// `calendar-user-address-set` hrefs (RFC 6638 §2.4.1).
+    pub calendar_user_addresses: Vec<String>,
     pub current_user_principal: Vec<String>,
     pub owner: Option<String>,
     pub calendar_description: Option<String>,
@@ -670,6 +676,9 @@ impl DavItem {
             address_data: None,
             calendar_home_set: Vec::new(),
             addressbook_home_set: Vec::new(),
+            schedule_inbox: None,
+            schedule_outbox: None,
+            calendar_user_addresses: Vec::new(),
             current_user_principal: Vec::new(),
             owner: None,
             calendar_description: None,

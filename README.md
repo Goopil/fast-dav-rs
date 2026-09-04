@@ -80,6 +80,7 @@ features, and major releases introduce breaking changes when needed.
 
 - CalDAV calendar discovery, queries, and event CRUD.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
+- CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, and `If-Schedule-Tag-Match` conditional writes.
 - Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`).
 - CardDAV addressbook discovery, queries, and contact CRUD.
 - HTTP/2 with connection pooling and automatic response decompression.
@@ -259,7 +260,8 @@ fn is_retryable(error: &Error) -> bool {
 
 The `Operation` enum identifies which DAV operation produced an
 `UnexpectedStatus` (e.g. `PropfindCollections`, `ReportCalendarQuery`,
-`Lock`, `Unlock`). The
+`PropfindScheduleEndpoints`, `PostSchedule`, `ScheduleInbox`,
+`ScheduleConditionalWrite`, `Lock`, `Unlock`). The
 `EtagReason` enum describes why an ETag was rejected (`Empty`,
 `InvalidFormat`, `InvalidCharacters`, `InvalidHeaderValue`, `Weak`).
 
@@ -821,6 +823,51 @@ async fn main() -> Result<()> {
         if let Some(etag) = &event.etag {
             let updated = Bytes::from("BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:kickoff\nSUMMARY:Updated\nEND:VEVENT\nEND:VCALENDAR\n");
             client.put_if_match(&event.href, updated, etag).await?;
+        }
+    }
+
+    Ok(())
+}
+```
+
+### CalDAV scheduling (RFC 6638)
+
+```rust
+use fast_dav_rs::{CalDavClient, Result};
+use bytes::Bytes;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
+
+    let principal = client
+        .discover_current_user_principal()
+        .await?
+        .ok_or_else(|| fast_dav_rs::Error::other("no principal returned"))?;
+    let endpoints = client.discover_schedule_endpoints(&principal).await?;
+
+    // Scheduling request against the outbox: `Originator` header (the
+    // sender's cal-address) plus one `Recipient` header per attendee; the
+    // raw iTIP body is sent verbatim, no parsing.
+    if let Some(outbox) = &endpoints.outbox {
+        let request = Bytes::from(
+            "BEGIN:VCALENDAR\nVERSION:2.0\nMETHOD:REQUEST\nBEGIN:VEVENT\nUID:kickoff\nDTSTAMP:20260101T000000Z\nDTSTART:20260104T140000Z\nDTEND:20260104T150000Z\nORGANIZER:mailto:alice@example.com\nATTENDEE:mailto:bob@example.com\nEND:VEVENT\nEND:VCALENDAR\n",
+        );
+        let response = client
+            .post_schedule(
+                outbox,
+                "mailto:alice@example.com",
+                &["mailto:bob@example.com"],
+                request,
+            )
+            .await?;
+        println!("scheduling POST returned {}", response.status);
+    }
+
+    // Incoming scheduling messages in the schedule inbox.
+    if let Some(inbox) = &endpoints.inbox {
+        for item in client.list_inbox(inbox).await? {
+            println!("scheduling message: {}", item.href);
         }
     }
 

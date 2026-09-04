@@ -458,6 +458,17 @@ pub enum Operation {
     DiscoverWellKnownCaldav,
     /// `PROPFIND` against `/.well-known/carddav` (RFC 6764 §5 service discovery).
     DiscoverWellKnownCarddav,
+    /// `PROPFIND` to discover `schedule-inbox-URL`/`schedule-outbox-URL`/
+    /// `calendar-user-address-set` (RFC 6638 §2.1.1, §2.2.1, §2.4.1).
+    PropfindScheduleEndpoints,
+    /// `POST` of an iTIP message (e.g. a free-busy request) to a scheduling
+    /// outbox collection (RFC 6638 §5).
+    PostSchedule,
+    /// `PROPFIND` to list the contents of a schedule inbox (RFC 6638 §2.2).
+    ScheduleInbox,
+    /// Conditional `PUT`/`DELETE` guarded by `If-Schedule-Tag-Match`
+    /// (RFC 6638 §8.3, §3.2.10).
+    ScheduleConditionalWrite,
 }
 
 impl std::fmt::Display for Operation {
@@ -477,6 +488,10 @@ impl std::fmt::Display for Operation {
             Self::Unlock => "UNLOCK",
             Self::DiscoverWellKnownCaldav => "PROPFIND .well-known/caldav",
             Self::DiscoverWellKnownCarddav => "PROPFIND .well-known/carddav",
+            Self::PropfindScheduleEndpoints => "PROPFIND schedule endpoints",
+            Self::PostSchedule => "POST scheduling outbox",
+            Self::ScheduleInbox => "PROPFIND schedule inbox",
+            Self::ScheduleConditionalWrite => "conditional write with schedule-tag",
         };
         f.write_str(s)
     }

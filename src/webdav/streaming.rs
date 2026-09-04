@@ -282,6 +282,9 @@ pub enum ElementName {
     SupportedCalendarData,
     CalendarDataType,
     MaxAttendeesPerInstance,
+    ScheduleInboxUrl,
+    ScheduleOutboxUrl,
+    CalendarUserAddressSet,
 }
 
 pub fn element_from_bytes(raw: &[u8]) -> ElementName {
@@ -349,6 +352,12 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
         ElementName::MaxAttendeesPerInstance
     } else if local.eq_ignore_ascii_case(b"current-user-principal") {
         ElementName::CurrentUserPrincipal
+    } else if local.eq_ignore_ascii_case(b"schedule-inbox-url") {
+        ElementName::ScheduleInboxUrl
+    } else if local.eq_ignore_ascii_case(b"schedule-outbox-url") {
+        ElementName::ScheduleOutboxUrl
+    } else if local.eq_ignore_ascii_case(b"calendar-user-address-set") {
+        ElementName::CalendarUserAddressSet
     } else if local.eq_ignore_ascii_case(b"owner") {
         ElementName::Owner
     } else if local.eq_ignore_ascii_case(b"getcontenttype") {
@@ -706,6 +715,32 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Href,
         ]) {
             self.current.addressbook_home_set.push(trimmed.to_string());
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::ScheduleInboxUrl,
+            ElementName::Href,
+        ]) {
+            self.current.schedule_inbox = Some(trimmed.to_string());
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::ScheduleOutboxUrl,
+            ElementName::Href,
+        ]) {
+            self.current.schedule_outbox = Some(trimmed.to_string());
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::CalendarUserAddressSet,
+            ElementName::Href,
+        ]) {
+            self.current
+                .calendar_user_addresses
+                .push(trimmed.to_string());
         }
     }
 }
