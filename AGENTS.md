@@ -98,6 +98,8 @@ src/
     ├── compression.rs  # HTTP compression handling
     ├── http.rs         # HTTP client configuration
     └── mod.rs
+
+examples/               # Runnable example binaries (one per workflow; fixture prerequisites documented per file, see README "Runnable Examples")
 ```
 
 ### Imports and Dependencies
