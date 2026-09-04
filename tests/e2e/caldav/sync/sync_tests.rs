@@ -90,7 +90,8 @@ END:VCALENDAR"#,
             .items
             .iter()
             .all(|item| !item.is_deleted && item.etag.is_some()),
-        "A fresh initial sync must list live items with ETags, got: {delta:?}"
+        "A fresh initial sync must list live items with ETags ({} items)",
+        delta.added.len()
     );
     assert!(
         delta.sync_token.is_some(),
@@ -945,7 +946,8 @@ END:VCALENDAR"#,
     for uid in &event_uids {
         assert!(
             snapshot.items.iter().any(|entry| entry.href.contains(uid)),
-            "initial snapshot must list {uid}, got {snapshot:?}"
+            "initial snapshot must list {uid} ({} items)",
+            snapshot.items.len()
         );
     }
     assert!(
@@ -966,11 +968,13 @@ END:VCALENDAR"#,
             .deleted
             .iter()
             .any(|href| href.contains(&event_uids[0])),
-        "the deletion must surface in delta.deleted, got {delta:?}"
+        "the deletion must surface in delta.deleted ({} deleted)",
+        delta.deleted.len()
     );
     assert!(
         delta.added.is_empty(),
-        "no additions since the initial sync, got {delta:?}"
+        "no additions since the initial sync ({} added)",
+        delta.added.len()
     );
 
     // Remaining event stays untouched.

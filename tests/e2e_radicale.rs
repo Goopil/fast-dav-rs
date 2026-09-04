@@ -400,7 +400,9 @@ async fn test_sync_session_invalid_token_transparent_resync() {
             .href
             // Radicale percent-encodes `@` in stored hrefs (`%40`).
             .contains(uid.split('@').next().expect("uid has a local part"))),
-        "the resync must list the live event, got {delta:?}"
+        "the resync must list the live event ({} added, {} modified)",
+        delta.added.len(),
+        delta.modified.len()
     );
     assert!(
         delta.deleted.is_empty(),

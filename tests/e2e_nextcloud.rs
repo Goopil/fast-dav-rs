@@ -373,7 +373,8 @@ END:VCALENDAR"#
     let snapshot = session.initial().await.expect("initial sync session");
     assert!(
         snapshot.items.iter().any(|entry| entry.href.contains(&uid)),
-        "initial snapshot must list the event, got {snapshot:?}"
+        "initial snapshot must list the event ({} items)",
+        snapshot.items.len()
     );
     assert!(
         snapshot.sync_token.is_some(),
@@ -384,7 +385,8 @@ END:VCALENDAR"#
             .items
             .iter()
             .all(|entry| entry.data.is_some() && entry.etag.is_some()),
-        "the CalDAV session must fetch calendar data alongside the etags, got {snapshot:?}"
+        "the CalDAV session must fetch calendar data alongside the etags ({} items)",
+        snapshot.items.len()
     );
 
     // The fixture is static after setup: the incremental sync is empty.
@@ -392,7 +394,10 @@ END:VCALENDAR"#
     assert!(!delta.resynced);
     assert!(
         delta.added.is_empty() && delta.modified.is_empty() && delta.deleted.is_empty(),
-        "no changes since the initial sync: {delta:?}"
+        "no changes since the initial sync ({} added, {} modified, {} deleted)",
+        delta.added.len(),
+        delta.modified.len(),
+        delta.deleted.len()
     );
     assert!(
         delta.sync_token.is_some(),
