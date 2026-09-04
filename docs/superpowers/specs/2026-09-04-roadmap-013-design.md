@@ -30,10 +30,9 @@ crate.
   PROPFIND on the principal fetching `schedule-inbox-URL`, `schedule-outbox-URL`,
   `calendar-user-address-set` → `#[non_exhaustive]` `ScheduleEndpoints { inbox,
   outbox, user_addresses }`.
-- `post_schedule(outbox, ical_body) -> SchedulingResponse { status, request_status,
-  body }` — `REQUEST-STATUS` extracted with a line-level scan (not an iTIP parser);
-  free-busy is the same POST with a `VFREEBUSY` body (200 + body). Parsing stays
-  caller-side (`icalendar`).
+- `post_schedule(outbox, ical_body) -> SchedulingResponse { status, body }` — the raw
+  response body comes back as-is; callers parse iTIP (`REQUEST-STATUS` included) with
+  `icalendar`. Free-busy is the same POST with a `VFREEBUSY` body (200 + body).
 - `list_inbox()` → PROPFIND Depth: 1 on the inbox URL + content via the existing
   multiget machinery → `Vec<InboxItem { href, etag, data }>` (thin).
 - `put_if_schedule_tag(path, body, schedule_tag)` and `delete_if_schedule_tag(...)` →
@@ -62,8 +61,9 @@ convention); smoke tier: extend the existing read-only Provider A smoke with
 ### S3 — Timezones RFC 7809 (wave 2, verify + docs + small API)
 
 - `calendar-timezone` property (iCal body) readable via calendar PROPFIND
-  (`calendar_timezone()`), settable via extended mkcalendar/PROPPATCH where the builder
-  allows without breaking the API.
+  (`calendar_timezone()`). Read-only until a fixture proves the write path
+  (`ponytail:` no server in the fixtures round-trips a write; add
+  mkcalendar/PROPPATCH support when one does).
 - Minimum deliverable regardless of server support: **live support verification
   documented** (support table in README: Radicale no, SabreDAV partial, Nextcloud —)
   + pairing note with `icalendar` (parsing stays caller-side).
@@ -72,7 +72,7 @@ convention); smoke tier: extend the existing read-only Provider A smoke with
 
 - `current_user_privileges(path) -> Vec<Privilege>` — PROPFIND
   `current-user-privilege-set` → `#[non_exhaustive]` enum `Privilege { Read, Write,
-  WriteProperties, WriteContent, Bind, Unbind, Unlock, ReadFreeBusy, Share,
+  WriteProperties, WriteContent, Bind, Unbind, Unlock, ReadFreeBusy,
   Other(String) }`. No ACL writes (RFC 3744 still out).
 - Wire tests + SabreDAV e2e (native support).
 
