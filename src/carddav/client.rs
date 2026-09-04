@@ -117,6 +117,16 @@ impl CardDavClient {
     /// `text/vcard; charset=utf-8; version=3.0` — and bodies without a
     /// well-formed `VERSION` fall back to [`VCARD_CONTENT_TYPE`] (4.0).
     ///
+    /// # Provider quirks: read back non-ASCII writes
+    ///
+    /// On at least one real-world deployment ("Provider A"), vCard writes
+    /// containing multi-byte UTF-8 sequences can come back double-encoded
+    /// from the server. If your contacts contain non-ASCII text, verify the
+    /// write with a follow-up `GET` (or multiget) — comparing the returned
+    /// bytes against what was sent, or normalizing both sides to Unicode NFC
+    /// — before treating the write as settled. See the README's "Provider
+    /// quirks" note.
+    ///
     /// Use [`put_if_match`] or [`put_if_none_match`] for safer conditional writes.
     pub async fn put(&self, path: &str, vcard_bytes: Bytes) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();

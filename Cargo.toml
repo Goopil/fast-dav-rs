@@ -42,6 +42,8 @@ tokio = { version = "1", features = ["full"] }
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
+# Parsing stays caller-side (see examples/sync_loop.rs); parser-only, no chrono-tz.
+icalendar = { version = "0.17", default-features = false, features = ["parser"] }
 
 [[test]]
 name = "unit_tests"

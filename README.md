@@ -63,6 +63,7 @@ features, and major releases introduce breaking changes when needed.
 - [Usage Examples](#usage-examples)
 - [Streaming & Sync](#streaming--sync)
 - [Batch Operations](#batch-operations)
+- [Runnable Examples](#runnable-examples)
 - [Testing](#testing)
 - [End-to-End Testing](#end-to-end-testing)
 - [Limitations & Non-Goals](#limitations--non-goals)
@@ -940,6 +941,11 @@ the `CalDavClient`/`CardDavClient` constructors also fetch
 `calendar-data`/`address-data` for every entry (and via multiget on the
 fallback path).
 
+A runnable end-to-end version — initial + incremental + stale-token resync
+against the Radicale fixture, with `calendar-data` parsed by the `icalendar`
+crate and a file-based token store — lives in
+[`examples/sync_loop.rs`](examples/sync_loop.rs).
+
 ### WebDAV locking (class 2)
 
 All clients (`WebDavClient`, `CalDavClient`, `CardDavClient`) support WebDAV locking (RFC 4918
@@ -1090,6 +1096,32 @@ async fn main() -> Result<()> {
 }
 ```
 
+## Runnable Examples
+
+The `examples/` directory ships eight standalone binaries covering the main
+workflows of this library. Each one documents its fixture prerequisites at
+the top of the file and runs against one of the local e2e fixtures (start
+them with the `setup.sh` scripts from [End-to-End Testing](#end-to-end-testing);
+`typed_error_handling` needs no server):
+
+```bash
+cargo run --example <name>
+```
+
+| Example | Fixture | Demonstrates |
+|---------|---------|--------------|
+| `getting_started` | Radicale (:8081) | Discovery, calendar CRUD, `If-None-Match`/`If-Match` conditional writes and the 412 stale-etag race |
+| `sync_loop` | Radicale (:8081) | `SyncSession` initial + incremental + stale-token resync, `icalendar` parsing, file-based sync-token persistence |
+| `nextcloud_client` | Nextcloud (:8083) | Bearer-token builder vs Basic auth, VTODO creation and `calendar-query` fetch |
+| `radicale_client` | Radicale (:8081) | Compliance/SyncSession probes on a no-LOCK provider, graceful `LOCK` → `405` handling |
+| `streaming_large_collections` | Radicale (:8081) | `propfind_stream` + `parse_multistatus_stream_visit` with constant memory |
+| `locking_concurrent_edits` | SabreDAV (:8080) | Full `lock`/`refresh_lock`/`unlock` lifecycle, `423` for token-less writes, graceful `405` on Radicale |
+| `multiget_batched` | Radicale (:8081) | `calendar_multiget_many` chunked REPORTs with per-chunk failure reporting |
+| `typed_error_handling` | none (offline) | Matching on `Error` variants with the `#[non_exhaustive]` wildcard arm |
+
+Fixture-specific details (credentials, quirks) are in the fixture READMEs
+under `sabredav-test/`, `radicale-test/`, and `nextcloud-test/`.
+
 ## Testing
 
 ```bash
@@ -1196,6 +1228,21 @@ Nextcloud is the real-world reference: DAV strictly under `/remote.php/dav/`,
 `principals/users/{uid}` paths, VTODO coverage, and Basic auth (with app
 passwords as the documented path for hardened instances; Bearer/OIDC is out
 of scope for the fixture). See `nextcloud-test/README.md`.
+
+### Provider quirks: UTF-8 double-encoding on CardDAV writes
+
+One real-world deployment (**Provider A**) has a CardDAV write-path quirk:
+vCard `PUT`s whose body contains multi-byte UTF-8 sequences (e.g. non-ASCII
+names in `FN`/`N`) can come back **double-encoded** on read — the stored
+bytes are a second, redundant percent/UTF-8 encoding of the original, so a
+later `GET` returns corrupted text.
+
+Until that is fixed server-side, treat CardDAV writes on that service as
+**unverified until read back**: after a successful `PUT`, issue a `GET` (or
+`addressbook-multiget` fetch) and compare the returned bytes against what you
+sent — or normalize both sides to Unicode NFC before comparing — before
+marking the contact as settled in your local store. The same read-back
+pattern is a cheap safety net for any provider you do not fully control.
 
 ## Limitations & Non-Goals
 
