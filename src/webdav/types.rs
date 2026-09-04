@@ -1,5 +1,5 @@
-use crate::Result;
 use crate::webdav::xml;
+use crate::Result;
 
 /// Outcome of the WebDAV-Sync (RFC 6578) support probe.
 ///
@@ -612,7 +612,7 @@ impl MediaType {
 /// inherited or aggregated ACEs: the set is advisory, and an absent
 /// privilege does not prove an operation will be denied.
 ///
-/// ```
+/// ```no_run
 /// use fast_dav_rs::webdav::Privilege;
 ///
 /// fn describe(privileges: &[Privilege]) {
