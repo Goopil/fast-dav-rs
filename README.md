@@ -846,13 +846,22 @@ async fn main() -> Result<()> {
         .ok_or_else(|| fast_dav_rs::Error::other("no principal returned"))?;
     let endpoints = client.discover_schedule_endpoints(&principal).await?;
 
-    // Free-busy request against the scheduling outbox (raw iTIP, no parsing).
+    // Scheduling request against the outbox: `Originator` header (the
+    // sender's cal-address) plus one `Recipient` header per attendee; the
+    // raw iTIP body is sent verbatim, no parsing.
     if let Some(outbox) = &endpoints.outbox {
-        let freebusy = Bytes::from(
-            "BEGIN:VCALENDAR\nVERSION:2.0\nMETHOD:REQUEST\nBEGIN:VFREEBUSY\nDTSTAMP:20260101T000000Z\nDTSTART:20260101T000000Z\nDTEND:20260108T000000Z\nORGANIZER:mailto:alice@example.com\nEND:VFREEBUSY\nEND:VCALENDAR\n",
+        let request = Bytes::from(
+            "BEGIN:VCALENDAR\nVERSION:2.0\nMETHOD:REQUEST\nBEGIN:VEVENT\nUID:kickoff\nDTSTAMP:20260101T000000Z\nDTSTART:20260104T140000Z\nDTEND:20260104T150000Z\nORGANIZER:mailto:alice@example.com\nATTENDEE:mailto:bob@example.com\nEND:VEVENT\nEND:VCALENDAR\n",
         );
-        let response = client.post_schedule(outbox, freebusy).await?;
-        println!("free-busy returned {}", response.status);
+        let response = client
+            .post_schedule(
+                outbox,
+                "mailto:alice@example.com",
+                &["mailto:bob@example.com"],
+                request,
+            )
+            .await?;
+        println!("scheduling POST returned {}", response.status);
     }
 
     // Incoming scheduling messages in the schedule inbox.

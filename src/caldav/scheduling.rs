@@ -22,6 +22,25 @@ use crate::{CalDavClient, Error, Operation};
 /// `inbox`/`outbox` are `None` when the server omits the corresponding
 /// `schedule-inbox-URL`/`schedule-outbox-URL` property (the calendar user
 /// is not enabled for receiving/sending scheduling messages on the server).
+///
+/// # Example
+/// ```no_run
+/// use fast_dav_rs::{CalDavClient, Result};
+///
+/// # async fn example() -> Result<()> {
+/// let client = CalDavClient::new(
+///     "https://cal.example.com/dav/",
+///     Some("user01"),
+///     Some("secret"),
+/// )?;
+/// let endpoints = client.discover_schedule_endpoints("principals/user01/").await?;
+/// println!("outbox at {:?}", endpoints.outbox);
+/// for address in &endpoints.user_addresses {
+///     println!("calendar user address: {address}");
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct ScheduleEndpoints {
@@ -40,6 +59,25 @@ pub struct ScheduleEndpoints {
 /// The body is returned verbatim — a `text/calendar` body with a
 /// `REQUEST-STATUS` property for free-busy requests, or a
 /// `CALDAV:schedule-response` XML body — no iTIP parsing is performed.
+///
+/// # Example
+/// ```no_run
+/// use fast_dav_rs::{CalDavClient, Result};
+///
+/// # async fn example(client: &CalDavClient) -> Result<()> {
+/// let response = client
+///     .post_schedule(
+///         "calendars/outbox/",
+///         "mailto:alice@example.com",
+///         &["mailto:bob@example.com"],
+///         bytes::Bytes::new(),
+///     )
+///     .await?;
+/// println!("status {}", response.status);
+/// println!("body: {}", String::from_utf8_lossy(&response.body));
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SchedulingResponse {
@@ -52,6 +90,21 @@ pub struct SchedulingResponse {
 /// One scheduling message delivered to a schedule inbox (RFC 6638 §2.2),
 /// as returned by
 /// [`CalDavClient::list_inbox`](crate::CalDavClient::list_inbox).
+///
+/// # Example
+/// ```no_run
+/// use fast_dav_rs::{CalDavClient, Result};
+///
+/// # async fn example(client: &CalDavClient) -> Result<()> {
+/// for item in client.list_inbox("calendars/inbox/").await? {
+///     println!("{} (etag {:?})", item.href, item.etag);
+///     if let Some(data) = &item.data {
+///         println!("{}", data);
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct InboxItem {
@@ -68,6 +121,8 @@ pub struct InboxItem {
 /// Surrounding quotes are stripped and re-added, so both the raw schedule-tag
 /// and the quoted form returned in the `Schedule-Tag` response header are
 /// accepted. Empty (or whitespace-only) tags are rejected before any I/O.
+/// A tag containing embedded double quotes (which cannot be quoted
+/// unambiguously) produces a malformed header value.
 fn schedule_tag_header_value(schedule_tag: &str) -> Result<header::HeaderValue> {
     let binding = crate::normalize_etag(schedule_tag);
     let tag = binding.trim();
@@ -80,6 +135,23 @@ fn schedule_tag_header_value(schedule_tag: &str) -> Result<header::HeaderValue> 
     header::HeaderValue::from_str(&value).map_err(|err| {
         Error::InvalidInput(format!(
             "schedule-tag cannot form a valid header value: {err}"
+        ))
+    })
+}
+
+/// Build a validated calendar-user-address header value (`Originator` /
+/// `Recipient`, RFC 6638 §7.3): trimmed, rejected when empty or not a
+/// valid HTTP header value.
+fn cal_address_header_value(value: &str, header_name: &str) -> Result<header::HeaderValue> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(Error::InvalidInput(format!(
+            "{header_name} must not be empty"
+        )));
+    }
+    header::HeaderValue::from_str(value).map_err(|err| {
+        Error::InvalidInput(format!(
+            "{header_name} cannot form a valid header value: {err}"
         ))
     })
 }
@@ -155,18 +227,26 @@ impl CalDavClient {
         Ok(endpoints)
     }
 
-    /// `POST` an iTIP message to a scheduling outbox collection
-    /// (RFC 6638 §5 — e.g. a `VFREEBUSY` free-busy request).
+    /// `POST` an iTIP scheduling message to a scheduling outbox collection
+    /// (RFC 6638 §7.3).
     ///
-    /// The body is sent verbatim with `Content-Type: text/calendar`;
-    /// neither iTIP parsing nor iCalendar validation is applied. The
-    /// raw server response is returned on any success (`2xx`) status —
-    /// typically a `text/calendar` body carrying a `REQUEST-STATUS`
-    /// property, or a `CALDAV:schedule-response` XML body.
+    /// `originator` is the sender's calendar user address, sent as the
+    /// single `Originator` header (e.g. `mailto:alice@example.com`); one
+    /// `Recipient` header is sent per entry of `recipients` (the calendar
+    /// user addresses targeted by the message). The iTIP `ical_body` (e.g.
+    /// an iTIP `REQUEST` carrying a `VEVENT`, or a `VFREEBUSY` free-busy
+    /// request, RFC 6638 §5) is sent verbatim with
+    /// `Content-Type: text/calendar`; neither iTIP parsing nor iCalendar
+    /// validation is applied. The raw server response is returned on any
+    /// success (`2xx`) status — typically a `text/calendar` body carrying a
+    /// `REQUEST-STATUS` property, or a `CALDAV:schedule-response` XML body.
     ///
     /// # Errors
     ///
-    /// Returns
+    /// Returns [`Error::InvalidInput`](crate::Error::InvalidInput) **before
+    /// any network I/O** when `originator` is empty, `recipients` is empty,
+    /// or any entry of `recipients` is empty or cannot form a valid HTTP
+    /// header value. Returns
     /// [`Error::UnexpectedStatus`](crate::Error::UnexpectedStatus) with
     /// [`Operation::PostSchedule`](crate::Operation::PostSchedule) when the
     /// server responds with a non-success status (e.g. `403` when the
@@ -204,22 +284,45 @@ impl CalDavClient {
     ///             END:VCALENDAR\r\n";
     ///
     /// let response = client
-    ///     .post_schedule(&outbox, Bytes::from_static(itip.as_bytes()))
+    ///     .post_schedule(
+    ///         &outbox,
+    ///         "mailto:user01@example.com",
+    ///         &["mailto:user02@example.com"],
+    ///         Bytes::from_static(itip.as_bytes()),
+    ///     )
     ///     .await?;
-    /// println!("REQUEST-STATUS: {}", response.status);
+    /// println!("POST returned {}", response.status);
     /// # Ok(())
     /// # }
     /// ```
     pub async fn post_schedule(
         &self,
         outbox_path: &str,
+        originator: &str,
+        recipients: &[&str],
         ical_body: Bytes,
     ) -> Result<SchedulingResponse> {
+        let originator_value = cal_address_header_value(originator, "Originator")?;
+        if recipients.is_empty() {
+            return Err(Error::InvalidInput(
+                "recipients must not be empty".to_owned(),
+            ));
+        }
         let mut h = HeaderMap::new();
         h.insert(
             header::CONTENT_TYPE,
             header::HeaderValue::from_static(ICAL_CONTENT_TYPE),
         );
+        h.insert(
+            header::HeaderName::from_static("originator"),
+            originator_value,
+        );
+        for recipient in recipients {
+            h.append(
+                header::HeaderName::from_static("recipient"),
+                cal_address_header_value(recipient, "Recipient")?,
+            );
+        }
         let resp = self
             .send(Method::POST, outbox_path, h, Some(ical_body), None)
             .await?;
@@ -320,6 +423,12 @@ impl CalDavClient {
     /// The body is sent verbatim with `Content-Type: text/calendar` —
     /// unlike [`put`](crate::CalDavClient::put) no client-side iCalendar
     /// validation is applied.
+    ///
+    /// Note: like the ETag quoting of [`delete_if_match`], the tag is quoted
+    /// verbatim — a schedule-tag containing embedded double quotes (which
+    /// cannot be quoted unambiguously) produces a malformed
+    /// `If-Schedule-Tag-Match` header; only empty or whitespace-only tags
+    /// are rejected before any I/O.
     ///
     /// # Errors
     ///

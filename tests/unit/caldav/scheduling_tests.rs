@@ -89,7 +89,15 @@ async fn post_schedule_returns_raw_success_response() {
     let client = make_caldav_client(&base);
 
     let resp = client
-        .post_schedule("outbox/", Bytes::from_static(OUTBOX_ICS))
+        .post_schedule(
+            "outbox/",
+            "mailto:organizer@example.com",
+            &[
+                "mailto:attendee1@example.com",
+                "mailto:attendee2@example.com",
+            ],
+            Bytes::from_static(OUTBOX_ICS),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status.as_u16(), 200);
@@ -97,11 +105,23 @@ async fn post_schedule_returns_raw_success_response() {
 
     let request = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
     assert!(request.starts_with("POST "));
-    assert!(request.lines().any(|line| {
-        line.split_once(':').is_some_and(|(name, value)| {
-            name.eq_ignore_ascii_case("content-type") && value.trim().contains("text/calendar")
-        })
-    }));
+    assert_eq!(
+        header_values(&request, "originator"),
+        vec!["mailto:organizer@example.com"]
+    );
+    assert_eq!(
+        header_values(&request, "recipient"),
+        vec![
+            "mailto:attendee1@example.com",
+            "mailto:attendee2@example.com",
+        ],
+        "one Recipient header per recipient"
+    );
+    assert!(
+        header_values(&request, "content-type")
+            .first()
+            .is_some_and(|v| v.contains("text/calendar"))
+    );
     assert!(request.contains("BEGIN:VFREEBUSY"));
 }
 
@@ -115,7 +135,12 @@ async fn post_schedule_non_success_maps_to_unexpected_status() {
     let client = make_caldav_client(&base);
 
     let err = client
-        .post_schedule("outbox/", Bytes::from_static(OUTBOX_ICS))
+        .post_schedule(
+            "outbox/",
+            "mailto:organizer@example.com",
+            &["mailto:attendee@example.com"],
+            Bytes::from_static(OUTBOX_ICS),
+        )
         .await
         .unwrap_err();
     assert!(
@@ -127,6 +152,55 @@ async fn post_schedule_non_success_maps_to_unexpected_status() {
             }
         ),
         "expected UnexpectedStatus(PostSchedule), got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn post_schedule_rejects_invalid_originator_or_recipients_before_io() {
+    // Unroutable port: any network I/O would surface as a transport error
+    // instead of the expected InvalidInput.
+    let client = CalDavClient::new("http://127.0.0.1:9/", None, None).unwrap();
+
+    let err = client
+        .post_schedule(
+            "outbox/",
+            "",
+            &["mailto:a@example.com"],
+            Bytes::from_static(OUTBOX_ICS),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "expected InvalidInput for empty originator, got {err:?}"
+    );
+
+    let err = client
+        .post_schedule(
+            "outbox/",
+            "mailto:o@example.com",
+            &[],
+            Bytes::from_static(OUTBOX_ICS),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "expected InvalidInput for empty recipients slice, got {err:?}"
+    );
+
+    let err = client
+        .post_schedule(
+            "outbox/",
+            "mailto:o@example.com",
+            &["mailto:a@example.com", "   "],
+            Bytes::from_static(OUTBOX_ICS),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "expected InvalidInput for empty recipient entry, got {err:?}"
     );
 }
 
@@ -176,6 +250,18 @@ fn assert_if_schedule_tag_header(request: &str, expected: &str) {
             name.eq_ignore_ascii_case("if-schedule-tag-match") && value.trim() == expected
         })
     }));
+}
+
+/// Values of every `name` header in a captured raw request, in order —
+/// covers repeated headers (`Recipient` is emitted once per recipient).
+fn header_values<'a>(request: &'a str, name: &str) -> Vec<&'a str> {
+    request
+        .lines()
+        .filter_map(|line| {
+            let (n, v) = line.split_once(':')?;
+            n.eq_ignore_ascii_case(name).then_some(v.trim())
+        })
+        .collect()
 }
 
 #[tokio::test]
