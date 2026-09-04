@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Timezones (RFC 7809, issue #173): `CalDavClient::calendar_timezone` reads a
+  calendar's `calendar-timezone` property (`Depth: 0` `PROPFIND`) and returns
+  the stored `VTIMEZONE` iCalendar object verbatim as `Option<String>`
+  (`None` when the server does not store it — verified against the Radicale
+  fixture). The value was already surfaced per calendar in
+  `CalendarInfo.timezone`; the new `Operation::PropfindCalendarTimezone`
+  variant is reported on `Error::UnexpectedStatus` for this `PROPFIND`.
+  Read-only for now: the write path is deferred until a fixture round-trips
+  it
 - Managed attachments (RFC 8607, issue #172):
   `CalDavClient::post_managed_attachment` stores an attachment on a
   calendar object resource via `POST <calendar>?action=attachment-add&uid=…`

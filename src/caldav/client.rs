@@ -216,6 +216,63 @@ impl CalDavClient {
         Ok(homes)
     }
 
+    /// Read a calendar's `calendar-timezone` property (RFC 7809 §5.1).
+    ///
+    /// Sends a `Depth: 0` `PROPFIND` for `<C:calendar-timezone/>` against
+    /// `calendar_path` and returns the property value verbatim: an iCalendar
+    /// object with exactly one `VTIMEZONE` component (or `None` when the
+    /// server does not store the property — e.g. Radicale). The same value is
+    /// also surfaced per calendar in
+    /// [`CalendarInfo::timezone`](crate::caldav::CalendarInfo::timezone) via
+    /// [`list_calendars`](Self::list_calendars); this method reads it for a
+    /// single calendar without listing the whole home set.
+    ///
+    /// Parse the returned `VTIMEZONE` with a dedicated iCalendar crate (e.g.
+    /// `icalendar`) to derive the UTC offset rules; this library intentionally
+    /// does not interpret the component. The write path (RFC 7809 §5.1
+    /// `MKCALENDAR`/`PROPPATCH` with a `calendar-timezone` value) is not
+    /// exposed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnexpectedStatus`] with
+    /// [`Operation::PropfindCalendarTimezone`] if the `PROPFIND` fails or the
+    /// server responds with a non-success status.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use fast_dav_rs::CalDavClient;
+    /// # async fn example(client: &CalDavClient) -> Result<(), fast_dav_rs::Error> {
+    /// if let Some(timezone) = client.calendar_timezone("calendars/personal/").await? {
+    ///     // `timezone` is the raw iCalendar VTIMEZONE object stored by the server.
+    ///     println!("calendar timezone object: {timezone}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn calendar_timezone(&self, calendar_path: &str) -> Result<Option<String>> {
+        let body = r#"
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop>
+    <C:calendar-timezone/>
+  </D:prop>
+</D:propfind>
+"#;
+        let resp = self.propfind(calendar_path, Depth::Zero, body).await?;
+        if !resp.status().is_success() {
+            return Err(Error::unexpected_status(
+                Operation::PropfindCalendarTimezone,
+                resp.status(),
+            ));
+        }
+        let body = resp.into_body();
+        Ok(parse_multistatus_bytes(&body)?
+            .items
+            .into_iter()
+            .find_map(|item| item.calendar_timezone))
+    }
+
     /// List CalDAV collections under a calendar home-set (`Depth: 1` PROPFIND).
     pub async fn list_calendars(&self, home_set_path: &str) -> Result<Vec<CalendarInfo>> {
         let body = r#"

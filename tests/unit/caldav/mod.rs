@@ -7,5 +7,6 @@ pub mod parser_edge_cases;
 pub mod parser_tests;
 pub mod scheduling_tests;
 pub mod streaming_tests;
+pub mod timezone_tests;
 pub mod validation_tests;
 pub mod xml_helper_tests;
