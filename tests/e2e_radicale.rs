@@ -343,6 +343,88 @@ async fn test_sync_collection_unknown_token_records_observed_behavior() {
     let _ = client.delete(&calendar_path).await;
 }
 
+/// Documents the `SyncSession` contract (issue #160) against Radicale:
+/// a restored session whose persisted (garbage) token the server rejects
+/// with `403` + `valid-sync-token` must transparently resync (DAVx⁵ rule)
+/// and flag `resynced = true`; the follow-up incremental sync with the
+/// fresh token is a clean delta.
+#[tokio::test]
+async fn test_sync_session_invalid_token_transparent_resync() {
+    let client = caldav_client();
+    let calendar_path = format!(
+        "{}{}/",
+        principal_path(),
+        util::unique_calendar_name("radicale_session")
+    );
+    let created = client
+        .mkcalendar(
+            &calendar_path,
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"/>"#,
+        )
+        .await
+        .expect("MKCALENDAR");
+    assert!(created.status().is_success(), "MKCALENDAR must succeed");
+
+    let uid = util::unique_uid("radicale-session");
+    let event_path = format!("{calendar_path}{uid}.ics");
+    let put = client
+        .put(&event_path, Bytes::from(format!("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//fast-dav-rs//Radicale E2E//EN\nBEGIN:VEVENT\nUID:{uid}\nDTSTAMP:20260101T000000Z\nDTSTART:20260601T100000Z\nEND:VEVENT\nEND:VCALENDAR")))
+        .await
+        .expect("event PUT");
+    assert!(put.status().is_success(), "PUT must succeed");
+
+    let session = client.sync_session(&calendar_path);
+    let snapshot = session.initial().await.expect("initial sync session");
+    assert_eq!(snapshot.items.len(), 1, "initial sync must list the event");
+    assert!(
+        snapshot.sync_token.is_some(),
+        "Radicale must issue a sync token for the session"
+    );
+
+    // A new session restored from a garbage (persisted) token: Radicale
+    // answers 403 + valid-sync-token; the session must reset transparently.
+    let restored = client
+        .sync_session(&calendar_path)
+        .with_sync_token(Some("http://radicale.example/ns/sync/DOES-NOT-EXIST"));
+    let delta = restored
+        .incremental()
+        .await
+        .expect("a stale token must trigger a transparent resync, not an error");
+    assert!(
+        delta.resynced,
+        "Radicale's 403 valid-sync-token must surface as resynced=true"
+    );
+    assert!(
+        delta.added.iter().any(|entry| entry
+            .href
+            // Radicale percent-encodes `@` in stored hrefs (`%40`).
+            .contains(uid.split('@').next().expect("uid has a local part"))),
+        "the resync must list the live event ({} added, {} modified)",
+        delta.added.len(),
+        delta.modified.len()
+    );
+    assert!(
+        delta.deleted.is_empty(),
+        "RFC 6578 §3.4: a resync must not report deletions"
+    );
+    assert!(
+        delta.sync_token.is_some(),
+        "the resync must hand out a fresh token to persist"
+    );
+
+    // The follow-up incremental with the fresh token is a clean delta.
+    let next = restored.incremental().await.expect("follow-up incremental");
+    assert!(!next.resynced);
+    assert!(
+        next.added.is_empty() && next.modified.is_empty() && next.deleted.is_empty(),
+        "no changes since the resync: {next:?}"
+    );
+
+    let _ = client.delete(&event_path).await;
+    let _ = client.delete(&calendar_path).await;
+}
+
 /// Records Radicale's observed behavior for WebDAV LOCK. Observed on
 /// Radicale 3.7.6: `OPTIONS /` advertises `DAV: 1, 2, 3` but LOCK answers
 /// `405 Method Not Allowed`. The assertion is deliberately loose (any

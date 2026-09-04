@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Stateful sync sessions (issue #160): a new `webdav::SyncSession` (clonable;
+  clones share the last token) holds one collection's capability probe, last
+  sync token, and previous href→etag state, and implements the DAVx⁵ sync
+  algorithm: a one-shot `supported-report-set` probe cached per session, then
+  `sync-collection` REPORTs — `initial()` returns the full state snapshot
+  (`SyncSnapshot`, href + etag + data), `incremental()` returns a typed delta
+  (`SyncDelta` with `added`/`modified`/`deleted` entries plus the token to
+  persist). Result-set truncation (RFC 6578 §3.6, `507` inside the
+  multistatus) is continued transparently with the returned token. On
+  servers without `sync-collection` (probe-negative, or the report rejected
+  with `403`/`405`) the session falls back transparently to `PROPFIND
+  Depth: 1` etag diffing with content fetched via batched
+  `calendar-multiget`/`addressbook-multiget` REPORTs. A stale token —
+  `410 Gone` or `403` + `valid-sync-token` (Radicale's observed behavior) —
+  triggers a transparent reset to a full initial sync flagged
+  `resynced = true`; conflicts: the server wins. The session is in-memory
+  only: callers persist the returned sync token between runs and restore it
+  via `SyncSession::with_sync_token`. Constructors:
+  `WebDavClient::sync_session(collection)` (etag-only) plus thin
+  `CalDavClient::sync_session` / `CardDavClient::sync_session` wrappers that
+  also fetch the resource data. New public types `SyncSession`, `SyncDelta`,
+  `SyncSnapshot`, `SyncEntry` are re-exported from `webdav::`, `caldav::`,
+  `carddav::`, and the crate root
 - Pluggable authentication (issue #161): a new `TokenProvider` trait — the
   third auth mode next to `basic_auth`/`bearer_token` (mutually exclusive,
   last-set wins) — resolves the `Authorization: Bearer` header per request

@@ -884,6 +884,62 @@ async fn main() -> Result<()> {
   items, so they are only available as `fast_dav_rs::caldav::{SyncItem, SyncResponse, …}` and
   `fast_dav_rs::carddav::{SyncItem, SyncResponse, …}` — never at the crate root.
 
+### SyncSession (stateful sync with transparent fallback)
+
+`SyncSession` (new in this release, issue #160) packages the sync algorithm
+above into a per-collection, in-memory state machine — the DAVx⁵ approach:
+
+1. it probes `supported-report-set` **once** and caches the answer;
+2. while the server supports RFC 6578 `sync-collection`, `initial()` returns
+   the full state snapshot and `incremental()` returns a typed delta
+   (`added` / `modified` / `deleted`) carrying the token to persist; 507
+   result-set truncation is continued transparently;
+3. on an unsupported server (or one that rejects the report with `403`/`405`)
+   it falls back transparently to a `PROPFIND Depth: 1` etag diff, fetching
+   content for changed members via batched `calendar-multiget` /
+   `addressbook-multiget` REPORTs (CalDAV/CardDAV sessions);
+4. a stale token — `410 Gone`, or `403` + `valid-sync-token` as observed on
+   Radicale — resets the session transparently to a full initial sync,
+   flagged `resynced == true` (rebuild caches; per RFC 6578 §3.4 the delta
+   then reports no deletions);
+5. conflicts: the server wins.
+
+The session is in-memory only: **you** persist `sync_token` between runs
+(store it next to your application data) and restore it with
+`with_sync_token`. Clones share the token and the probe cache, like client
+clones share the connection pool.
+
+```rust
+use fast_dav_rs::{CalDavClient, Result, SyncSession};
+
+async fn sync_loop(client: &CalDavClient, saved_token: Option<&str>) -> Result<()> {
+    // Restore the persisted token from your own storage when resuming.
+    let session = client
+        .sync_session("calendars/alice/work/")
+        .with_sync_token(saved_token);
+
+    let delta = session.incremental().await?;
+    if delta.resynced {
+        // Stale token: this is a full snapshot — rebuild your cache from
+        // `delta.added` instead of applying it incrementally.
+        println!("resync: {} live items", delta.added.len());
+    }
+    for entry in delta.added.iter().chain(&delta.modified) {
+        println!("upsert {} (etag {:?})", entry.href, entry.etag);
+    }
+    for href in &delta.deleted {
+        println!("remove {href}");
+    }
+    println!("persist this token: {:?}", delta.sync_token);
+    Ok(())
+}
+```
+
+A plain `WebDavClient::sync_session(collection)` requests `getetag` only;
+the `CalDavClient`/`CardDavClient` constructors also fetch
+`calendar-data`/`address-data` for every entry (and via multiget on the
+fallback path).
+
 ### WebDAV locking (class 2)
 
 All clients (`WebDavClient`, `CalDavClient`, `CardDavClient`) support WebDAV locking (RFC 4918

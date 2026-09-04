@@ -1887,7 +1887,25 @@ impl WebDavClient {
         out
     }
 
+    /// Create an in-memory sync session for `collection`
+    /// ([`SyncSession`](crate::webdav::sync::SyncSession)): RFC 6578
+    /// `sync-collection` deltas with transparent full-list fallback,
+    /// requesting `getetag` only. The caller persists the returned sync
+    /// token between runs and restores it with `with_sync_token`; see the
+    /// `SyncSession` docs for the algorithm.
+    pub fn sync_session(&self, collection: impl Into<String>) -> crate::webdav::sync::SyncSession {
+        crate::webdav::sync::SyncSession::new(self.clone(), collection)
+    }
+
     /// Check whether the server supports WebDAV-Sync (RFC 6578) on the base collection.
+    ///
+    /// Convenience for [`supports_webdav_sync_on`](Self::supports_webdav_sync_on)
+    /// with the client's base path.
+    pub async fn supports_webdav_sync(&self) -> Result<SyncCapability> {
+        self.supports_webdav_sync_on("").await
+    }
+
+    /// Check whether the server supports WebDAV-Sync (RFC 6578) on `path`.
     ///
     /// Detection strategy:
     /// 1. **`DAV:supported-report-set`** — a `PROPFIND` with `Depth: 0` asks the
@@ -1903,7 +1921,7 @@ impl WebDavClient {
     /// could not be determined. Callers must not treat `Unknown` as
     /// "unsupported" — a client that falls back to full-list polling on a
     /// transient network error silently degrades every sync cycle.
-    pub async fn supports_webdav_sync(&self) -> Result<SyncCapability> {
+    pub async fn supports_webdav_sync_on(&self, path: &str) -> Result<SyncCapability> {
         // Primary: ask the collection which reports it supports (RFC 3253 §3.1.5).
         let supported_report_set = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:propfind xmlns:D="DAV:">
@@ -1912,7 +1930,7 @@ impl WebDavClient {
   </D:prop>
 </D:propfind>"#;
 
-        if let Ok(response) = self.propfind("", Depth::Zero, supported_report_set).await {
+        if let Ok(response) = self.propfind(path, Depth::Zero, supported_report_set).await {
             if response.status().is_success() {
                 let body = String::from_utf8_lossy(response.body());
                 if body.to_ascii_lowercase().contains("sync-collection") {
@@ -1933,7 +1951,7 @@ impl WebDavClient {
             </D:prop>
         </D:sync-collection>"#;
 
-        match self.report("", Depth::Zero, test_sync).await {
+        match self.report(path, Depth::Zero, test_sync).await {
             Ok(response) if response.status().is_success() => Ok(SyncCapability::Supported),
             Ok(_) => Ok(SyncCapability::Unsupported),
             Err(_) => Ok(SyncCapability::Unknown),

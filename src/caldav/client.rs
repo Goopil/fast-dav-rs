@@ -688,6 +688,30 @@ impl CalDavClient {
         }
         Ok(periods)
     }
+
+    /// Create an in-memory sync session for `collection`
+    /// ([`SyncSession`](crate::webdav::SyncSession)): RFC 6578
+    /// `sync-collection` deltas with transparent full-list fallback,
+    /// fetching `calendar-data` alongside the etags. The caller persists the
+    /// returned sync token between runs and restores it with
+    /// `with_sync_token`; see the `SyncSession` docs for the algorithm.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::CalDavClient;
+    ///
+    /// # async fn example(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+    /// let session = client.sync_session("calendars/user/work/");
+    /// let snapshot = session.initial().await?;
+    /// println!("{} items, token {:?}", snapshot.items.len(), snapshot.sync_token);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn sync_session(&self, collection: impl Into<String>) -> crate::webdav::SyncSession {
+        crate::webdav::sync::SyncSession::new(self.webdav.clone(), collection)
+            .with_data_spec(crate::webdav::sync::CALENDAR_DATA_SPEC)
+    }
 }
 
 pub fn escape_xml(input: &str) -> String {

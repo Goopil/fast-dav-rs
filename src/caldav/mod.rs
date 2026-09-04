@@ -5,6 +5,7 @@ pub mod types;
 pub mod validation;
 
 pub use crate::error::ICalendarViolation;
+pub use crate::webdav::sync::{SyncDelta, SyncEntry, SyncSession, SyncSnapshot};
 pub use builder::CalDavClientBuilder;
 pub use client::{
     CalDavClient, ICAL_CONTENT_TYPE, build_calendar_multiget_body, build_calendar_query_body,

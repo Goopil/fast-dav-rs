@@ -357,6 +357,30 @@ impl CardDavClient {
     // ----------- Batch (limited concurrency) -----------
 
     // ----------- Public streaming helpers -----------
+
+    /// Create an in-memory sync session for `collection`
+    /// ([`SyncSession`](crate::webdav::SyncSession)): RFC 6578
+    /// `sync-collection` deltas with transparent full-list fallback,
+    /// fetching `address-data` alongside the etags. The caller persists the
+    /// returned sync token between runs and restores it with
+    /// `with_sync_token`; see the `SyncSession` docs for the algorithm.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::CardDavClient;
+    ///
+    /// # async fn example(client: &CardDavClient) -> fast_dav_rs::Result<()> {
+    /// let session = client.sync_session("addressbooks/user/contacts/");
+    /// let delta = session.incremental().await?;
+    /// println!("+{} ~{} -{}", delta.added.len(), delta.modified.len(), delta.deleted.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn sync_session(&self, collection: impl Into<String>) -> crate::webdav::SyncSession {
+        crate::webdav::sync::SyncSession::new(self.webdav.clone(), collection)
+            .with_data_spec(crate::webdav::sync::ADDRESS_DATA_SPEC)
+    }
 }
 
 pub fn escape_xml(input: &str) -> String {

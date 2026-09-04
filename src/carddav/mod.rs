@@ -5,6 +5,7 @@ pub mod client;
 pub mod streaming;
 pub mod types;
 
+pub use crate::webdav::sync::{SyncDelta, SyncEntry, SyncSession, SyncSnapshot};
 pub use builder::CardDavClientBuilder;
 pub use client::{
     CardDavClient, VCARD_CONTENT_TYPE, build_addressbook_multiget_body,

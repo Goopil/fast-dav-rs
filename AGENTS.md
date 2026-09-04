@@ -81,6 +81,7 @@ src/
 │   ├── client.rs       # WebDavClient and HTTP operations
 │   ├── types.rs        # Common types and enums
 │   ├── streaming.rs    # Streaming XML parsing
+│   ├── sync.rs         # RFC 6578 sync sessions (SyncSession engine)
 │   ├── xml.rs          # XML building utilities
 │   └── mod.rs
 ├── caldav/             # CalDAV-specific functionality
