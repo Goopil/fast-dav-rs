@@ -12,14 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (delegated on `CalDavClient`/`CardDavClient`) `PROPFIND`s the
   `current-user-privilege-set` property (RFC 3744 §5.4) and returns the typed
   `Privilege` set the authenticated user holds on the path — the RFC 3744 core
-  privileges plus the CalDAV `read-free-busy` extension map to dedicated
-  variants, unknown element names are preserved as `Privilege::Other`. The
+  privileges the library recognizes plus the CalDAV `read-free-busy` extension
+  (RFC 4791 §6.1.1) map to dedicated variants, unknown element names are
+  preserved as `Privilege::Other`. The
   streaming multistatus parser and `DavItem` gained
   `current_user_privileges`, and the `Operation` enum gained
   `PropfindCurrentUserPrivilegeSet` (reported on `Error::UnexpectedStatus`).
   Read-only exposure, no ACL writes. `Privilege` is re-exported from
   `webdav::` and the crate root
-- Timezones (RFC 7809, issue #173): `CalDavClient::calendar_timezone` reads a
+- Timezones (RFC 4791 §5.2.2, issue #173): `CalDavClient::calendar_timezone` reads a
   calendar's `calendar-timezone` property (`Depth: 0` `PROPFIND`) and returns
   the stored `VTIMEZONE` iCalendar object verbatim as `Option<String>`
   (`None` when the server does not store it — verified against the Radicale
@@ -29,16 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Read-only for now: the write path is deferred until a fixture round-trips
   it
 - Managed attachments (RFC 8607, issue #172):
-  `CalDavClient::post_managed_attachment` stores an attachment on a
-  calendar object resource via `POST <calendar>?action=attachment-add&uid=…`
-  (plus `&recurrence-id=…` when given, all query values percent-encoded) and
+  `CalDavClient::post_managed_attachment` stores an attachment via
+  `POST <calendar>?action=attachment-add&uid=…`
+  (plus `&recurrence-id=…` when given, all query values percent-encoded) —
+  a CalendarServer-compatible collection-targeted request form; RFC 8607
+  §3.4 itself targets the calendar object resource, and that conforming
+  alternative is not implemented — and
   parses the new `ManagedAttachment` result from the `Location` and
   `Cal-Managed-ID` response headers — falling back to the `managed-id` query
   parameter of the `Location` when the header is absent, and failing with
   `Error::other` when the server reports neither. Non-success statuses map
   to `Error::UnexpectedStatus` with the new `Operation::PostManagedAttachment`.
   The streaming multistatus parser and `DavItem` gained the `managed-ids`
-  property (`managed_ids: Vec<String>`, RFC 8607 §10.2.4). `ManagedAttachment`
+  property (`managed_ids: Vec<String>`; CalendarServer extension — RFC 8607
+  defines `MANAGED-ID` only as an iCalendar `ATTACH` parameter, §4.3).
+  `ManagedAttachment`
   is re-exported from `caldav::` and the crate root. Note: Radicale 3.7.6
   does not implement RFC 8607 (observed `405` on `?action=attachment-add`);
   the e2e suite records that behavior, and the wire contract is covered by
@@ -60,8 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multistatus parser and `DavItem` gained the three new properties
   (`schedule_inbox`, `schedule_outbox`, `calendar_user_addresses`), and the
   `Operation` enum gained `PropfindScheduleEndpoints`, `PostSchedule`,
-  `ScheduleInbox`, and `ScheduleConditionalWrite` (reported on
-  `Error::UnexpectedStatus`). New public types are re-exported from
+  and `ScheduleInbox` (reported on `Error::UnexpectedStatus`; the
+  conditional writes themselves pass success statuses through without an
+  `Operation` variant). New public types are re-exported from
   `caldav::` and the crate root
 
 ## [0.12.0] - 2026-09-04

@@ -216,7 +216,7 @@ impl CalDavClient {
         Ok(homes)
     }
 
-    /// Read a calendar's `calendar-timezone` property (RFC 7809 §5.1).
+    /// Read a calendar's `calendar-timezone` property (RFC 4791 §5.2.2).
     ///
     /// Sends a `Depth: 0` `PROPFIND` for `<C:calendar-timezone/>` against
     /// `calendar_path` and returns the property value verbatim: an iCalendar
@@ -229,7 +229,7 @@ impl CalDavClient {
     ///
     /// Parse the returned `VTIMEZONE` with a dedicated iCalendar crate (e.g.
     /// `icalendar`) to derive the UTC offset rules; this library intentionally
-    /// does not interpret the component. The write path (RFC 7809 §5.1
+    /// does not interpret the component. The write path (RFC 4791 §5.2.2
     /// `MKCALENDAR`/`PROPPATCH` with a `calendar-timezone` value) is not
     /// exposed.
     ///
@@ -771,19 +771,25 @@ impl CalDavClient {
             .with_data_spec(crate::webdav::sync::CALENDAR_DATA_SPEC)
     }
 
-    /// Store an attachment on a calendar object resource via **managed
-    /// attachments** (RFC 8607 §6.1).
+    /// Store an attachment via **managed attachments** (RFC 8607).
     ///
     /// Sends `POST <calendar_path>?action=attachment-add&uid=<ics_uid>`
     /// (plus `&recurrence-id=<recurrence_id>` when given) with `body`
     /// verbatim as the attachment content and `content_type` as its
-    /// `Content-Type`. On success the server-stored attachment is returned:
+    /// `Content-Type`. This collection-targeted request shape is the
+    /// non-IETF form deployed by Apple CalendarServer; RFC 8607 §3.4
+    /// instead targets the calendar object resource itself (e.g.
+    /// `POST /events/64.ics?action=attachment-add`, selecting recurrence
+    /// instances via a comma-separated `rid` query parameter), and that
+    /// conforming alternative is not implemented.
+    ///
+    /// On success the server-stored attachment is returned:
     /// `href` (from the `Location` header) identifies the attachment
     /// resource for later `GET`/`PUT`/`DELETE`, and `managed_id` (from the
-    /// `Cal-Managed-ID` header, or the `managed-id` query parameter of the
-    /// `Location` when the header is absent) must be sent back as the
-    /// `Cal-Managed-ID` header on subsequent updates/removals of the
-    /// attachment.
+    /// `Cal-Managed-ID` header, RFC 8607 §5.1, or the `managed-id` query
+    /// parameter of the `Location` when the header is absent) must be sent
+    /// back as the `Cal-Managed-ID` header on subsequent updates/removals
+    /// of the attachment.
     ///
     /// # Errors
     ///
@@ -831,7 +837,7 @@ impl CalDavClient {
         })?;
         // `build_uri` treats its input as a path (`?` is percent-encoded), so
         // resolve the collection to an absolute URI first and append the
-        // RFC 8607 §6.1 query afterwards — an absolute URL passes through
+        // attachment-add query afterwards — an absolute URL passes through
         // `send` verbatim.
         let mut url = format!(
             "{}?action=attachment-add&uid={}",
@@ -882,8 +888,8 @@ const QUERY_UNRESERVED: &percent_encoding::AsciiSet = &percent_encoding::NON_ALP
     .remove(b'~');
 
 /// Extract the percent-decoded `managed-id` query parameter from a
-/// `Location` URL (servers that omit the `Cal-Managed-ID` response header,
-/// RFC 8607 §6.1).
+/// `Location` URL (fallback for servers that omit the `Cal-Managed-ID`
+/// response header, RFC 8607 §5.1).
 fn managed_id_from_location(location: &str) -> Option<String> {
     let query = location.split_once('?')?.1.split('#').next()?;
     query.split('&').find_map(|pair| {

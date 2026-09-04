@@ -140,8 +140,8 @@ fn schedule_tag_header_value(schedule_tag: &str) -> Result<header::HeaderValue> 
 }
 
 /// Build a validated calendar-user-address header value (`Originator` /
-/// `Recipient`, RFC 6638 §7.3): trimmed, rejected when empty or not a
-/// valid HTTP header value.
+/// `Recipient`; a CalendarServer extension, not defined by RFC 6638):
+/// trimmed, rejected when empty or not a valid HTTP header value.
 fn cal_address_header_value(value: &str, header_name: &str) -> Result<header::HeaderValue> {
     let value = value.trim();
     if value.is_empty() {
@@ -228,18 +228,23 @@ impl CalDavClient {
     }
 
     /// `POST` an iTIP scheduling message to a scheduling outbox collection
-    /// (RFC 6638 §7.3).
+    /// (RFC 6638 §5).
     ///
     /// `originator` is the sender's calendar user address, sent as the
     /// single `Originator` header (e.g. `mailto:alice@example.com`); one
     /// `Recipient` header is sent per entry of `recipients` (the calendar
-    /// user addresses targeted by the message). The iTIP `ical_body` (e.g.
-    /// an iTIP `REQUEST` carrying a `VEVENT`, or a `VFREEBUSY` free-busy
-    /// request, RFC 6638 §5) is sent verbatim with
-    /// `Content-Type: text/calendar`; neither iTIP parsing nor iCalendar
-    /// validation is applied. The raw server response is returned on any
-    /// success (`2xx`) status — typically a `text/calendar` body carrying a
-    /// `REQUEST-STATUS` property, or a `CALDAV:schedule-response` XML body.
+    /// user addresses targeted by the message). RFC 6638 defines neither
+    /// header: `Originator`/`Recipient` are a widely-implemented extension
+    /// (draft-era/CalendarServer behavior). The iTIP `ical_body` is sent
+    /// verbatim with `Content-Type: text/calendar`; neither iTIP parsing
+    /// nor iCalendar validation is applied. RFC 6638 §5 defines the outbox
+    /// `POST` as a free-busy request: the body MUST be a `VFREEBUSY`
+    /// component with `METHOD:REQUEST` — a `VEVENT` fails the §5.2.1
+    /// `valid-scheduling-message` precondition on conformant servers. The
+    /// raw server response is returned on any success (`2xx`) status —
+    /// typically a `CALDAV:schedule-response` XML body for free-busy
+    /// requests, or a `text/calendar` body carrying a `REQUEST-STATUS`
+    /// property.
     ///
     /// # Errors
     ///
@@ -267,20 +272,20 @@ impl CalDavClient {
     /// let endpoints = client.discover_schedule_endpoints("principals/user01/").await?;
     /// let outbox = endpoints.outbox.expect("scheduling outbox present");
     ///
-    /// // Hand-built iTIP REQUEST (organizer -> attendee).
+    /// // Hand-built iTIP free-busy REQUEST (organizer -> attendee), the
+    /// // body shape RFC 6638 §5 requires on the outbox.
     /// let itip = "BEGIN:VCALENDAR\r\n\
     ///             VERSION:2.0\r\n\
     ///             PRODID:-//example//EN\r\n\
     ///             METHOD:REQUEST\r\n\
-    ///             BEGIN:VEVENT\r\n\
+    ///             BEGIN:VFREEBUSY\r\n\
     ///             UID:20010712T182145Z-123401@example.com\r\n\
     ///             DTSTAMP:20060102T000000Z\r\n\
-    ///             DTSTART:20060104T140000Z\r\n\
-    ///             DTEND:20060104T150000Z\r\n\
-    ///             SUMMARY:Design review\r\n\
+    ///             DTSTART:20060104T000000Z\r\n\
+    ///             DTEND:20060105T000000Z\r\n\
     ///             ORGANIZER:mailto:user01@example.com\r\n\
     ///             ATTENDEE:mailto:user02@example.com\r\n\
-    ///             END:VEVENT\r\n\
+    ///             END:VFREEBUSY\r\n\
     ///             END:VCALENDAR\r\n";
     ///
     /// let response = client

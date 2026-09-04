@@ -606,7 +606,7 @@ impl MediaType {
 /// `current-user-privilege-set` property (RFC 3744 §5.4).
 ///
 /// The mapped variants cover the RFC 3744 core privileges the library
-/// recognizes plus the CalDAV `read-free-busy` extension (RFC 4791 §4.1);
+/// recognizes plus the CalDAV `read-free-busy` extension (RFC 4791 §6.1.1);
 /// any other element local name is preserved verbatim in
 /// [`Privilege::Other`]. Note that a server may grant privileges through
 /// inherited or aggregated ACEs: the set is advisory, and an absent
@@ -643,7 +643,7 @@ pub enum Privilege {
     Unbind,
     /// Unlock the resource without being the lock owner (`unlock`).
     Unlock,
-    /// Read the calendar free-busy information (CalDAV, RFC 4791 §4.1).
+    /// Read the calendar free-busy information (CalDAV, RFC 4791 §6.1.1).
     ReadFreeBusy,
     /// An unrecognized privilege: the element's local name, verbatim.
     Other(String),
@@ -684,8 +684,10 @@ pub struct DavItem {
     pub schedule_outbox: Option<String>,
     /// `calendar-user-address-set` hrefs (RFC 6638 §2.4.1).
     pub calendar_user_addresses: Vec<String>,
-    /// Managed attachment ids (RFC 8607 §10.2.4): the values of the
-    /// `managed-id` elements inside the `managed-ids` property.
+    /// Managed attachment ids: the values of the `managed-id` elements
+    /// inside the `managed-ids` property (CalendarServer extension;
+    /// RFC 8607 defines `MANAGED-ID` only as an iCalendar `ATTACH`
+    /// parameter, §4.3).
     pub managed_ids: Vec<String>,
     /// Privileges granted to the authenticated user, from
     /// `current-user-privilege-set` (RFC 3744 §5.4). Empty when the property

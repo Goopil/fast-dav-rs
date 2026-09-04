@@ -438,7 +438,7 @@ pub enum Operation {
     PropfindAddressbookHomeSet,
     /// `PROPFIND` to list calendars or addressbooks.
     PropfindCollections,
-    /// `PROPFIND` to read a calendar's `calendar-timezone` (RFC 7809 §5.1).
+    /// `PROPFIND` to read a calendar's `calendar-timezone` (RFC 4791 §5.2.2).
     PropfindCalendarTimezone,
     /// `REPORT` calendar-query.
     ReportCalendarQuery,
@@ -468,11 +468,9 @@ pub enum Operation {
     PostSchedule,
     /// `PROPFIND` to list the contents of a schedule inbox (RFC 6638 §2.2).
     ScheduleInbox,
-    /// Conditional `PUT`/`DELETE` guarded by `If-Schedule-Tag-Match`
-    /// (RFC 6638 §8.3, §3.2.10).
-    ScheduleConditionalWrite,
     /// `POST` of an attachment body to a calendar collection with
-    /// `?action=attachment-add` (RFC 8607 §6.1).
+    /// `?action=attachment-add` (managed attachments; CalendarServer wire
+    /// form of RFC 8607).
     PostManagedAttachment,
     /// `PROPFIND` to read `current-user-privilege-set` (RFC 3744 §5.4).
     PropfindCurrentUserPrivilegeSet,
@@ -499,7 +497,6 @@ impl std::fmt::Display for Operation {
             Self::PropfindScheduleEndpoints => "PROPFIND schedule endpoints",
             Self::PostSchedule => "POST scheduling outbox",
             Self::ScheduleInbox => "PROPFIND schedule inbox",
-            Self::ScheduleConditionalWrite => "conditional write with schedule-tag",
             Self::PostManagedAttachment => "POST managed attachment",
             Self::PropfindCurrentUserPrivilegeSet => "PROPFIND current-user-privilege-set",
         };
