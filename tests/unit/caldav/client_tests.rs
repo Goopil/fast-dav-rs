@@ -1739,3 +1739,63 @@ async fn calendar_query_rejects_exclusive_prop_filters_before_io() {
         "expected InvalidInput for is-not-defined with children, got: {err:?}"
     );
 }
+
+#[tokio::test]
+async fn calendar_query_rejects_comp_filter_exclusivity_before_io() {
+    // RFC 4791 §9.7.1: `is-not-defined | (time-range?, prop-filter*)` — a
+    // comp-filter `is-not-defined` excludes time-range and prop-filter
+    // children. Must be rejected before any network I/O.
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let mut with_time_range = CalendarQueryFilter::new("VEVENT");
+    with_time_range.is_not_defined = true;
+    with_time_range.time_range = Some(TimeRange::new("20240101T000000Z"));
+    let err = client
+        .calendar_query("cal/", &with_time_range, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg)
+            if msg.contains("comp-filter") && msg.contains("§9.7.1")),
+        "comp-filter is-not-defined + time-range must be rejected, got: {err:?}"
+    );
+
+    let mut with_props = CalendarQueryFilter::new("VEVENT");
+    with_props.is_not_defined = true;
+    with_props.prop_filters = vec![PropFilter::new("SUMMARY", TextMatch::new("x"))];
+    let err = client
+        .calendar_query("cal/", &with_props, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg)
+            if msg.contains("comp-filter") && msg.contains("§9.7.1")),
+        "comp-filter is-not-defined + prop-filter must be rejected, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn calendar_query_rejects_param_filter_exclusivity_before_io() {
+    // RFC 4791 §9.7.3: `param-filter (is-not-defined | text-match?)` —
+    // a param-filter `is-not-defined` excludes a nested text-match. Must be
+    // rejected before any network I/O.
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let mut param = ParamFilter::new("PARTSTAT", TextMatch::new("ACCEPTED"));
+    param.is_not_defined = true;
+    let mut prop = PropFilter::new("ATTENDEE", TextMatch::new("x"));
+    prop.param_filters = vec![param];
+    let filter = CalendarQueryFilter::new("VEVENT").with_prop_filters(vec![prop]);
+
+    let err = client
+        .calendar_query("cal/", &filter, true)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg)
+            if msg.contains("param-filter") && msg.contains("§9.7.3")),
+        "param-filter is-not-defined + text-match must be rejected, got: {err:?}"
+    );
+}

@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-fixture e2e for the batched multiget: chunked round-trips (3 events, `batch_size` 2,
   `max_concurrency` 2) against the Radicale and Nextcloud fixtures, alongside the existing
   SabreDAV coverage
+- `CardDavClient::addressbook_query_filter(path, &CardDavFilter, include_data)`: structured-filter
+  `addressbook-query` REPORT (RFC 6352 §7) — the CardDAV counterpart of CalDAV `calendar_query`.
+  It validates the RFC 6352 DTD exclusivity before any network I/O (§10.5.1: a `prop-filter`
+  cannot combine `is-not-defined` with a `text-match` or `param-filter` children; §10.5.2: a
+  nested `param-filter` cannot combine `is-not-defined` with a `text-match`;
+  `Error::InvalidInput` otherwise) and sends the same REPORT as `addressbook_query` for a valid
+  filter. The raw-XML `addressbook_query` keeps taking caller-built filter XML verbatim (nothing
+  to validate there)
 
 ### Changed
 - **Breaking (0.x)**: `SyncResponse` (CalDAV + CardDAV) is now `#[non_exhaustive]`,
@@ -54,6 +62,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Sabre\CalDAV\Schedule\Plugin` and pins `composer.lock`; 3 RFC 6638
   scheduling e2e tests (2 real, 1 records-observed — sabre/dav 4.7.1 lacks
   §8 Schedule-Tag)
+
+### Fixed
+- LOCK/UNLOCK error responses whose `<D:error>` body is present but unparsable
+  (malformed or truncated markup) now surface as `Error::UnexpectedStatusWithDav`
+  with `dav.parse_failed == true`, instead of the previous plain
+  `Error::UnexpectedStatus` that silently discarded the flag — a malformed `423
+  Locked` body is now distinguishable from a missing one (issue #186). A
+  response without any error body keeps surfacing as plain
+  `Error::UnexpectedStatus` (unchanged contract, covered by the existing tests).
+  Affects `lock`/`refresh_lock`/`unlock` through the shared status-error gate
+- RFC 4791 §9.7.1 comp-filter exclusivity (issue #186): `calendar_query` now
+  rejects a `comp-filter` that combines `is_not_defined` with a `time-range` or
+  `prop-filter` children before any network I/O with `Error::InvalidInput`
+  (previously the conflicting children were silently dropped by serialization
+  precedence, changing the query's meaning)
+- RFC 4791 §9.7.3 param-filter exclusivity (issue #186): `calendar_query` now
+  rejects a `param-filter` that combines `is_not_defined` with a `text-match`
+  before any network I/O with `Error::InvalidInput` (same silent-precedence
+  issue), shared with the CardDAV path via one `webdav/` validator
 
 ## [0.13.0] - 2026-09-05
 

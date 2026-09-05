@@ -254,7 +254,9 @@ impl CardDavClient {
         Ok(map_addressbook_list(parse_multistatus_bytes(&body)?.items))
     }
 
-    /// Execute a CardDAV `addressbook-query` with a custom filter.
+    /// Execute a CardDAV `addressbook-query` with a custom filter. For a
+    /// structured [`CardDavFilter`] with pre-I/O DTD validation, use
+    /// [`addressbook_query_filter`](Self::addressbook_query_filter).
     pub async fn addressbook_query(
         &self,
         addressbook_path: &str,
@@ -272,6 +274,69 @@ impl CardDavClient {
         }
         let body = resp.into_body();
         Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
+    }
+
+    /// Execute a CardDAV `addressbook-query` with a structured
+    /// [`CardDavFilter`], validating the RFC 6352 §10.5.1 (prop-filter) and
+    /// §10.5.2 (param-filter) DTD exclusivity constraints **before any
+    /// network I/O** ([`Error::InvalidInput`]): a `prop-filter` cannot
+    /// combine `is-not-defined` with a `text-match` or `param-filter`
+    /// children, and a nested `param-filter` cannot combine
+    /// `is-not-defined` with a `text-match`. This is the structured
+    /// counterpart of [`addressbook_query`](Self::addressbook_query)
+    /// (which takes caller-built filter XML verbatim and cannot be
+    /// validated); for a valid filter both methods send identical REPORTs.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::{CardDavClient, Error, Result};
+    /// use fast_dav_rs::carddav::types::{CardDavFilter, ParamFilter, TextMatch};
+    ///
+    /// # async fn example() -> Result<()> {
+    /// let client = CardDavClient::new(
+    ///     "https://contacts.example.com/dav/user01/",
+    ///     Some("user01"),
+    ///     Some("secret"),
+    /// )?;
+    ///
+    /// // vCards whose TEL parameter TYPE does not match "work":
+    /// let param = ParamFilter::new("TYPE", TextMatch::new("work").with_negate(true));
+    /// let filter = CardDavFilter::new("TEL", "").with_param_filters(vec![param]);
+    /// let contacts = client
+    ///     .addressbook_query_filter("/dav/user01/contacts/", &filter, true)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`] before any network I/O when the
+    /// filter violates the prop-filter (§10.5.1) or param-filter (§10.5.2)
+    /// exclusivity DTDs, [`Error::UnexpectedStatus`] on a non-success
+    /// response, and transport/parse errors as usual.
+    pub async fn addressbook_query_filter(
+        &self,
+        addressbook_path: &str,
+        filter: &CardDavFilter,
+        include_data: bool,
+    ) -> Result<Vec<AddressObject>> {
+        if filter.is_not_defined && (!filter.value.is_empty() || !filter.param_filters.is_empty()) {
+            return Err(Error::InvalidInput(format!(
+                "addressbook-query prop-filter `{}`: is-not-defined excludes \
+                 text-match/param-filter children (RFC 6352 §10.5.1)",
+                filter.prop
+            )));
+        }
+        crate::webdav::types::validate_param_filter_exclusivity(
+            &filter.param_filters,
+            &format!("addressbook-query prop-filter `{}`", filter.prop),
+            "RFC 6352 §10.5.2",
+        )?;
+        let xml = filter.to_filter_xml();
+        self.addressbook_query(addressbook_path, &xml, include_data)
+            .await
     }
 
     /// Addressbook query helper: match a specific `UID`.

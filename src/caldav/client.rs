@@ -368,12 +368,16 @@ impl CalDavClient {
     /// Returns an error **before any network I/O** if the component name is
     /// empty or contains characters outside ASCII alphanumerics and `-`, if
     /// any time-range value is not a valid iCalendar UTC date-time, if a
-    /// `prop-filter` violates the RFC 4791 §9.7.2 child exclusivity
+    /// `comp-filter` violates the RFC 4791 §9.7.1 child exclusivity
+    /// (`is-not-defined` excludes `time-range` and `prop-filter` children),
+    /// if a `prop-filter` violates the RFC 4791 §9.7.2 child exclusivity
     /// (`is-not-defined` excludes everything else; `text-match` and
-    /// `time-range` are mutually exclusive) with [`Error::InvalidInput`], or
-    /// if a time-range `end` precedes its `start` with
-    /// [`Error::InvalidDateTime`]. Also returns an error if the REPORT
-    /// request fails or the server responds with a non-success status.
+    /// `time-range` are mutually exclusive), if a `param-filter` violates the
+    /// RFC 4791 §9.7.3 child exclusivity (`is-not-defined` excludes
+    /// `text-match`) — all with [`Error::InvalidInput`] — or if a time-range
+    /// `end` precedes its `start` with [`Error::InvalidDateTime`]. Also
+    /// returns an error if the REPORT request fails or the server responds
+    /// with a non-success status.
     pub async fn calendar_query(
         &self,
         calendar_path: &str,
@@ -381,6 +385,14 @@ impl CalDavClient {
         include_data: bool,
     ) -> Result<Vec<CalendarObject>> {
         validate_component_name(&filter.component, "invalid calendar-query component")?;
+        if filter.is_not_defined && (filter.time_range.is_some() || !filter.prop_filters.is_empty())
+        {
+            return Err(Error::InvalidInput(format!(
+                "calendar-query comp-filter `{}`: is-not-defined excludes \
+                 time-range and prop-filter children (RFC 4791 §9.7.1)",
+                filter.component
+            )));
+        }
         if let Some(tr) = &filter.time_range {
             validate_utc_datetime(&tr.start, "invalid calendar-query time-range start")?;
             if let Some(end) = &tr.end {
@@ -407,6 +419,11 @@ impl CalDavClient {
                     pf.name
                 )));
             }
+            crate::webdav::types::validate_param_filter_exclusivity(
+                &pf.param_filters,
+                &format!("calendar-query prop-filter `{}`", pf.name),
+                "RFC 4791 §9.7.3",
+            )?;
             if let Some(tr) = &pf.time_range {
                 validate_utc_datetime(
                     &tr.start,
