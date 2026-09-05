@@ -852,9 +852,10 @@ let client = WebDavClient::builder("https://dav.example.com/")
 # Ok::<(), fast_dav_rs::Error>(())
 ```
 
-The flag is additive and off by default: without it, behavior is unchanged (an `https`→`http`
-downgrade redirect is never followed in any configuration — the 3xx response is returned
-as-is — but plain `http://` base URLs remain accepted for isolated test environments).
+The flag is additive and off by default: without it, behavior is unchanged (plain `http://` base
+URLs remain accepted for isolated test environments, and an `https`→`http` downgrade redirect is
+never followed — the 3xx response is returned as-is; with `require_https(true)` that downgrade is
+rejected with `Error::InvalidInput` instead).
 
 ## Observability
 
