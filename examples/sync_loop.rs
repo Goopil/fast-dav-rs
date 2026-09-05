@@ -14,23 +14,17 @@
 //! a file (an in-memory `HashMap<String, String>` keyed by collection is the
 //! in-process equivalent for many collections).
 
+#[path = "common/mod.rs"]
+mod common;
+
 use std::path::PathBuf;
 
 use bytes::Bytes;
-use fast_dav_rs::CalDavClient;
+
+use common::{event_ics, radicale_client};
 use icalendar::Component;
 
-const USER: &str = "test";
-const PASS: &str = "test";
 const COLLECTION: &str = "test/example-sync-loop/";
-
-fn radicale_url() -> String {
-    let mut url = std::env::var("RADICALE_URL").unwrap_or_else(|_| "http://localhost:8081".into());
-    if !url.ends_with('/') {
-        url.push('/');
-    }
-    url
-}
 
 /// Toy persistence: one line, one token. Swap for sqlite/your KV store.
 struct TokenStore(PathBuf);
@@ -50,21 +44,6 @@ impl TokenStore {
     }
 }
 
-fn event_ics(uid: &str, summary: &str) -> String {
-    format!(
-        "BEGIN:VCALENDAR\r\n\
-         VERSION:2.0\r\n\
-         PRODID:-//fast-dav-rs//sync-loop example//EN\r\n\
-         BEGIN:VEVENT\r\n\
-         UID:{uid}\r\n\
-         DTSTAMP:20260101T000000Z\r\n\
-         DTSTART:20260911T090000Z\r\n\
-         SUMMARY:{summary}\r\n\
-         END:VEVENT\r\n\
-         END:VCALENDAR"
-    )
-}
-
 /// Print parsed `calendar-data` through the `icalendar` crate.
 fn print_entry(href: &str, data: Option<&str>) {
     match data.and_then(|d| d.parse::<icalendar::Calendar>().ok()) {
@@ -82,7 +61,7 @@ fn print_entry(href: &str, data: Option<&str>) {
 
 #[tokio::main]
 async fn main() -> fast_dav_rs::Result<()> {
-    let client = CalDavClient::new(&radicale_url(), Some(USER), Some(PASS))?;
+    let client = radicale_client()?;
     let store = TokenStore(std::env::temp_dir().join("fast-dav-rs-sync-loop-demo.token"));
 
     // Fixture data: a calendar with two events (idempotent re-runs).

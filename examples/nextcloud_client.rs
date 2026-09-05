@@ -15,52 +15,18 @@
 //! `NEXTCLOUD_BEARER_TOKEN` is set — e.g. against an OIDC-enabled deployment —
 //! the builder attaches it as a `Bearer` token instead.
 
+#[path = "common/mod.rs"]
+mod common;
+
 use bytes::Bytes;
-use fast_dav_rs::CalDavClient;
 
-const USER: &str = "test";
-const PASS: &str = "fixture-dav-password";
+use common::{nextcloud_client, todo_ics};
+
 const COLLECTION: &str = "calendars/test/example-nextcloud-todos/";
-
-fn dav_url() -> String {
-    let mut url = std::env::var("NEXTCLOUD_URL").unwrap_or_else(|_| "http://localhost:8083".into());
-    if !url.ends_with('/') {
-        url.push('/');
-    }
-    url.push_str("remote.php/dav/");
-    url
-}
-
-fn client() -> fast_dav_rs::Result<CalDavClient> {
-    match std::env::var("NEXTCLOUD_BEARER_TOKEN") {
-        // Bearer token (app password or OIDC access token) on a token-capable
-        // deployment: the client attaches `Authorization: Bearer …` itself.
-        Ok(token) if !token.is_empty() => {
-            CalDavClient::builder(dav_url()).bearer_token(token).build()
-        }
-        // Fixture default: Basic auth with the account password.
-        _ => CalDavClient::new(&dav_url(), Some(USER), Some(PASS)),
-    }
-}
-
-fn todo_ics(uid: &str, summary: &str) -> String {
-    format!(
-        "BEGIN:VCALENDAR\r\n\
-         VERSION:2.0\r\n\
-         PRODID:-//fast-dav-rs//nextcloud example//EN\r\n\
-         BEGIN:VTODO\r\n\
-         UID:{uid}\r\n\
-         DTSTAMP:20260101T000000Z\r\n\
-         SUMMARY:{summary}\r\n\
-         STATUS:NEEDS-ACTION\r\n\
-         END:VTODO\r\n\
-         END:VCALENDAR"
-    )
-}
 
 #[tokio::main]
 async fn main() -> fast_dav_rs::Result<()> {
-    let client = client()?;
+    let client = nextcloud_client()?;
     println!("dav root OPTIONS: {}", client.options("").await?.status());
 
     // Nextcloud calendars need an explicit supported-component set to accept
