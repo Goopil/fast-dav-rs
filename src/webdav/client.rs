@@ -15,11 +15,8 @@ use crate::common::compression::{
     detect_encodings, detect_request_compression_preference,
 };
 use crate::common::http::HyperClient;
-use crate::common::{dav_debug, dav_trace};
-// Only referenced inside `dav_debug!` arguments, which compile out without
-// the `tracing` feature.
-#[cfg(feature = "tracing")]
 use crate::common::redact_userinfo;
+use crate::common::{dav_debug, dav_trace};
 use crate::error::EtagReason;
 use crate::webdav::auth::TokenProvider;
 use crate::webdav::builder::WebDavClientBuilder;
