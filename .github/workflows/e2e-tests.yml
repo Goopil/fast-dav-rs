@@ -93,11 +93,6 @@ jobs:
         fi
         echo "Service responded with HTTP $STATUS (acceptable)"
 
-    - name: Install Composer dependencies
-      run: |
-        cd sabredav-test
-        docker compose run --rm sabredav composer install
-
     - name: Reset and seed database
       run: |
         cd sabredav-test

@@ -3,9 +3,6 @@
 # Stop any running containers
 docker-compose down
 
-# Install Composer dependencies
-docker-compose run --rm sabredav composer install
-
 # Start services
 docker-compose up -d
 

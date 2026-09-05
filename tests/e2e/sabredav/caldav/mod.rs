@@ -6,6 +6,7 @@ pub mod operations;
 pub mod parallel;
 pub mod parsing;
 pub mod resilience;
+pub mod scheduling_tests;
 pub mod security;
 pub mod streaming;
 pub mod sync;
