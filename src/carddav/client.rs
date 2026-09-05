@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use bytes::Bytes;
 use hyper::{HeaderMap, Method, Response, StatusCode, header};
 
@@ -423,32 +421,17 @@ impl CardDavClient {
                 "addressbook_multiget_many: batch_size must be greater than zero".to_owned(),
             ));
         }
-        // Empty hrefs are dropped **before** chunking so every recorded
-        // `BatchItem::hrefs` matches the hrefs its chunk's REPORT actually
-        // carried; an input with no non-empty href produces no batches.
-        let filtered: Vec<String> = hrefs.iter().filter(|h| !h.is_empty()).cloned().collect();
-        if filtered.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut requests = Vec::new();
-        let mut chunk_hrefs = Vec::new();
-        for chunk in filtered.chunks(batch_size) {
-            let Some(xml) = build_addressbook_multiget_body(chunk.iter(), include_data) else {
-                continue;
-            };
-            requests.push((addressbook_path.to_owned(), Arc::new(Bytes::from(xml))));
-            chunk_hrefs.push(chunk.to_vec());
-        }
-
-        // Shared engine: chunked REPORTs, ordering, per-chunk failure
-        // isolation and missing-hrefs reconciliation.
+        // Shared engine: empty-href filtering, chunking, chunked REPORTs,
+        // ordering, per-chunk failure isolation and missing-hrefs
+        // reconciliation.
         crate::webdav::multiget::multiget_many(
             &self.webdav,
             Operation::ReportAddressbookMultiget,
-            requests,
-            chunk_hrefs,
+            addressbook_path,
+            hrefs,
+            batch_size,
             max_concurrency,
+            |chunk| build_addressbook_multiget_body(chunk.iter(), include_data),
             map_address_objects,
         )
         .await
@@ -691,6 +674,27 @@ pub fn build_addressbook_query_filter(
     filter.to_filter_xml()
 }
 
+/// Build an `addressbook-multiget` REPORT request body (RFC 6352 §8.7).
+///
+/// The body carries `<D:getetag/>` plus `<C:address-data/>` when
+/// `include_data` is set. Returns `None` when `hrefs` contains no non-empty
+/// href (such a request would be invalid; callers such as
+/// [`addressbook_multiget`](crate::CardDavClient::addressbook_multiget) skip
+/// the network round-trip entirely). Empty hrefs inside `hrefs` are dropped
+/// and XML metacharacters are escaped.
+///
+/// # Example
+///
+/// ```no_run
+/// use fast_dav_rs::carddav::build_addressbook_multiget_body;
+///
+/// let body = build_addressbook_multiget_body(["/contacts/a.vcf", ""], true)
+///     .expect("at least one non-empty href");
+/// assert!(body.contains("<C:addressbook-multiget"));
+/// assert!(body.contains("<D:href>/contacts/a.vcf</D:href>"));
+/// assert!(!body.contains("<D:href></D:href>"), "empty hrefs are dropped");
+/// assert!(body.contains("<C:address-data/>"));
+/// ```
 pub fn build_addressbook_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
 where
     I: IntoIterator<Item = S>,

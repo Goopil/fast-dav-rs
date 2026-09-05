@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use bytes::Bytes;
 use hyper::{HeaderMap, Method, Response, header};
 use percent_encoding::utf8_percent_encode;
@@ -578,34 +576,18 @@ impl CalDavClient {
             ));
         }
         validate_expand("invalid calendar-multiget", expand.as_ref())?;
-        // Empty hrefs are dropped **before** chunking so every recorded
-        // `BatchItem::hrefs` matches the hrefs its chunk's REPORT actually
-        // carried; an input with no non-empty href produces no batches.
-        let filtered: Vec<String> = hrefs.iter().filter(|h| !h.is_empty()).cloned().collect();
-        if filtered.is_empty() {
-            return Ok(Vec::new());
-        }
 
-        let mut requests = Vec::new();
-        let mut chunk_hrefs = Vec::new();
-        for chunk in filtered.chunks(batch_size) {
-            let Some(xml) =
-                build_calendar_multiget_body(chunk.iter(), include_data, expand.as_ref())
-            else {
-                continue;
-            };
-            requests.push((calendar_path.to_owned(), Arc::new(Bytes::from(xml))));
-            chunk_hrefs.push(chunk.to_vec());
-        }
-
-        // Shared engine: chunked REPORTs, ordering, per-chunk failure
-        // isolation and missing-hrefs reconciliation.
+        // Shared engine: empty-href filtering, chunking, chunked REPORTs,
+        // ordering, per-chunk failure isolation and missing-hrefs
+        // reconciliation.
         crate::webdav::multiget::multiget_many(
             &self.webdav,
             Operation::ReportCalendarMultiget,
-            requests,
-            chunk_hrefs,
+            calendar_path,
+            hrefs,
+            batch_size,
             max_concurrency,
+            |chunk| build_calendar_multiget_body(chunk.iter(), include_data, expand.as_ref()),
             map_calendar_objects,
         )
         .await

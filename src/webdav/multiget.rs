@@ -1,6 +1,6 @@
-//! Shared multiget engine: chunked REPORT round-trips with href
-//! reconciliation, used by both `CalDavClient::calendar_multiget_many` and
-//! `CardDavClient::addressbook_multiget_many`.
+//! Shared multiget engine: empty-href filtering, chunked REPORT round-trips
+//! with href reconciliation, used by both `CalDavClient::calendar_multiget_many`
+//! and `CardDavClient::addressbook_multiget_many`.
 
 use std::sync::Arc;
 
@@ -13,11 +13,14 @@ use crate::{Error, Operation, Result};
 
 /// Run chunked multiget REPORTs concurrently and reconcile the answers.
 ///
-/// One REPORT per entry of `requests` is issued via
-/// [`WebDavClient::report_many_bodies`] (bounded by `max_concurrency`,
-/// `Depth: 0`); the i-th result is paired with the i-th entry of
-/// `chunk_hrefs` (the hrefs that chunk's REPORT requested). Each chunk then
-/// becomes one or more [`BatchItem`]s, preserving chunk order:
+/// Empty hrefs are dropped from `hrefs` **before** chunking (so every
+/// recorded `BatchItem::hrefs` matches the hrefs its chunk's REPORT actually
+/// carried); an input with no non-empty href produces no batches and no
+/// network I/O. The remaining hrefs are split into slices of `batch_size`;
+/// one REPORT is issued per chunk via [`WebDavClient::report_many_bodies`]
+/// (bounded by `max_concurrency`, `Depth: 0`), with `build_body` producing
+/// each chunk's request body (a `None` return skips the chunk). Each chunk
+/// then becomes one or more [`BatchItem`]s, preserving chunk order:
 ///
 /// - A chunk answered with a non-success status or a transport error, or
 ///   whose multistatus body fails to parse, produces exactly **one** error
@@ -32,19 +35,40 @@ use crate::{Error, Operation, Result};
 /// `map` turns the chunk's parsed multistatus entries into the caller's
 /// objects (one `BatchItem` per returned object, mirroring the CalDAV
 /// semantics); a chunk whose multistatus carries no entries contributes no
-/// items. The method itself only fails when a precondition violated before
-/// any I/O is detected by the caller (the engine performs none of its own).
-pub(crate) async fn multiget_many<T, F>(
+/// items. Non-success statuses, transport errors and unparsable bodies
+/// surface as error `BatchItem`s; the engine performs no input validation of
+/// its own, so an `Err` return comes only from precondition checks its
+/// callers run before any I/O.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn multiget_many<T, B, M>(
     webdav: &WebDavClient,
     operation: Operation,
-    requests: Vec<(String, Arc<Bytes>)>,
-    chunk_hrefs: Vec<Vec<String>>,
+    collection_path: &str,
+    hrefs: &[String],
+    batch_size: usize,
     max_concurrency: usize,
-    map: F,
+    build_body: B,
+    map: M,
 ) -> Result<Vec<BatchItem<T>>>
 where
-    F: Fn(Vec<DavItem>) -> Vec<T>,
+    B: Fn(&[String]) -> Option<String>,
+    M: Fn(Vec<DavItem>) -> Vec<T>,
 {
+    let filtered: Vec<String> = hrefs.iter().filter(|h| !h.is_empty()).cloned().collect();
+    if filtered.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut requests = Vec::new();
+    let mut chunk_hrefs = Vec::new();
+    for chunk in filtered.chunks(batch_size) {
+        let Some(xml) = build_body(chunk) else {
+            continue;
+        };
+        requests.push((collection_path.to_owned(), Arc::new(Bytes::from(xml))));
+        chunk_hrefs.push(chunk.to_vec());
+    }
+
     let batches = webdav.report_many_bodies(requests, max_concurrency).await;
 
     let mut out = Vec::new();
