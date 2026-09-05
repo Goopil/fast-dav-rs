@@ -1296,7 +1296,7 @@ live in one tree per fixture under `tests/e2e/` (`sabredav/`, `radicale/`,
 
 | Tier | Fixture dir | Test target | URL (env override) | Credentials |
 |------|-------------|-------------|--------------------|-------------|
-| SabreDAV | `sabredav-test/` | `--test e2e_tests` | http://localhost:8080 (`CALDAV_SERVER_URL`) | `test` / `test` |
+| SabreDAV | `sabredav-test/` | `--test e2e_tests` | http://localhost:8080 (`SABREDAV_URL`) | `test` / `test` |
 | Radicale | `radicale-test/` | `--test e2e_radicale` | http://localhost:8081 (`RADICALE_URL`) | `test` / `test` |
 | Nextcloud | `nextcloud-test/` | `--test e2e_nextcloud` | http://localhost:8083 (`NEXTCLOUD_URL`) | `test` / `fixture-dav-password` |
 | Provider A smoke | — (no fixture) | `--test e2e_provider_a_smoke -- --ignored` | `PROVIDER_A_DAV_URL` (required) | none |

@@ -77,6 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   §8 Schedule-Tag)
 
 ### Fixed
+- Discovered CalDAV/CardDAV service URLs are stripped of embedded credentials
+  before being returned by `discover_caldav`/`discover_carddav`: a hostile
+  `Location` redirect hop (server-controlled) can no longer leak
+  `user:password@` userinfo into the caller's hands. Base-URL fallbacks are
+  unaffected (the builder already rejects userinfo there)
 - LOCK/UNLOCK error responses whose `<D:error>` body is present but unparsable
   (malformed or truncated markup) now surface as `Error::UnexpectedStatusWithDav`
   with `dav.parse_failed == true`, instead of the previous plain

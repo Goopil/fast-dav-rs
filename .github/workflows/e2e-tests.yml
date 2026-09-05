@@ -110,9 +110,7 @@ jobs:
       run: |
         cargo test --manifest-path Cargo.toml --test e2e_tests
       env:
-        CALDAV_SERVER_URL: http://localhost:8080
-        CALDAV_USERNAME: test
-        CALDAV_PASSWORD: test
+        SABREDAV_URL: http://localhost:8080
 
     - name: Debug - Show test logs if failed
       if: failure()

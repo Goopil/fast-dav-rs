@@ -171,8 +171,8 @@ pub fn vtodo_ics(uid: &str, summary: &str) -> String {
     )
 }
 
-/// A minimal vCard (RFC 6352 §6.2.1); the formatted name round-trips
-/// verbatim on every fixture.
+/// A minimal vCard (RFC 6352 §6.3.2 address-object creation); the formatted
+/// name round-trips verbatim on every fixture.
 pub fn vcard(fn_name: &str, email: &str) -> String {
     format!(
         "BEGIN:VCARD\r\n\
