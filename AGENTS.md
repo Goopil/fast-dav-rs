@@ -63,6 +63,7 @@ The project uses GitHub Actions with these key steps:
 3. `cargo nextest run --all-features --locked --test unit_tests` - Run unit tests
 4. `cargo build --examples --all-features --locked` - Build examples
 5. `cargo test --doc --all-features --locked` - Run doc tests
+6. `cargo semver-checks` - Gate public API against the latest published release (`Semver Checks` workflow)
 
 ### SonarCloud Quality Gates
 All PRs are analyzed by SonarCloud. The following gates **must always pass** on every PR:
