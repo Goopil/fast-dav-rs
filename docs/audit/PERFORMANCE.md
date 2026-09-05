@@ -38,3 +38,44 @@ The repo has **zero benchmarks**. Before/after any Phase 2 work (`REMEDIATION_PL
 1. `sync_collection` over 1k/10k synthetic items, `include_data` on/off — assert memory ceiling after AUDIT-003/016 fixes.
 2. First-request latency in `Auto` mode, 32 concurrent callers — assert probe HOL elimination.
 3. Aggregated vs `_visit` parse throughput on a 50 MB multistatus — document the real delta to justify the "use `_visit` for large syncs" guidance.
+
+### Baselines (2026-09)
+
+Implemented in `benches/performance.rs` (`cargo bench --bench performance`). **Local
+run**, not a CI regression gate: numbers are order-of-magnitude references for
+before/after comparisons, not absolute truth.
+
+- Hardware: Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.96, `bench` profile.
+- Fixture: in-process hyper HTTP/1.1 server on an ephemeral `127.0.0.1` port,
+  serving canned 207 multistatus payloads; synthetic XML is generated outside
+  the measured closures; no sleeps, server responds immediately.
+- Payload sizes: B1 1k-with-data ≈ 1.8 MB · 1k-etags-only ≈ 0.2 MB ·
+  10k-with-data ≈ 17.8 MB · 10k-etags-only ≈ 2.2 MB; B3 ≈ 50 MB
+  (5,000 items × ~10 KB of `calendar-data`).
+
+| Scenario | Case | Median | σ |
+|---|---|---:|---:|
+| B1 `sync_collection` | 1k items, with data | 3.15 ms | 0.67 ms |
+| B1 `sync_collection` | 1k items, etags only | 2.15 ms | 0.29 ms |
+| B1 `sync_collection` | 10k items, with data | 30.6 ms | 1.1 ms |
+| B1 `sync_collection` | 10k items, etags only | 18.7 ms | 0.81 ms |
+| B2 first request, 32 callers | `Auto` | 641 µs | 25 µs |
+| B2 first request, 32 callers | `Disabled` (baseline) | 536 µs | 27 µs |
+| B3 ~50 MB multistatus | aggregated `parse_multistatus_stream` | 29.5 ms | 9.0 ms |
+| B3 ~50 MB multistatus | `parse_multistatus_stream_visit` | 24.2 ms | 0.75 ms |
+
+Reading the numbers:
+
+- **B1** — `include_data` on/off is both a bandwidth and an allocation story:
+  10k-with-data moves ~17.8 MB per sync (~582 MB/s end-to-end); etags-only
+  moves ~2.2 MB. After the AUDIT-003/016 memory caps land, these are the
+  reference points to re-measure against.
+- **B2** — `Auto` costs ~+105 µs per 32-caller first wave over `Disabled`:
+  one hidden PROPFIND probe round-trip plus the negotiation-lock convoy
+  (AUDIT-012). In-process the probe is microseconds; against a real server it
+  is one full RTT serialized ahead of the whole first wave — re-run this bench
+  after the HOL fix lands.
+- **B3** — through the same transport, `visit` parses ~2.1 GB/s vs ~1.7 GB/s
+  aggregated (~18% faster end-to-end), and it never materializes the full item
+  list (§1): the aggregated path still buffers every item + data string at
+  once. This justifies the "use `_visit` for large syncs" guidance.
