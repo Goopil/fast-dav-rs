@@ -19,7 +19,9 @@ jobs:
   fuzz:
     name: Fuzz (nightly)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # First uncached run pays an instrumented ASan build of the full dep tree
+    # on top of 3x300s of fuzzing.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout sources
@@ -32,6 +34,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: nightly-fuzz
+          # Keep the build cache when a target crashes so crash-iterating
+          # follow-up runs don't rebuild from scratch.
+          cache-on-failure: true
           workspaces: fuzz
 
       - name: Install cargo-fuzz
