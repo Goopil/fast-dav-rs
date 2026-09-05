@@ -158,7 +158,11 @@ examples/               # Runnable example binaries (one per workflow; fixture p
 
 ### Testing Guidelines
 - Unit tests go in `tests/unit/` directory
-- E2E tests go in `tests/e2e/` directory
+- E2E tests go in `tests/e2e/`, one subtree per fixture (`sabredav/` → target
+  `e2e_tests`, `radicale/` → `e2e_radicale`, `nextcloud/` → `e2e_nextcloud`,
+  `provider_a/` → `e2e_provider_a_smoke`); shared fixture helpers (URL/client
+  constructors, auth constants, unique-name helpers, iCalendar/vCard body
+  builders) live in `tests/e2e/util.rs`, included per target via `#[path]`
 - Use `#[tokio::test]` for async test functions
 - Include both happy path and error case tests
 - Test error scenarios with proper result checking

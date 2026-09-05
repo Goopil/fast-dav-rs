@@ -10,41 +10,25 @@
 //! cargo run --example streaming_large_collections
 //! ```
 
+#[path = "common/mod.rs"]
+mod common;
+
 use bytes::Bytes;
 use fast_dav_rs::caldav::parse_multistatus_stream_visit;
-use fast_dav_rs::{CalDavClient, Depth, detect_encoding};
+use fast_dav_rs::{Depth, detect_encoding};
 
-const USER: &str = "test";
-const PASS: &str = "test";
+use common::radicale_client;
+
 const COLLECTION: &str = "test/example-streaming/";
 const EVENT_COUNT: usize = 40;
 
-fn radicale_url() -> String {
-    let mut url = std::env::var("RADICALE_URL").unwrap_or_else(|_| "http://localhost:8081".into());
-    if !url.ends_with('/') {
-        url.push('/');
-    }
-    url
-}
-
 fn event_ics(uid: &str) -> String {
-    format!(
-        "BEGIN:VCALENDAR\r\n\
-         VERSION:2.0\r\n\
-         PRODID:-//fast-dav-rs//streaming example//EN\r\n\
-         BEGIN:VEVENT\r\n\
-         UID:{uid}\r\n\
-         DTSTAMP:20260101T000000Z\r\n\
-         DTSTART:20260912T100000Z\r\n\
-         SUMMARY:event {uid}\r\n\
-         END:VEVENT\r\n\
-         END:VCALENDAR"
-    )
+    common::event_ics(uid, &format!("event {uid}"))
 }
 
 #[tokio::main]
 async fn main() -> fast_dav_rs::Result<()> {
-    let client = CalDavClient::new(&radicale_url(), Some(USER), Some(PASS))?;
+    let client = radicale_client()?;
 
     // Fixture data: a calendar with EVENT_COUNT events.
     let mk = r#"<?xml version="1.0" encoding="UTF-8"?>

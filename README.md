@@ -1245,7 +1245,10 @@ cargo test --doc
 
 The project ships three Docker e2e fixtures (SabreDAV, Radicale, Nextcloud)
 plus an opt-in, credential-free smoke tier against a real-world deployment
-(referred to as **Provider A** — never named in the repository).
+(referred to as **Provider A** — never named in the repository). The suites
+live in one tree per fixture under `tests/e2e/` (`sabredav/`, `radicale/`,
+`nextcloud/`, `provider_a/`), with shared fixture helpers in
+`tests/e2e/util.rs`.
 
 | Tier | Fixture dir | Test target | URL (env override) | Credentials |
 |------|-------------|-------------|--------------------|-------------|
