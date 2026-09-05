@@ -81,7 +81,7 @@ features, and major releases introduce breaking changes when needed.
 - CalDAV calendar discovery, queries, and event CRUD.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
 - CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, and `If-Schedule-Tag-Match` conditional writes.
-- CalDAV `calendar-timezone` read (RFC 4791 §5.2.2): per-calendar and via `CalendarInfo.timezone`.
+- CalDAV `calendar-timezone` read + write (RFC 4791 §5.2.2): per-calendar read and via `CalendarInfo.timezone`; `set_calendar_timezone` stores/removes the property via `PROPPATCH`.
 - CalDAV managed attachments (RFC 8607, sent in the non-IETF CalendarServer collection-targeted form): `post_managed_attachment` stores an attachment via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
 - Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`).
 - CardDAV addressbook discovery, queries, and contact CRUD.
@@ -905,16 +905,25 @@ surfaced per calendar in `CalendarInfo.timezone` by `list_calendars`.
 
 Pair the returned object with a dedicated iCalendar parser (e.g. `icalendar`)
 to derive the UTC offset rules; this library does not interpret `VTIMEZONE`
-data. The write path (storing a `calendar-timezone` via `MKCALENDAR` or
-`PROPPATCH`) is not exposed.
+data — neither on read nor on write.
+
+`CalDavClient::set_calendar_timezone(path, vtimezone)` writes the property
+with a `Depth: 0` `PROPPATCH` (RFC 4791 §5.2.2): `Some(vtimezone)` sends a
+`<D:set>` with the VTIMEZONE iCalendar object verbatim (XML-escaped), `None`
+sends a `<D:remove>`. A blank value is rejected as
+`Error::InvalidInput` before any network I/O. Because servers commonly accept
+the request but reject the property, the per-property status inside the 207
+multistatus decides the outcome: a non-success propstat for
+`calendar-timezone` maps to `Error::UnexpectedStatus` with
+`Operation::ProppatchCalendarTimezone`.
 
 Server support:
 
 | Server | `calendar-timezone` support |
 | --- | --- |
-| Radicale | Not stored (the property is always absent; verified against the fixture) |
+| Radicale | Supported (3.7.6): the PROPPATCH set stores the object and the remove makes it read back absent (line endings normalized CRLF → LF); verified against the fixture |
 | SabreDAV | Supported on calendar creation (set at `MKCALENDAR` time) |
-| Nextcloud | Partial (available on some calendars, not universally stored) |
+| Nextcloud | Supported on calendar creation, and the `PROPPATCH` write path round-trips (set → read back the stored object, remove → absent; line endings normalized CRLF → LF by the VObject re-serialization; verified against the fixture) |
 
 ### CalDAV scheduling (RFC 6638)
 

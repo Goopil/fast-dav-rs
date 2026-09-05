@@ -474,6 +474,9 @@ pub enum Operation {
     PostManagedAttachment,
     /// `PROPFIND` to read `current-user-privilege-set` (RFC 3744 §5.4).
     PropfindCurrentUserPrivilegeSet,
+    /// `PROPPATCH` to set/remove a calendar's `calendar-timezone`
+    /// (RFC 4791 §5.2.2).
+    ProppatchCalendarTimezone,
 }
 
 impl std::fmt::Display for Operation {
@@ -499,6 +502,7 @@ impl std::fmt::Display for Operation {
             Self::ScheduleInbox => "PROPFIND schedule inbox",
             Self::PostManagedAttachment => "POST managed attachment",
             Self::PropfindCurrentUserPrivilegeSet => "PROPFIND current-user-privilege-set",
+            Self::ProppatchCalendarTimezone => "PROPPATCH calendar-timezone",
         };
         f.write_str(s)
     }

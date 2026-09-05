@@ -139,6 +139,86 @@ END:VCALENDAR"#
 }
 
 #[tokio::test]
+async fn test_calendar_timezone_write_round_trip() {
+    // Observed behavior (Radicale 3.7.6 fixture): the `calendar-timezone`
+    // PROPPATCH write path (RFC 4791 §5.2.2) is implemented — the set answers
+    // a 207 with a 200 propstat for the property and the object is stored
+    // verbatim; the remove answers 207/200 and the property reads back
+    // absent (404 propstat on the subsequent PROPFIND).
+    let client = radicale_caldav_client();
+    let calendar_path = format!(
+        "{}{}/",
+        principal_path(),
+        util::unique_calendar_name("radicale_e2e_tz")
+    );
+
+    let mkcalendar_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{}</D:displayname>
+    </D:prop>
+  </D:set>
+</C:mkcalendar>"#,
+        calendar_path
+    );
+    let created = client
+        .mkcalendar(&calendar_path, &mkcalendar_xml)
+        .await
+        .expect("MKCALENDAR request");
+    assert!(
+        created.status().is_success(),
+        "MKCALENDAR must succeed, got {}",
+        created.status()
+    );
+
+    let vtimezone = util::vtimezone_ics();
+
+    client
+        .set_calendar_timezone(&calendar_path, Some(vtimezone.as_str()))
+        .await
+        .expect("PROPPATCH set_calendar_timezone must succeed on Radicale");
+
+    let stored = client
+        .calendar_timezone(&calendar_path)
+        .await
+        .expect("calendar_timezone PROPFIND");
+    // Radicale normalizes the stored object's line endings from CRLF to LF;
+    // the component content itself round-trips verbatim.
+    assert_eq!(
+        stored.as_deref(),
+        Some(vtimezone.replace("\r\n", "\n")).as_deref(),
+        "Radicale must store the VTIMEZONE object (CRLF normalized to LF)"
+    );
+
+    client
+        .set_calendar_timezone(&calendar_path, None)
+        .await
+        .expect("PROPPATCH remove must succeed on Radicale");
+
+    let removed = client
+        .calendar_timezone(&calendar_path)
+        .await
+        .expect("calendar_timezone PROPFIND after remove");
+    assert_eq!(
+        removed, None,
+        "the property must be absent after the remove"
+    );
+
+    // Teardown.
+    let delete_calendar = client
+        .delete(&calendar_path)
+        .await
+        .expect("calendar DELETE");
+    assert!(
+        delete_calendar.status().is_success(),
+        "calendar DELETE must succeed, got {}",
+        delete_calendar.status()
+    );
+}
+
+#[tokio::test]
 async fn test_addressbook_crud_round_trip() {
     let client = radicale_carddav_client();
     let book_path = format!(

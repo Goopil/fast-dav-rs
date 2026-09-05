@@ -183,3 +183,31 @@ pub fn vcard(fn_name: &str, email: &str) -> String {
          END:VCARD"
     )
 }
+
+/// A minimal RFC 4791 §5.2.2 `calendar-timezone` value: one `VTIMEZONE`
+/// component for Europe/Paris with the standard/daylight rules.
+pub fn vtimezone_ics() -> String {
+    concat!(
+        "BEGIN:VCALENDAR\r\n",
+        "VERSION:2.0\r\n",
+        "BEGIN:VTIMEZONE\r\n",
+        "TZID:Europe/Paris\r\n",
+        "BEGIN:STANDARD\r\n",
+        "DTSTART:19701025T030000\r\n",
+        "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU\r\n",
+        "TZOFFSETFROM:+0200\r\n",
+        "TZOFFSETTO:+0100\r\n",
+        "TZNAME:CET\r\n",
+        "END:STANDARD\r\n",
+        "BEGIN:DAYLIGHT\r\n",
+        "DTSTART:19700329T020000\r\n",
+        "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\r\n",
+        "TZOFFSETFROM:+0100\r\n",
+        "TZOFFSETTO:+0200\r\n",
+        "TZNAME:CEST\r\n",
+        "END:DAYLIGHT\r\n",
+        "END:VTIMEZONE\r\n",
+        "END:VCALENDAR"
+    )
+    .to_owned()
+}
