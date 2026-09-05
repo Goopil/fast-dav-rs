@@ -52,6 +52,19 @@ Note: AUDIT-006/014/028 are largely resolved by #111 (dedup executed, types unif
 - [ ] AUDIT-029 — documentation sweep + doc-claim verification in the release checklist.
 - [ ] AUDIT-004 — cross-origin credential guard (see note below — could be Phase 1 if security posture demands).
 
+## External review 2026-09 (roast triage)
+
+From the unsolicited external review (claim-by-claim triage in `ROAST-2026-09-EXTERNAL.md`). Accepted items, ordered by ROI:
+
+- [ ] #195 — criterion benchmarks (`PERFORMANCE.md` §5) — unblocks Phase 2 evidence
+- [ ] #196 — `cargo-semver-checks` PR gate
+- [ ] #197 — provider compatibility matrix (docs)
+- [ ] #198 — cargo-fuzz targets (parser surface)
+- [ ] #199 — README split into `docs/`
+- [ ] #200 — opt-in `require_https` guard (coordinate with #139)
+
+Rejected: mutation testing (revisit near 1.0). Already tracked, no new work: coverage carve-out (deliberate), AUDIT-031 (LGPL), AUDIT-011, R08/#137, R19/#139.
+
 ## Quick wins
 
 AUDIT-001 (2 lines), AUDIT-030 (1 line), AUDIT-022 (mechanical), AUDIT-005 (YAML if), AUDIT-029 (doc sweep), `set -euo pipefail` (AUDIT-018).
