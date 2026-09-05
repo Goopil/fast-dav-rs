@@ -332,8 +332,8 @@ impl ParamFilter {
 }
 
 /// Validate the `param-filter` child exclusivity shared by the CalDAV and
-/// CardDAV DTDs (RFC 4791 §9.7.3 / RFC 6352 §10.5.1:
-/// `<!ELEMENT param-filter (is-not-defined | text-match?)>`): an
+/// CardDAV DTDs (RFC 4791 §9.7.3 / RFC 6352 §10.5.2:
+/// `<!ELEMENT param-filter (is-not-defined | text-match)?>`): an
 /// `is-not-defined` param-filter cannot carry a `text-match`.
 ///
 /// `context` names the enclosing query and prop-filter (e.g.

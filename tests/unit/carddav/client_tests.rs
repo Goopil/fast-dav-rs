@@ -1086,7 +1086,7 @@ async fn carddav_put_if_match_derives_content_type_version_from_body() {
 
 #[tokio::test]
 async fn addressbook_query_filter_rejects_param_filter_exclusivity_before_io() {
-    // RFC 6352 §10.5.1: `param-filter (is-not-defined | text-match?)` — a
+    // RFC 6352 §10.5.2: `param-filter (is-not-defined | text-match?)` — a
     // param-filter `is-not-defined` excludes a nested text-match. Must be
     // rejected before any network I/O.
     use fast_dav_rs::carddav::types::{CardDavFilter, ParamFilter, TextMatch};
@@ -1106,8 +1106,65 @@ async fn addressbook_query_filter_rejects_param_filter_exclusivity_before_io() {
     };
     assert!(
         matches!(err, fast_dav_rs::Error::InvalidInput(ref msg)
-            if msg.contains("param-filter") && msg.contains("§10.5.1")),
+            if msg.contains("param-filter") && msg.contains("§10.5.2")),
         "param-filter is-not-defined + text-match must be rejected, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn addressbook_query_filter_rejects_prop_filter_exclusivity_before_io() {
+    // RFC 6352 §10.5.1: `prop-filter (is-not-defined | (text-match*,
+    // param-filter*))` — a prop-filter `is-not-defined` excludes both the
+    // text-match child and any param-filter children. Must be rejected
+    // before any network I/O.
+    use fast_dav_rs::carddav::types::{CardDavFilter, ParamFilter, TextMatch};
+
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+
+    // is-not-defined + a nested param-filter → rejected (§10.5.1).
+    let filter = CardDavFilter::new("EMAIL", "")
+        .with_is_not_defined(true)
+        .with_param_filters(vec![ParamFilter::new("TYPE", TextMatch::new("work"))]);
+    let Err(err) = client
+        .addressbook_query_filter("contacts/", &filter, true)
+        .await
+    else {
+        panic!("prop-filter is-not-defined + param-filter must be rejected before any network I/O");
+    };
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(ref msg)
+            if msg.contains("prop-filter") && msg.contains("§10.5.1")),
+        "prop-filter is-not-defined + param-filter must be rejected, got: {err:?}"
+    );
+
+    // is-not-defined + a text-match value → also rejected (§10.5.1).
+    let filter = CardDavFilter::new("EMAIL", "alice@example.com").with_is_not_defined(true);
+    let Err(err) = client
+        .addressbook_query_filter("contacts/", &filter, true)
+        .await
+    else {
+        panic!("prop-filter is-not-defined + text-match must be rejected before any network I/O");
+    };
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(ref msg)
+            if msg.contains("prop-filter") && msg.contains("§10.5.1")),
+        "prop-filter is-not-defined + text-match must be rejected, got: {err:?}"
+    );
+
+    // Bare `is-not-defined` (no text-match value, no param-filters) is
+    // DTD-valid: it must pass validation and proceed to I/O (fails here
+    // only because the base is unreachable).
+    let filter = CardDavFilter::new("EMAIL", "").with_is_not_defined(true);
+    let Err(err) = client
+        .addressbook_query_filter("contacts/", &filter, true)
+        .await
+    else {
+        panic!("bare prop-filter is-not-defined is DTD-valid");
+    };
+    assert!(
+        !matches!(err, fast_dav_rs::Error::InvalidInput(_)),
+        "bare prop-filter is-not-defined must not be rejected as invalid input, got: {err:?}"
     );
 }
 

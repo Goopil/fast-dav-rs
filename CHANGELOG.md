@@ -33,10 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SabreDAV coverage
 - `CardDavClient::addressbook_query_filter(path, &CardDavFilter, include_data)`: structured-filter
   `addressbook-query` REPORT (RFC 6352 §7) — the CardDAV counterpart of CalDAV `calendar_query`.
-  It validates the RFC 6352 §10.5.1 DTD exclusivity before any network I/O (a nested `param-filter`
-  cannot combine `is-not-defined` with a `text-match`; `Error::InvalidInput` otherwise) and sends
-  the same REPORT as `addressbook_query` for a valid filter. The raw-XML `addressbook_query` keeps
-  taking caller-built filter XML verbatim (nothing to validate there)
+  It validates the RFC 6352 DTD exclusivity before any network I/O (§10.5.1: a `prop-filter`
+  cannot combine `is-not-defined` with a `text-match` or `param-filter` children; §10.5.2: a
+  nested `param-filter` cannot combine `is-not-defined` with a `text-match`;
+  `Error::InvalidInput` otherwise) and sends the same REPORT as `addressbook_query` for a valid
+  filter. The raw-XML `addressbook_query` keeps taking caller-built filter XML verbatim (nothing
+  to validate there)
 
 ### Changed
 - **Breaking (0.x)**: `SyncResponse` (CalDAV + CardDAV) is now `#[non_exhaustive]`,

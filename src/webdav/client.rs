@@ -1536,7 +1536,9 @@ impl WebDavClient {
 
     /// Map a non-success response to an error, surfacing a `<D:error>`
     /// precondition body (RFC 4918 §16, §14.12) when the body carries one —
-    /// or when an error body was present but unparsable
+    /// or when an error body was present but its markup was malformed (not
+    /// merely markup-free: a body carrying no XML at all, e.g. plain text,
+    /// stays a plain [`Error::UnexpectedStatus`])
     /// ([`WebDavError::parse_failed`](crate::webdav::WebDavError::parse_failed)),
     /// so a malformed 423 body is distinguishable from an absent one. A
     /// response without any error body stays a plain
