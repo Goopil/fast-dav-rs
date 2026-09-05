@@ -312,9 +312,9 @@ impl ParamFilter {
     }
 
     /// Render this param-filter as the `<C:param-filter>` element using the
-    /// CalDAV serialization: a nested `text-match` (RFC 4791 §9.7.3)
-    /// serializes via [`TextMatch::to_caldav_xml`] — without `collation`
-    /// and `match-type` attributes.
+    /// CalDAV serialization: a nested `text-match` (RFC 4791 §9.7.5) inside
+    /// the `param-filter` serializes via [`TextMatch::to_caldav_xml`] —
+    /// without `collation` and `match-type` attributes.
     pub fn to_caldav_xml(&self) -> String {
         self.to_xml_for(true)
     }

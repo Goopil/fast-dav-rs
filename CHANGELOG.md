@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- CalDAV-flavor serialization for filter types: `TextMatch::to_caldav_xml` /
+  `ParamFilter::to_caldav_xml` per RFC 4791; `to_xml` remains the CardDAV flavor
+
 ### Changed
 - **Breaking (0.x)**: `SyncResponse` (CalDAV + CardDAV) is now `#[non_exhaustive]`,
   matching `SyncItem`. External struct-literal construction no longer compiles;

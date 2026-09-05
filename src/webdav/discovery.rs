@@ -41,7 +41,7 @@ use crate::{Error, Operation, Result};
 /// no in-place userinfo setters, so the URI is rebuilt from its parts with
 /// the credentials dropped (`Authority::host()` excludes userinfo by
 /// construction).
-fn redact_userinfo(uri: &Uri) -> Result<Uri> {
+fn strip_userinfo(uri: &Uri) -> Result<Uri> {
     let Some(authority) = uri.authority() else {
         return Ok(uri.clone());
     };
@@ -122,7 +122,7 @@ async fn discover_well_known(
         // (RFC 6764 §5) — the builder already rejects userinfo in the base
         // URL, so the discovered URL gets the same guarantee before it
         // leaves this function.
-        let service = redact_userinfo(&final_uri)?;
+        let service = strip_userinfo(&final_uri)?;
         Ok(service.to_string())
     }
 }
