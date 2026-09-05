@@ -1,0 +1,41 @@
+name: Semver Checks
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semver-checks:
+    name: Semver Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stable-rust
+
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          # Compare against the latest release (crates.io version == latest release tag)
+          # with every feature enabled: a break behind a non-default feature is still breaking.
+          feature-group: all-features
+          # Reuse the stable toolchain installed above instead of a second install.
+          rust-toolchain: manual

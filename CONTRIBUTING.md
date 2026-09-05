@@ -23,6 +23,17 @@ We follow the Rust community coding standards:
 - Add documentation for public APIs
 - Include tests for new functionality
 
+## API Stability (semver)
+
+Every pull request is gated by `cargo-semver-checks` (the `Semver Checks` workflow), which compares
+the public API against the latest release tag with all features enabled and fails on breaking changes.
+
+Intentional breaking changes:
+
+- Land in a `0.x` minor-version bump (e.g. `0.14.0` -> `0.15.0`).
+- Use deprecation aliases where feasible so callers can migrate gradually.
+- Must be called out in `CHANGELOG.md`.
+
 ## Testing
 
 Before submitting a pull request, please ensure:
