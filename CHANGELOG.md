@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - E2E suite reorganization (no behavior change): one tree per fixture under
   `tests/e2e/` — `sabredav/` (target `e2e_tests`), `radicale/` (target
   `e2e_radicale`, monolith split into `core`/`sync`/`locking`/`attachments`),
-  `nextcloud/` (target `e2e_nextcloud`, split into `crud`/`discovery`/`sync`),
+  `nextcloud/` (target `e2e_nextcloud`, split into
+  `crud`/`discovery`/`sync`/`locking`),
   and `provider_a/` (target `e2e_provider_a_smoke`). Shared fixture helpers
   (per-fixture URL/client constructors, auth constants, unique-name helpers,
   iCalendar/vCard body builders) live in `tests/e2e/util.rs`, included per

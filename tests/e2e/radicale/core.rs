@@ -259,7 +259,7 @@ async fn test_vtodo_round_trip_on_radicale() {
     let body = String::from_utf8_lossy(&get.into_body()).into_owned();
     assert!(
         body.contains("VTODO") && body.contains(&uid),
-        "GET must return the stored VTODO containing UID {uid}, got: {body}"
+        "GET must return the stored VTODO, got: {body}"
     );
     assert!(
         body.contains("Radicale e2e task"),
