@@ -253,6 +253,81 @@ async fn test_calendar_multiget_many_chunked_on_nextcloud() {
 }
 
 #[tokio::test]
+async fn test_calendar_timezone_write_round_trip() {
+    let client = nextcloud_caldav_client();
+    let calendar_path = format!(
+        "calendars/{NEXTCLOUD_USER}/{}/",
+        util::unique_calendar_name("nc_e2e_tz")
+    );
+
+    let mkcalendar_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{}</D:displayname>
+    </D:prop>
+  </D:set>
+</C:mkcalendar>"#,
+        calendar_path
+    );
+    let created = client
+        .mkcalendar(&calendar_path, &mkcalendar_xml)
+        .await
+        .expect("MKCALENDAR request");
+    assert!(
+        created.status().is_success(),
+        "MKCALENDAR must succeed, got {}",
+        created.status()
+    );
+
+    // A minimal RFC 4791 §5.2.2 VTIMEZONE object; the crate sends it verbatim.
+    let vtimezone = util::vtimezone_ics();
+
+    client
+        .set_calendar_timezone(&calendar_path, Some(&vtimezone))
+        .await
+        .expect("PROPPATCH set_calendar_timezone must succeed on Nextcloud");
+
+    let stored = client
+        .calendar_timezone(&calendar_path)
+        .await
+        .expect("calendar_timezone PROPFIND");
+    // Sabre re-serializes the stored object with LF line endings; the
+    // component content itself round-trips verbatim.
+    assert_eq!(
+        stored.as_deref(),
+        Some(vtimezone.replace("\r\n", "\n")).as_deref(),
+        "Nextcloud must store the VTIMEZONE object (CRLF normalized to LF)"
+    );
+
+    client
+        .set_calendar_timezone(&calendar_path, None)
+        .await
+        .expect("PROPPATCH remove must succeed on Nextcloud");
+
+    let removed = client
+        .calendar_timezone(&calendar_path)
+        .await
+        .expect("calendar_timezone PROPFIND after remove");
+    assert_eq!(
+        removed, None,
+        "the property must be absent after the remove"
+    );
+
+    // Teardown.
+    let deleted = client
+        .delete(&calendar_path)
+        .await
+        .expect("teardown DELETE request");
+    assert!(
+        deleted.status().is_success(),
+        "calendar DELETE must succeed, got {}",
+        deleted.status()
+    );
+}
+
+#[tokio::test]
 async fn test_addressbook_crud_round_trip() {
     let client = nextcloud_carddav_client();
     let book_path = format!(

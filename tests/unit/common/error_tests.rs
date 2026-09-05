@@ -495,6 +495,10 @@ fn operation_display_covers_all_variants() {
         Operation::PropfindCurrentUserPrivilegeSet.to_string(),
         "PROPFIND current-user-privilege-set"
     );
+    assert_eq!(
+        Operation::ProppatchCalendarTimezone.to_string(),
+        "PROPPATCH calendar-timezone"
+    );
 }
 
 #[test]

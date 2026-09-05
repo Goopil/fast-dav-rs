@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Calendar-timezone write path (issue #187): `CalDavClient::set_calendar_timezone(path,
+  vtimezone: Option<&str>)` stores or removes a calendar's `calendar-timezone` property with a
+  `Depth: 0` `PROPPATCH` (RFC 4791 §5.2.2) — `Some(vtimezone)` sets the VTIMEZONE iCalendar
+  object verbatim (XML-escaped), `None` sends a `<D:remove>`; a blank value is rejected as
+  `Error::InvalidInput` before any I/O. The per-property status inside the 207 multistatus
+  decides the outcome: a non-success propstat for `calendar-timezone` maps to
+  `Error::UnexpectedStatus` with the new `Operation::ProppatchCalendarTimezone`, except that a
+  `404` propstat on a remove is success (removing an absent property is not an error per
+  RFC 4918 §14.23, which makes the remove idempotent). Verified against the fixtures:
+  Nextcloud (set → read back the stored object, remove → absent) and Radicale 3.7.6 (also
+  implements the write path — the earlier "not stored" observation predates the 3.x fixture;
+  recorded as a round-trip e2e). Both read-backs carry LF line endings: every conformant XML
+  processor normalizes CRLF → LF in parsed content (XML 1.0 §2.11)
 - CalDAV-flavor serialization for filter types: `TextMatch::to_caldav_xml` /
   `ParamFilter::to_caldav_xml` per RFC 4791; `to_xml` remains the CardDAV flavor
 - Batched CardDAV multiget (issue #184): `CardDavClient::addressbook_multiget_many(path, hrefs,

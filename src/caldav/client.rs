@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use hyper::{HeaderMap, Method, Response, header};
+use hyper::{HeaderMap, Method, Response, StatusCode, header};
 use percent_encoding::utf8_percent_encode;
 
 use crate::BatchItem;
@@ -227,9 +227,9 @@ impl CalDavClient {
     ///
     /// Parse the returned `VTIMEZONE` with a dedicated iCalendar crate (e.g.
     /// `icalendar`) to derive the UTC offset rules; this library intentionally
-    /// does not interpret the component. The write path (RFC 4791 §5.2.2
-    /// `MKCALENDAR`/`PROPPATCH` with a `calendar-timezone` value) is not
-    /// exposed.
+    /// does not interpret the component. The write counterpart is
+    /// [`set_calendar_timezone`](Self::set_calendar_timezone) (RFC 4791 §5.2.2
+    /// `PROPPATCH` with a `calendar-timezone` value).
     ///
     /// # Errors
     ///
@@ -269,6 +269,126 @@ impl CalDavClient {
             .items
             .into_iter()
             .find_map(|item| item.calendar_timezone))
+    }
+
+    /// Set or remove a calendar's `calendar-timezone` property
+    /// (RFC 4791 §5.2.2), the write counterpart of
+    /// [`calendar_timezone`](Self::calendar_timezone).
+    ///
+    /// - `Some(vtimezone)` sends a `Depth: 0` `PROPPATCH` with a
+    ///   `<D:set>` for `<C:calendar-timezone>`; the VTIMEZONE iCalendar
+    ///   object is sent verbatim (XML-escaped) — the crate never parses
+    ///   iCalendar. Derive the value from an IANA tz database entry or a
+    ///   dedicated iCalendar crate (e.g. `icalendar`).
+    /// - `None` sends the same `PROPPATCH` with a `<D:remove>` for the
+    ///   property.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`] before any network I/O when
+    /// `Some(vtimezone)` is blank (an empty value cannot be set; pass `None`
+    /// to remove the property).
+    ///
+    /// Returns [`Error::UnexpectedStatus`] with
+    /// [`Operation::ProppatchCalendarTimezone`] when the `PROPPATCH` request
+    /// itself fails or when the server's per-property status inside the 207
+    /// multistatus is not a success: servers commonly accept the request but
+    /// reject the property, so the per-propstat status is authoritative. One
+    /// exception per RFC 4918 §14.23: for a remove (`None`), a `404`
+    /// propstat is success — removing a property that does not exist is not
+    /// an error because the desired end state (property absent) is already
+    /// reached, making the remove idempotent; a set (`Some`) keeps strict
+    /// propstat checking. The implementation inspects the per-property
+    /// `<D:propstat>` elements of the 207, which every conformant response
+    /// carries (RFC 4918 §9.2.1).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use fast_dav_rs::CalDavClient;
+    /// # async fn example(client: &CalDavClient) -> Result<(), fast_dav_rs::Error> {
+    /// let vtz = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\n\
+    ///            TZID:Europe/Paris\r\nEND:VTIMEZONE\r\nEND:VCALENDAR";
+    /// client.set_calendar_timezone("calendars/personal/", Some(vtz)).await?;
+    /// client.set_calendar_timezone("calendars/personal/", None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_calendar_timezone(
+        &self,
+        calendar_path: &str,
+        vtimezone: Option<&str>,
+    ) -> Result<()> {
+        const REMOVE_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:propertyupdate xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:remove>
+    <D:prop>
+      <C:calendar-timezone/>
+    </D:prop>
+  </D:remove>
+</D:propertyupdate>"#;
+        let body = match vtimezone {
+            Some(vtz) if vtz.trim().is_empty() => {
+                return Err(Error::InvalidInput(
+                    "set_calendar_timezone: an empty VTIMEZONE cannot be set; \
+                     pass None to remove the property"
+                        .to_owned(),
+                ));
+            }
+            Some(vtz) => format!(
+                r#"<?xml version="1.0" encoding="utf-8"?>
+<D:propertyupdate xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <C:calendar-timezone>{}</C:calendar-timezone>
+    </D:prop>
+  </D:set>
+</D:propertyupdate>"#,
+                escape_xml(vtz)
+            ),
+            None => REMOVE_BODY.to_owned(),
+        };
+        let resp = self.proppatch(calendar_path, &body).await?;
+        let is_remove = vtimezone.is_none();
+        if !resp.status().is_success() {
+            return Err(Error::unexpected_status(
+                Operation::ProppatchCalendarTimezone,
+                resp.status(),
+            ));
+        }
+        // 207: the per-propstat status for C:calendar-timezone decides the
+        // outcome (RFC 4918 §9.2: the request may succeed globally while the
+        // property write failed).
+        let body = resp.into_body();
+        for item in &parse_multistatus_bytes(&body)?.items {
+            for propstat in &item.propstats {
+                if !propstat
+                    .prop_names
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case("calendar-timezone"))
+                {
+                    continue;
+                }
+                let code = propstat
+                    .status
+                    .as_deref()
+                    .and_then(crate::webdav::types::http_status_code)
+                    .unwrap_or(500);
+                let status =
+                    StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                if !(status.is_success() || is_remove && status.as_u16() == 404) {
+                    // RFC 4918 §14.23: removing a property that does not
+                    // exist is not an error — the desired end state
+                    // (property absent) is already reached, so the remove
+                    // is idempotent. A set keeps strict propstat checking.
+                    return Err(Error::unexpected_status(
+                        Operation::ProppatchCalendarTimezone,
+                        status,
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// List CalDAV collections under a calendar home-set (`Depth: 1` PROPFIND).
