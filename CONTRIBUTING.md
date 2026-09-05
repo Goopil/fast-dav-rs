@@ -26,7 +26,7 @@ We follow the Rust community coding standards:
 ## API Stability (semver)
 
 Every pull request is gated by `cargo-semver-checks` (the `Semver Checks` workflow), which compares
-the public API against the latest release tag with all features enabled and fails on breaking changes.
+the public API against the latest published release with all features enabled and fails on breaking changes.
 
 Intentional breaking changes:
 
