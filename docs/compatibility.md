@@ -31,7 +31,7 @@ Fixtures and test targets:
 | --- | --- | --- | --- | --- |
 | Discovery (RFC 6764) | ✅ | ✅ | ✅ | ◐ (A1) |
 | WebDAV-Sync (RFC 6578) | ✅ | ✅ | ✅ | — |
-| LOCK (RFC 4918 class 2) | ✅ | ❌ (R1) | ✅ | — |
+| LOCK (RFC 4918 class 2) | ✅ | ❌ (R1) | ◐ (N2) | — |
 | Scheduling (RFC 6638) | ✅ (S1) | — | — | — |
 | `calendar-timezone` (RFC 4791 §5.2.2) | — (S2) | ✅ | ✅ | — |
 | Compression (gzip / brotli / zstd) | ✅ | — | — | — |
@@ -67,6 +67,13 @@ Notes:
   of scope for the fixture (`nextcloud-test/README.md`). The
   `nextcloud_client` example demonstrates the bearer builder API, but
   examples are not tests.
+- **(N2) Nextcloud accepts but does not enforce locks on the CalDAV tree**
+  (observed on the fixture): on calendar objects `LOCK` answers `200` with an
+  opaquelocktoken, but the lock is not registered (`lockdiscovery` stays
+  empty) and a token-less `PUT` succeeds. The lock contract is exercised by
+  e2e on the files tree (`/remote.php/dav/files/`), the surface where the
+  fixture enforces RFC 4918 — see the module doc of
+  `tests/e2e/nextcloud/locking.rs`.
 
 ## Evidence
 
@@ -84,11 +91,11 @@ tests below; `—` cells have no test and are therefore absent.
 | WebDAV-Sync | Nextcloud | ✅ | `nextcloud/sync.rs` → `test_sync_session_initial_and_empty_incremental` |
 | LOCK | SabreDAV | ✅ | `sabredav/webdav/locking_tests.rs` → `test_lock_refresh_unlock_relock_lifecycle`, `test_put_succeeds_after_unlock` |
 | LOCK | Radicale | ❌ (R1) | `radicale/locking.rs` → `test_lock_unsupported_records_observed_behavior` (LOCK → error status, 405 observed) |
-| LOCK | Nextcloud | ✅ | `nextcloud/locking.rs` → `test_lock_unlock_round_trip_on_nextcloud` |
+| LOCK | Nextcloud | ◐ (N2) | `nextcloud/locking.rs` → `test_lock_unlock_round_trip_on_nextcloud` (full contract — `LOCK` → token, token-less `PUT` → `423`, `UNLOCK` frees — on the files tree; CalDAV tree accepts but does not enforce locks, note N2) |
 | Scheduling | SabreDAV | ✅ (S1) | `sabredav/caldav/scheduling_tests.rs` → `test_discover_schedule_endpoints_on_sabredav` (inbox/outbox hrefs + `mailto:` user address asserted), `test_list_inbox_empty_on_sabredav`; schedule-tag gap recorded by `test_schedule_tag_unsupported_records_observed_behavior_on_sabredav` |
 | `calendar-timezone` | Radicale | ✅ | `radicale/core.rs` → `test_calendar_timezone_write_round_trip` (PROPPATCH set → stored verbatim, remove → reads back absent) |
 | `calendar-timezone` | Nextcloud | ✅ | `nextcloud/crud.rs` → `test_calendar_timezone_write_round_trip` (PROPPATCH set → read back, remove → absent) |
-| Compression | SabreDAV | ✅ | `sabredav/caldav/compression/compression_tests.rs` → `test_compression_support` (forced gzip/br/zstd requests succeed), `test_compressed_response_handling`; `sabredav/carddav/compression/compression_tests.rs` → `test_compressed_response_handling`; `sabredav/webdav/auto_probe_tests.rs` (Auto probe never poisons a write) |
+| Compression | SabreDAV | ✅ | `sabredav/caldav/compression/compression_tests.rs` → `test_compression_support` (forced gzip/br/zstd requests succeed), `test_compressed_response_handling`; `sabredav/carddav/compression/compression_tests.rs` → `test_compressed_response_handling`; `sabredav/webdav/auto_probe_tests.rs` → `test_auto_request_compression_put_round_trip` (Auto probe never poisons a write) |
 
 ## Per-fixture notes
 
@@ -112,7 +119,7 @@ tests below; `—` cells have no test and are therefore absent.
 ### Nextcloud
 
 - DAV strictly under `/remote.php/dav/`; principals at `principals/users/{uid}`; the addressbook home is asymmetric with the calendar home; the site root is not DAV-capable. Asserted by `test_dav_root_scoping`.
-- LOCK round-trip, `SyncSession` initial + incremental sync, and the `calendar-timezone` `PROPPATCH` round-trip are asserted by e2e.
+- LOCK round-trip asserted on the **files tree** only — on the CalDAV tree Nextcloud accepts (`LOCK` → `200` + token) but does not enforce locks (`lockdiscovery` stays empty, token-less `PUT` succeeds; note N2). `SyncSession` initial + incremental sync and the `calendar-timezone` `PROPPATCH` round-trip are asserted by e2e.
 - Auth: Basic + app passwords (Bearer/OIDC out of fixture scope — note N1).
 - The server provisions schedule-inbox/outbox collections after the first DAV access, but no e2e test asserts RFC 6638 behavior.
 

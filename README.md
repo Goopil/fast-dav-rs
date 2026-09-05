@@ -1295,13 +1295,13 @@ Feature coverage per fixture — every ✅ cites the e2e test that asserts it
 | --- | --- | --- | --- | --- |
 | Discovery (RFC 6764) | ✅ | ✅ | ✅ | ◐ |
 | WebDAV-Sync (RFC 6578) | ✅ | ✅ | ✅ | — |
-| LOCK (RFC 4918 class 2) | ✅ | ❌ | ✅ | — |
+| LOCK (RFC 4918 class 2) | ✅ | ❌ | ◐ | — |
 | Scheduling (RFC 6638) | ✅ | — | — | — |
 | `calendar-timezone` (RFC 4791 §5.2.2) | — | ✅ | ✅ | — |
 | Compression | ✅ | — | — | — |
 | OAuth / Bearer | — | — | — | — |
 
-✅ asserted by an e2e test · ❌ known unsupported (Radicale: `LOCK` → `405` despite an advertised class 2) · ◐ partial (Provider A: unauthenticated smoke-tier probes only) · — not tested. New providers are added only with a fixture.
+✅ asserted by an e2e test · ❌ known unsupported (Radicale: `LOCK` → `405` despite an advertised class 2) · ◐ partial (Provider A: unauthenticated smoke-tier probes only; Nextcloud LOCK: asserted on the files tree — the CalDAV tree accepts but does not enforce locks) · — not tested. New providers are added only with a fixture.
 
 ## End-to-End Testing
 
