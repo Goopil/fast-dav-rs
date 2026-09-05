@@ -1083,3 +1083,76 @@ async fn carddav_put_if_match_derives_content_type_version_from_body() {
         "a conditional PUT of a vCard 3.0 body must carry version=3.0: {req}"
     );
 }
+
+#[tokio::test]
+async fn addressbook_query_filter_rejects_param_filter_exclusivity_before_io() {
+    // RFC 6352 §10.5.1: `param-filter (is-not-defined | text-match?)` — a
+    // param-filter `is-not-defined` excludes a nested text-match. Must be
+    // rejected before any network I/O.
+    use fast_dav_rs::carddav::types::{CardDavFilter, ParamFilter, TextMatch};
+
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+
+    let mut param = ParamFilter::new("TYPE", TextMatch::new("work"));
+    param.is_not_defined = true;
+    let filter = CardDavFilter::new("TEL", "ignored").with_param_filters(vec![param]);
+
+    let Err(err) = client
+        .addressbook_query_filter("contacts/", &filter, true)
+        .await
+    else {
+        panic!("param-filter is-not-defined + text-match must be rejected before any network I/O");
+    };
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidInput(ref msg)
+            if msg.contains("param-filter") && msg.contains("§10.5.1")),
+        "param-filter is-not-defined + text-match must be rejected, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn addressbook_query_filter_sends_structured_filter_report() {
+    use fast_dav_rs::carddav::types::{CardDavFilter, ParamFilter, TextMatch};
+
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/contacts/a.vcf</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body.as_bytes().to_vec(),
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let filter = CardDavFilter::new("EMAIL", "ada@example.com")
+        .with_param_filters(vec![ParamFilter::new("TYPE", TextMatch::new("work"))]);
+    let contacts = client
+        .addressbook_query_filter("contacts/", &filter, true)
+        .await
+        .unwrap();
+    assert_eq!(contacts.len(), 1);
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(
+        req.contains("addressbook-query"),
+        "expected addressbook-query REPORT: {req}"
+    );
+    assert!(
+        req.contains("prop-filter name=\"EMAIL\""),
+        "expected the structured prop-filter on the wire: {req}"
+    );
+    assert!(
+        req.contains("param-filter name=\"TYPE\""),
+        "expected the nested param-filter on the wire: {req}"
+    );
+}

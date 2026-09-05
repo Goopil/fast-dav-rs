@@ -175,6 +175,42 @@ async fn lock_423_surfaces_no_conflicting_lock_precondition() {
 }
 
 #[tokio::test]
+async fn lock_423_malformed_body_is_distinguishable() {
+    // A 423 whose error body is present but unparsable (truncated markup)
+    // must surface as UnexpectedStatusWithDav with parse_failed, so callers
+    // can tell it apart from a 423 without any body (which stays a plain
+    // UnexpectedStatus, see lock_423_returns_unexpected_status_lock).
+    let malformed = "<D:error xmlns:D=\"DAV:\"><D:no-conf";
+    let head = http_head(
+        "HTTP/1.1 423 Locked",
+        "Content-Type: application/xml; charset=utf-8\r\n",
+        malformed,
+    );
+    let (base, _captured) =
+        crate::common::http_helpers::serve_capture(head, malformed.as_bytes().to_vec()).await;
+    let client = dav_client(&base).await;
+
+    let err = client
+        .lock("docs/plan.txt", LockScope::Exclusive, "", Some(60))
+        .await
+        .unwrap_err();
+    match err {
+        Error::UnexpectedStatusWithDav {
+            operation,
+            status,
+            dav,
+            ..
+        } => {
+            assert_eq!(operation, Operation::Lock);
+            assert_eq!(status.as_u16(), 423);
+            assert!(dav.parse_failed, "malformed body must set parse_failed");
+            assert_eq!(dav.precondition_code, None);
+        }
+        other => panic!("expected UnexpectedStatusWithDav, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn lock_timeout_falls_back_to_response_header() {
     let body = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:prop xmlns:D="DAV:">
@@ -440,6 +476,40 @@ async fn unlock_non_success_surfaces_precondition() {
                 dav.precondition_code.as_deref(),
                 Some("no-conflicting-lock")
             );
+        }
+        other => panic!("expected UnexpectedStatusWithDav, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn unlock_423_malformed_body_is_distinguishable() {
+    // Same contract as the LOCK counterpart: a present-but-unparsable error
+    // body is distinguishable (parse_failed) from an absent one.
+    let malformed = "<D:error xmlns:D=\"DAV:\"><D:no-conf";
+    let head = http_head(
+        "HTTP/1.1 423 Locked",
+        "Content-Type: application/xml; charset=utf-8\r\n",
+        malformed,
+    );
+    let (base, _captured) =
+        crate::common::http_helpers::serve_capture(head, malformed.as_bytes().to_vec()).await;
+    let client = dav_client(&base).await;
+
+    let err = client
+        .unlock("docs/plan.txt", "opaquelocktoken:xyz")
+        .await
+        .unwrap_err();
+    match err {
+        Error::UnexpectedStatusWithDav {
+            operation,
+            status,
+            dav,
+            ..
+        } => {
+            assert_eq!(operation, Operation::Unlock);
+            assert_eq!(status.as_u16(), 423);
+            assert!(dav.parse_failed, "malformed body must set parse_failed");
+            assert_eq!(dav.precondition_code, None);
         }
         other => panic!("expected UnexpectedStatusWithDav, got: {other:?}"),
     }

@@ -80,7 +80,9 @@ impl CardDavFilter {
     /// Per the RFC 6352 §10.5.1 DTD (`is-not-defined | (text-match*,
     /// param-filter*)`), when `is_not_defined` is set only
     /// `<C:is-not-defined/>` is emitted — the `text-match` child and the
-    /// `param-filter` children are dropped.
+    /// `param-filter` children are dropped. Violating combinations are
+    /// rejected before any network I/O by
+    /// [`CardDavClient::addressbook_query_filter`](crate::CardDavClient::addressbook_query_filter).
     pub fn to_filter_xml(&self) -> String {
         let mut prop_inner = String::new();
         if self.is_not_defined {

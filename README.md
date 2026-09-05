@@ -994,6 +994,12 @@ async fn main() -> Result<()> {
 }
 ```
 
+For structured filtering, `CardDavClient::addressbook_query_filter` takes a
+`CardDavFilter` and validates the RFC 6352 §10.5.1 DTD exclusivity (a
+`param-filter` cannot combine `is-not-defined` with a `text-match`) before any
+network I/O, mirroring the pre-I/O comp-filter/prop-filter/param-filter
+exclusivity validation of CalDAV `calendar_query` (RFC 4791 §9.7.1-§9.7.3).
+
 ## Streaming & Sync
 
 - Use `caldav::parse_multistatus_stream` for CalDAV responses and `carddav::parse_multistatus_stream`

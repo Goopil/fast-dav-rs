@@ -331,6 +331,30 @@ impl ParamFilter {
     }
 }
 
+/// Validate the `param-filter` child exclusivity shared by the CalDAV and
+/// CardDAV DTDs (RFC 4791 §9.7.3 / RFC 6352 §10.5.1:
+/// `<!ELEMENT param-filter (is-not-defined | text-match?)>`): an
+/// `is-not-defined` param-filter cannot carry a `text-match`.
+///
+/// `context` names the enclosing query and prop-filter (e.g.
+/// ``calendar-query prop-filter `ATTENDEE` ``), `rfc_section` names the DTD
+/// the message cites.
+pub(crate) fn validate_param_filter_exclusivity<'a>(
+    params: impl IntoIterator<Item = &'a ParamFilter>,
+    context: &str,
+    rfc_section: &str,
+) -> Result<()> {
+    for param in params {
+        if param.is_not_defined && param.text_match.is_some() {
+            return Err(crate::Error::InvalidInput(format!(
+                "{context} param-filter `{}`: is-not-defined excludes text-match ({rfc_section})",
+                param.name
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// WebDAV Depth
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

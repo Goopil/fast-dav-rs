@@ -310,6 +310,12 @@ impl CalendarQueryFilter {
     }
 
     /// Build the `<C:filter>` XML fragment for a `calendar-query` REPORT.
+    ///
+    /// Exclusivity is applied by serialization precedence per the RFC 4791
+    /// §9.7.1 DTD (`is-not-defined | (time-range?, prop-filter*)`): when
+    /// `is_not_defined` is set only `<C:is-not-defined/>` is emitted.
+    /// [`CalDavClient::calendar_query`](crate::CalDavClient::calendar_query)
+    /// rejects violating filters with an error before any network I/O.
     pub fn to_filter_xml(&self) -> String {
         let mut inner = String::new();
         if self.is_not_defined {

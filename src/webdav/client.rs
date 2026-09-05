@@ -1535,15 +1535,22 @@ impl WebDavClient {
     // ----------- WebDAV locking (RFC 4918 class 2) -----------
 
     /// Map a non-success response to an error, surfacing a `<D:error>`
-    /// precondition body (RFC 4918 §16, §14.12) when the body carries one.
+    /// precondition body (RFC 4918 §16, §14.12) when the body carries one —
+    /// or when an error body was present but unparsable
+    /// ([`WebDavError::parse_failed`](crate::webdav::WebDavError::parse_failed)),
+    /// so a malformed 423 body is distinguishable from an absent one. A
+    /// response without any error body stays a plain
+    /// [`Error::UnexpectedStatus`].
     fn status_error(operation: Operation, resp: Response<Bytes>) -> Error {
         let status = resp.status();
         match crate::webdav::streaming::parse_error_body(&resp.into_body()) {
-            Ok(dav) if dav.precondition_code.is_some() => Error::UnexpectedStatusWithDav {
-                operation,
-                status,
-                dav,
-            },
+            Ok(dav) if dav.precondition_code.is_some() || dav.parse_failed => {
+                Error::UnexpectedStatusWithDav {
+                    operation,
+                    status,
+                    dav,
+                }
+            }
             _ => Error::UnexpectedStatus { operation, status },
         }
     }
@@ -1581,7 +1588,8 @@ impl WebDavClient {
     /// [`refresh_lock`](Self::refresh_lock): sends the request, maps a
     /// non-success status (including `423 Locked`) to
     /// [`Error::UnexpectedStatus`] — or [`Error::UnexpectedStatusWithDav`]
-    /// when the body carries a `<D:error>` precondition — parses the
+    /// when the body carries a `<D:error>` precondition or is present but
+    /// unparsable (`dav.parse_failed`) — parses the
     /// `lockdiscovery`/`activelock` response, and fills `timeout_secs` from
     /// the `Timeout` response header when the body omits `<D:timeout>`.
     /// A successful response without a lock token falls back to
@@ -1648,7 +1656,8 @@ impl WebDavClient {
     /// the lock — notably `423 Locked` when an incompatible lock already
     /// exists — or [`Error::UnexpectedStatusWithDav`] when the error body
     /// carries a `<D:error>` precondition (e.g. `no-conflicting-lock`,
-    /// RFC 4918 §16). A 2xx response without a lock token fails with
+    /// RFC 4918 §16) or is present but unparsable (`dav.parse_failed`). A 2xx
+    /// response without a lock token fails with
     /// [`Error::InvalidInput`] (RFC 4918 §9.10.9).
     ///
     /// # Example
@@ -1720,7 +1729,8 @@ impl WebDavClient {
     /// Returns [`Error::UnexpectedStatus`] (operation
     /// [`Operation::Lock`](crate::Operation::Lock)) on non-success statuses,
     /// [`Error::UnexpectedStatusWithDav`] when the error body carries a
-    /// `<D:error>` precondition, `412 Precondition Failed` when the lock no
+    /// `<D:error>` precondition or is present but unparsable
+    /// (`dav.parse_failed`), `412 Precondition Failed` when the lock no
     /// longer exists, and [`Error::InvalidInput`] for an empty token or a
     /// token containing characters invalid in a Coded-URL (RFC 4918 §10.5).
     ///
@@ -1763,8 +1773,9 @@ impl WebDavClient {
     /// Returns [`Error::UnexpectedStatus`] (operation
     /// [`Operation::Unlock`](crate::Operation::Unlock)) on non-success
     /// statuses — e.g. `409 Conflict` when the lock token does not match an
-    /// existing lock — [`Error::UnexpectedStatusWithDav`] when the error
-    /// body carries a `<D:error>` precondition, and [`Error::InvalidInput`]
+    /// existing lock — [`Error::UnexpectedStatusWithDav`] when the error body
+    /// carries a `<D:error>` precondition or is present but unparsable
+    /// (`dav.parse_failed`), and [`Error::InvalidInput`]
     /// for an empty token or a token containing characters invalid in a
     /// Coded-URL (RFC 4918 §10.5).
     pub async fn unlock(&self, path: &str, token: &str) -> Result<()> {
