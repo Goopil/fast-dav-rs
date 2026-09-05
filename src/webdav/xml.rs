@@ -163,7 +163,7 @@ pub fn build_sync_collection_body(
 /// attribute is emitted: the enum default `i;unicode-casemap` is treated as
 /// unset, and sending it could be rejected by minimally conforming servers
 /// with a `400 valid-collation` (the enum cannot distinguish an explicitly
-/// selected default). CardDAV (RFC 6352 §10.4) always carries both
+/// selected default). CardDAV (RFC 6352 §10.5.4) always carries both
 /// attributes.
 pub(crate) fn text_match_xml(
     value: &str,

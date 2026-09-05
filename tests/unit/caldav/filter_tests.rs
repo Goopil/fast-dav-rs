@@ -43,74 +43,84 @@ fn match_type_default_is_equals() {
 }
 
 #[test]
-fn text_match_to_xml_defaults() {
+fn text_match_to_caldav_xml_omits_match_type_and_collation() {
+    // RFC 4791 §9.7.5: the CalDAV serialization emits neither `collation`
+    // nor `match-type` (the wire default is `i;ascii-casemap`).
     let tm = TextMatch::new("meeting");
-    let xml = tm.to_xml();
-    assert!(xml.contains("collation=\"i;unicode-casemap\""));
-    assert!(xml.contains("match-type=\"equals\""));
-    assert!(xml.contains(">meeting</C:text-match>"));
+    let xml = tm.to_caldav_xml();
+    assert!(xml.contains("<C:text-match>meeting</C:text-match>"));
+    assert!(!xml.contains("match-type"));
+    assert!(!xml.contains("collation"));
     assert!(!xml.contains("negate-condition"));
 }
 
 #[test]
-fn text_match_to_xml_ascii_casemap() {
+fn text_match_to_caldav_xml_ascii_casemap_treated_as_unset() {
+    // The CalDAV wire default collation is i;ascii-casemap (RFC 4791 §7.5):
+    // an explicitly selected default enum value must not be serialized.
     let mut tm = TextMatch::new("meeting");
     tm.collation = Collation::AsciiCasemap;
-    let xml = tm.to_xml();
-    assert!(xml.contains("collation=\"i;ascii-casemap\""));
+    let xml = tm.to_caldav_xml();
+    assert!(xml.contains("<C:text-match>meeting</C:text-match>"));
+    assert!(!xml.contains("collation"));
 }
 
 #[test]
-fn text_match_to_xml_contains() {
+fn text_match_to_caldav_xml_contains_match_type_is_ignored() {
     let mut tm = TextMatch::new("meeting");
     tm.match_type = MatchType::Contains;
-    let xml = tm.to_xml();
-    assert!(xml.contains("match-type=\"contains\""));
+    let xml = tm.to_caldav_xml();
+    assert!(xml.contains("<C:text-match>meeting</C:text-match>"));
+    assert!(!xml.contains("match-type"));
 }
 
 #[test]
-fn text_match_to_xml_starts_with() {
+fn text_match_to_caldav_xml_starts_with_match_type_is_ignored() {
     let mut tm = TextMatch::new("meet");
     tm.match_type = MatchType::StartsWith;
-    let xml = tm.to_xml();
-    assert!(xml.contains("match-type=\"starts-with\""));
+    let xml = tm.to_caldav_xml();
+    assert!(xml.contains("<C:text-match>meet</C:text-match>"));
+    assert!(!xml.contains("match-type"));
 }
 
 #[test]
-fn text_match_to_xml_ends_with() {
+fn text_match_to_caldav_xml_ends_with_match_type_is_ignored() {
     let mut tm = TextMatch::new("ing");
     tm.match_type = MatchType::EndsWith;
-    let xml = tm.to_xml();
-    assert!(xml.contains("match-type=\"ends-with\""));
+    let xml = tm.to_caldav_xml();
+    assert!(xml.contains("<C:text-match>ing</C:text-match>"));
+    assert!(!xml.contains("match-type"));
 }
 
 #[test]
-fn text_match_to_xml_negate() {
+fn text_match_to_caldav_xml_negate() {
     let mut tm = TextMatch::new("meeting");
     tm.negate = true;
-    let xml = tm.to_xml();
+    let xml = tm.to_caldav_xml();
     assert!(xml.contains("negate-condition=\"yes\""));
+    assert!(xml.contains("<C:text-match"));
+    assert!(xml.contains(">meeting</C:text-match>"));
 }
 
 #[test]
-fn text_match_to_xml_negate_false_omits_attribute() {
+fn text_match_to_caldav_xml_negate_false_omits_attribute() {
     let tm = TextMatch::new("meeting");
-    let xml = tm.to_xml();
+    let xml = tm.to_caldav_xml();
     assert!(!xml.contains("negate-condition"));
 }
 
 #[test]
-fn text_match_to_xml_escapes_value() {
+fn text_match_to_caldav_xml_escapes_value() {
     let tm = TextMatch::new("Tom & Jerry <script>");
-    let xml = tm.to_xml();
+    let xml = tm.to_caldav_xml();
     assert!(xml.contains("Tom &amp; Jerry &lt;script&gt;"));
     assert!(!xml.contains("Tom & Jerry <script>"));
 }
 
 #[test]
-fn text_match_to_xml_escapes_quotes_and_apostrophes() {
+fn text_match_to_caldav_xml_escapes_quotes_and_apostrophes() {
     let tm = TextMatch::new(r#"He said "hi" & 'bye'"#);
-    let xml = tm.to_xml();
+    let xml = tm.to_caldav_xml();
     assert!(xml.contains("&quot;"));
     assert!(xml.contains("&apos;"));
     assert!(xml.contains("&amp;"));
@@ -144,36 +154,38 @@ fn text_match_with_negate_builder() {
 }
 
 #[test]
-fn param_filter_to_xml_with_text_match() {
+fn param_filter_to_caldav_xml_with_text_match() {
     let pf = ParamFilter::new("PARTSTAT", TextMatch::new("ACCEPTED"));
-    let xml = pf.to_xml();
+    let xml = pf.to_caldav_xml();
     assert!(xml.contains("param-filter name=\"PARTSTAT\""));
     assert!(xml.contains(">ACCEPTED</C:text-match>"));
+    assert!(!xml.contains("match-type"));
+    assert!(!xml.contains("collation"));
 }
 
 #[test]
-fn param_filter_to_xml_is_not_defined() {
+fn param_filter_to_caldav_xml_is_not_defined() {
     let pf = ParamFilter::not_defined("PARTSTAT");
-    let xml = pf.to_xml();
+    let xml = pf.to_caldav_xml();
     assert!(xml.contains("param-filter name=\"PARTSTAT\""));
     assert!(xml.contains("<C:is-not-defined/>"));
     assert!(!xml.contains("text-match"));
 }
 
 #[test]
-fn param_filter_to_xml_empty_inner_when_unset() {
+fn param_filter_to_caldav_xml_empty_inner_when_unset() {
     let mut pf = ParamFilter::new("PARTSTAT", TextMatch::new("x"));
     pf.text_match = None;
-    let xml = pf.to_xml();
+    let xml = pf.to_caldav_xml();
     assert!(xml.contains("param-filter name=\"PARTSTAT\""));
     assert!(!xml.contains("text-match"));
     assert!(!xml.contains("is-not-defined"));
 }
 
 #[test]
-fn param_filter_to_xml_escapes_name() {
+fn param_filter_to_caldav_xml_escapes_name() {
     let pf = ParamFilter::new("PARTSTAT&X", TextMatch::new("ACCEPTED"));
-    let xml = pf.to_xml();
+    let xml = pf.to_caldav_xml();
     assert!(xml.contains("PARTSTAT&amp;X"));
 }
 

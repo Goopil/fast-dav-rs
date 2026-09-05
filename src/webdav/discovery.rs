@@ -26,10 +26,43 @@
 //! service URL); their own fallback on a `404` is the base URL (RFC 6764 §6).
 
 use bytes::Bytes;
-use hyper::{HeaderMap, Method, StatusCode, header};
+use hyper::{HeaderMap, Method, StatusCode, Uri, header};
 
 use crate::webdav::client::{PROBE_BODY, WebDavClient};
 use crate::{Error, Operation, Result};
+
+/// Strip any `user:password@` userinfo from a URI's authority.
+///
+/// Redirect hops are server-controlled: never echo credentials that a
+/// hostile `Location` might embed (RFC 6764 §5). The builder already
+/// rejects userinfo in the base URL; a discovered URL gets the same
+/// guarantee before it leaves [`discover_well_known`]. `http::Uri` offers
+/// no in-place userinfo setters, so the userinfo run is cut out of the
+/// rendered URL by string surgery: everything from the end of the scheme
+/// delimiter (`://`) up to and including the authority's `@` is dropped,
+/// leaving scheme, host, port, path, query and fragment byte-identical.
+/// The cut is non-fallible by construction — no re-parsing, no rebuilt
+/// parts, hence no unreachable error branches.
+fn strip_userinfo(uri: &Uri) -> String {
+    let rendered = uri.to_string();
+    // The authority starts right after the scheme delimiter and ends at the
+    // first '/'; userinfo (`user:pass@`) can only live in between (RFC 3986
+    // §3.2), so a `@` beyond that is a path/query character and stays. The
+    // `http` crate treats the text after the authority's *last* `@` as host
+    // (it tolerates raw `@` in userinfo), so cut up to the last `@` — the
+    // same span the previous parts-rebuild via `Authority::host()` dropped.
+    let authority_start = rendered.find("://").map_or(0, |pos| pos + 3);
+    let authority = &rendered[authority_start..];
+    let authority = &authority[..authority.find('/').unwrap_or(authority.len())];
+    let Some(at) = authority.rfind('@') else {
+        return rendered;
+    };
+    let mut clean = String::with_capacity(rendered.len());
+    clean.push_str(&rendered[..authority_start]);
+    clean.push_str(&authority[at + 1..]);
+    clean.push_str(&rendered[authority_start + authority.len()..]);
+    clean
+}
 
 /// Shared implementation behind [`discover_caldav`] / [`discover_carddav`]:
 /// probe `{base}/.well-known/{service}` and resolve the service URL from the
@@ -83,8 +116,13 @@ async fn discover_well_known(
         Ok(client.base().to_string())
     } else {
         // Redirects were followed by the pipeline: the final request URL is
-        // the discovered service URL.
-        Ok(final_uri.to_string())
+        // the discovered service URL. Redirect hops are server-controlled:
+        // never echo credentials that a hostile `Location` might embed
+        // (RFC 6764 §5) — the builder already rejects userinfo in the base
+        // URL, so the discovered URL gets the same guarantee before it
+        // leaves this function.
+        let service = strip_userinfo(&final_uri);
+        Ok(service)
     }
 }
 

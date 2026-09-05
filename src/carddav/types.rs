@@ -77,7 +77,7 @@ impl CardDavFilter {
 
     /// Build the `<C:filter>` XML fragment for an `addressbook-query` REPORT.
     ///
-    /// Per the RFC 6352 §10.5.1 DTD (`is-not-defined | (text-match?,
+    /// Per the RFC 6352 §10.5.1 DTD (`is-not-defined | (text-match*,
     /// param-filter*)`), when `is_not_defined` is set only
     /// `<C:is-not-defined/>` is emitted — the `text-match` child and the
     /// `param-filter` children are dropped.
@@ -150,6 +150,7 @@ pub struct SyncItem {
 /// collection entry and skipped, so a non-compliant server can hide member
 /// changes that way (observable via the token, not via `truncated`).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SyncResponse {
     pub sync_token: Option<String>,
     pub items: Vec<SyncItem>,

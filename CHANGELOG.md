@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- CalDAV-flavor serialization for filter types: `TextMatch::to_caldav_xml` /
+  `ParamFilter::to_caldav_xml` per RFC 4791; `to_xml` remains the CardDAV flavor
+
 ### Changed
+- **Breaking (0.x)**: `SyncResponse` (CalDAV + CardDAV) is now `#[non_exhaustive]`,
+  matching `SyncItem`. External struct-literal construction no longer compiles;
+  use the values returned by the sync methods.
 - E2E suite reorganization (no behavior change): one tree per fixture under
   `tests/e2e/` — `sabredav/` (target `e2e_tests`), `radicale/` (target
   `e2e_radicale`, monolith split into `core`/`sync`/`locking`/`attachments`),

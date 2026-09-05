@@ -409,8 +409,8 @@ fn privilege_from_local_name(raw: &[u8]) -> Privilege {
 }
 
 /// Parse the `content-type` (required) and `version` (optional) attributes
-/// shared by `address-data-type` (RFC 6352 §6.2.1) and `calendar-data-type`
-/// (RFC 4791 §5.2.6) elements. Attribute values are trimmed; empty or
+/// shared by `address-data-type` (RFC 6352 §6.2.2) and `calendar-data-type`
+/// (RFC 4791 §5.2.4) elements. Attribute values are trimmed; empty or
 /// whitespace-only values are treated as absent.
 fn parse_type_attributes(
     event: &BytesStart<'_>,

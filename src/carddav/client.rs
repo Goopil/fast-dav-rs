@@ -17,7 +17,7 @@ pub use crate::webdav::client::RequestCompressionMode;
 
 /// Content-Type for vCard `PUT` bodies carrying no (or an unrecognized)
 /// `VERSION` property: the `version=4.0` parameter required by RFC 6352
-/// §6.2.1. `put` and `put_if_none_match` derive the version from the body
+/// §6.2.2. `put` and `put_if_none_match` derive the version from the body
 /// instead (see [`vcard_content_type`]).
 pub const VCARD_CONTENT_TYPE: &str = "text/vcard; charset=utf-8; version=4.0";
 
