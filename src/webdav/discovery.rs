@@ -26,7 +26,6 @@
 //! service URL); their own fallback on a `404` is the base URL (RFC 6764 §6).
 
 use bytes::Bytes;
-use hyper::http::uri::Authority;
 use hyper::{HeaderMap, Method, StatusCode, Uri, header};
 
 use crate::webdav::client::{PROBE_BODY, WebDavClient};
@@ -38,31 +37,31 @@ use crate::{Error, Operation, Result};
 /// hostile `Location` might embed (RFC 6764 §5). The builder already
 /// rejects userinfo in the base URL; a discovered URL gets the same
 /// guarantee before it leaves [`discover_well_known`]. `http::Uri` offers
-/// no in-place userinfo setters, so the URI is rebuilt from its parts with
-/// the credentials dropped (`Authority::host()` excludes userinfo by
-/// construction).
-fn strip_userinfo(uri: &Uri) -> Result<Uri> {
-    let Some(authority) = uri.authority() else {
-        return Ok(uri.clone());
+/// no in-place userinfo setters, so the userinfo run is cut out of the
+/// rendered URL by string surgery: everything from the end of the scheme
+/// delimiter (`://`) up to and including the authority's `@` is dropped,
+/// leaving scheme, host, port, path, query and fragment byte-identical.
+/// The cut is non-fallible by construction — no re-parsing, no rebuilt
+/// parts, hence no unreachable error branches.
+fn strip_userinfo(uri: &Uri) -> String {
+    let rendered = uri.to_string();
+    // The authority starts right after the scheme delimiter and ends at the
+    // first '/'; userinfo (`user:pass@`) can only live in between (RFC 3986
+    // §3.2), so a `@` beyond that is a path/query character and stays. The
+    // `http` crate treats the text after the authority's *last* `@` as host
+    // (it tolerates raw `@` in userinfo), so cut up to the last `@` — the
+    // same span the previous parts-rebuild via `Authority::host()` dropped.
+    let authority_start = rendered.find("://").map_or(0, |pos| pos + 3);
+    let authority = &rendered[authority_start..];
+    let authority = &authority[..authority.find('/').unwrap_or(authority.len())];
+    let Some(at) = authority.rfind('@') else {
+        return rendered;
     };
-    if !authority.as_str().contains('@') {
-        return Ok(uri.clone());
-    }
-    let host_port = match authority.port() {
-        Some(port) => format!("{}:{}", authority.host(), port.as_u16()),
-        None => authority.host().to_owned(),
-    };
-    let mut parts = uri.clone().into_parts();
-    parts.authority = Some(Authority::try_from(host_port.as_str()).map_err(|e| {
-        Error::other(format!(
-            "discovered service URL carries an invalid authority: {e}"
-        ))
-    })?);
-    Uri::from_parts(parts).map_err(|e| {
-        Error::other(format!(
-            "discovered service URL could not be rebuilt without userinfo: {e}"
-        ))
-    })
+    let mut clean = String::with_capacity(rendered.len());
+    clean.push_str(&rendered[..authority_start]);
+    clean.push_str(&authority[at + 1..]);
+    clean.push_str(&rendered[authority_start + authority.len()..]);
+    clean
 }
 
 /// Shared implementation behind [`discover_caldav`] / [`discover_carddav`]:
@@ -122,8 +121,8 @@ async fn discover_well_known(
         // (RFC 6764 §5) — the builder already rejects userinfo in the base
         // URL, so the discovered URL gets the same guarantee before it
         // leaves this function.
-        let service = strip_userinfo(&final_uri)?;
-        Ok(service.to_string())
+        let service = strip_userinfo(&final_uri);
+        Ok(service)
     }
 }
 
