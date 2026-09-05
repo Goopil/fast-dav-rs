@@ -49,6 +49,7 @@ $server->addPlugin(new Sabre\DAV\Auth\Plugin(new BasicPdoAuthBackend($pdo), 'Sab
 $server->addPlugin(new Sabre\DAVACL\Plugin());
 $server->addPlugin(new Sabre\CalDAV\Plugin());
 $server->addPlugin(new Sabre\CalDAV\ICSExportPlugin());
+$server->addPlugin(new Sabre\CalDAV\Schedule\Plugin());
 $server->addPlugin(new Sabre\CardDAV\Plugin());
 $server->addPlugin(new Sabre\DAV\Browser\Plugin());
 $server->addPlugin(new Sabre\DAV\Sync\Plugin());

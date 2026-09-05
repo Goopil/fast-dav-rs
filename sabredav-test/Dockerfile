@@ -16,7 +16,7 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 WORKDIR /var/www/html
 
 # Install SabreDAV via Composer
-COPY composer.json .
+COPY composer.json composer.lock ./
 RUN composer install
 
 # Copy PHP configuration to disable OPcache in development
