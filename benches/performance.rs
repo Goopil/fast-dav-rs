@@ -44,6 +44,10 @@ const SYNC_REQUEST_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 /// `calendar-data` blob. Kept XML-safe (no `<`, `&`, quotes).
 const ICS_FILLER_LINE: &str = "DESCRIPTION:Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore 0123456789\n";
 
+/// Sync token embedded in every canned payload; asserted after parsing to
+/// prove the benched call consumed the intended payload.
+const SYNC_TOKEN: &str = "http://example.com/sync/bench";
+
 /// Build a canned `207 Multi-Status` `sync-collection` response with `items`
 /// `<D:response>` entries. When `include_data` is set, each item carries a
 /// `calendar-data` blob of `data_lines` filler lines.
@@ -76,9 +80,9 @@ fn build_sync_payload(items: usize, include_data: bool, data_lines: usize) -> By
              </D:response>\n",
         );
     }
-    body.push_str(
-        "  <D:sync-token>http://example.com/sync/bench</D:sync-token>\n</D:multistatus>\n",
-    );
+    body.push_str(&format!(
+        "  <D:sync-token>{SYNC_TOKEN}</D:sync-token>\n</D:multistatus>\n"
+    ));
     Bytes::from(body)
 }
 
@@ -162,12 +166,15 @@ fn bench_b1_sync_collection(c: &mut Criterion) {
 
     let mut routes = Routes::new();
     let mut payload_sizes = HashMap::new();
-    for (label, items, include_data, path) in [
+    // Single source of truth for label ↔ path ↔ item count, so the fixture
+    // route and the expected item-count guard cannot drift apart.
+    let cases = [
         ("1k_with_data", 1_000usize, true, "/sync/1k/data/"),
         ("1k_etags_only", 1_000, false, "/sync/1k/nodata/"),
         ("10k_with_data", 10_000, true, "/sync/10k/data/"),
         ("10k_etags_only", 10_000, false, "/sync/10k/nodata/"),
-    ] {
+    ];
+    for (label, items, include_data, path) in cases {
         let payload = build_sync_payload(items, include_data, 12);
         payload_sizes.insert(label, payload.len());
         routes.insert(path, payload);
@@ -181,12 +188,7 @@ fn bench_b1_sync_collection(c: &mut Criterion) {
     let mut group = c.benchmark_group("B1_sync_collection");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(5));
-    for (label, include_data, path) in [
-        ("1k_with_data", true, "/sync/1k/data/"),
-        ("1k_etags_only", false, "/sync/1k/nodata/"),
-        ("10k_with_data", true, "/sync/10k/data/"),
-        ("10k_etags_only", false, "/sync/10k/nodata/"),
-    ] {
+    for (label, items_expected, include_data, path) in cases {
         group.throughput(Throughput::Bytes(payload_sizes[label] as u64));
         group.bench_function(BenchmarkId::from_parameter(label), |b| {
             b.to_async(&rt).iter(|| {
@@ -204,6 +206,7 @@ fn bench_b1_sync_collection(c: &mut Criterion) {
                         )
                         .await
                         .expect("sync-collection REPORT");
+                    assert_eq!(items.len(), items_expected);
                     black_box(items.len())
                 }
             });
@@ -221,7 +224,9 @@ fn bench_b1_sync_collection(c: &mut Criterion) {
 fn bench_b2_first_request_auto(c: &mut Criterion) {
     let rt = runtime();
 
-    let routes = HashMap::from([("/coll/", build_sync_payload(25, true, 2))]);
+    let payload = build_sync_payload(25, true, 2);
+    let payload_len = payload.len();
+    let routes = HashMap::from([("/coll/", payload)]);
     let base = start_fixture(&rt, routes);
     let client = WebDavClient::builder(base.as_str())
         .build()
@@ -250,6 +255,8 @@ fn bench_b2_first_request_auto(c: &mut Criterion) {
                         let resp = handle.await.expect("caller task").expect("report");
                         total += resp.body().len();
                     }
+                    // Every caller must have received the full canned payload.
+                    assert_eq!(total, 32 * payload_len);
                     black_box(total);
                 }
             });
@@ -288,6 +295,8 @@ fn bench_b3_multistatus_parse(c: &mut Criterion) {
                 let parsed = parse_multistatus_stream(resp.into_body(), &[])
                     .await
                     .expect("parse multistatus");
+                assert_eq!(parsed.items.len(), 5_000);
+                assert_eq!(parsed.sync_token.as_deref(), Some(SYNC_TOKEN));
                 black_box(parsed.items.len())
             }
         });
@@ -307,6 +316,7 @@ fn bench_b3_multistatus_parse(c: &mut Criterion) {
                 })
                 .await
                 .expect("parse multistatus");
+                assert_eq!(sync_token.as_deref(), Some(SYNC_TOKEN));
                 black_box(sync_token.is_some())
             }
         });

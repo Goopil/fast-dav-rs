@@ -46,7 +46,8 @@ cargo nextest run --test unit_tests webdav::client::tests
 cargo llvm-cov nextest --test unit_tests --all-features --no-fail-fast --lcov --output-path target/llvm-cov/lcov.info
 
 # Run the criterion benchmarks (PERFORMANCE.md §5 scenarios)
-cargo bench
+cargo bench --bench performance
+# NOTE: bare `cargo bench` also runs lib tests, which fail until #204 is fixed.
 ```
 
 ### Shell Scripts
