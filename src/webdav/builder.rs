@@ -69,6 +69,7 @@ pub struct WebDavClientBuilder {
     danger_accept_invalid_certs: bool,
     follow_redirects: bool,
     max_redirects: u8,
+    require_https: bool,
     prefer: Option<Prefer>,
     max_retries: usize,
     retry_all: bool,
@@ -110,6 +111,7 @@ impl std::fmt::Debug for WebDavClientBuilder {
         )
         .field("follow_redirects", &self.follow_redirects)
         .field("max_redirects", &self.max_redirects)
+        .field("require_https", &self.require_https)
         .field("prefer", &self.prefer)
         .field("max_retries", &self.max_retries)
         .field("retry_all", &self.retry_all)
@@ -139,6 +141,7 @@ impl Default for WebDavClientBuilder {
             danger_accept_invalid_certs: false,
             follow_redirects: true,
             max_redirects: 5,
+            require_https: false,
             prefer: None,
             max_retries: 0,
             retry_all: false,
@@ -388,6 +391,38 @@ impl WebDavClientBuilder {
         self
     }
 
+    /// Require **HTTPS everywhere**: the base URL must be `https://` and any
+    /// redirect whose target is not `https://` is rejected instead of
+    /// followed. Default: **false** (plain `http://` base URLs are accepted,
+    /// e.g. for isolated test environments).
+    ///
+    /// With the flag enabled, `build` rejects a non-`https` base URL with
+    /// [`Error::InvalidConfig`](crate::Error::InvalidConfig), and the shared
+    /// redirect pipeline (used by every request method **and** by
+    /// `.well-known` service discovery) fails a request whose redirect chain
+    /// would leave HTTPS with [`Error::InvalidInput`](crate::Error::InvalidInput).
+    /// Note that an `https`→`http` downgrade redirect is never followed even
+    /// without this flag — it returns the 3xx response as-is; with the flag
+    /// it is a hard error instead.
+    ///
+    /// This is an **opt-in, non-breaking** guard for deployments that know
+    /// they never talk plain HTTP (issue #200).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::WebDavClient;
+    ///
+    /// let client = WebDavClient::builder("https://dav.example.com/")
+    ///     .require_https(true)
+    ///     .build()?;
+    /// # Ok::<(), fast_dav_rs::Error>(())
+    /// ```
+    pub fn require_https(mut self, require: bool) -> Self {
+        self.require_https = require;
+        self
+    }
+
     /// Maximum number of retries for **transient failures** (`429`, `503`,
     /// `504`) before the last response is returned as-is. Default: **0**
     /// (retrying disabled — each request is sent exactly once).
@@ -523,8 +558,9 @@ impl WebDavClientBuilder {
     /// Returns an error if the base URL is not a valid URI, if the base URL
     /// embeds userinfo credentials (RFC 9110 §3.2), if credentials
     /// are provided but cannot be encoded, if the proxy URI is invalid,
-    /// if `timeout` or `pool_max_idle_per_host` is zero, or if PEM
-    /// certificates cannot be parsed.
+    /// if `timeout` or `pool_max_idle_per_host` is zero, if PEM
+    /// certificates cannot be parsed, or if `require_https` is enabled and
+    /// the base URL is not `https://`.
     pub fn build(mut self) -> Result<WebDavClient> {
         if self.timeout.is_zero() {
             return Err(Error::InvalidConfig("timeout must be > 0".to_owned()));
@@ -598,6 +634,11 @@ impl WebDavClientBuilder {
                     .to_owned(),
             ));
         }
+        if self.require_https && base.scheme_str() != Some("https") {
+            return Err(Error::InvalidConfig(
+                "require_https is enabled: base_url must use https".to_owned(),
+            ));
+        }
 
         let auth_header = build_auth_header(
             self.basic_user.take(),
@@ -625,6 +666,7 @@ impl WebDavClientBuilder {
             self.request_compression,
             self.follow_redirects,
             self.max_redirects,
+            self.require_https,
             self.prefer,
             self.max_retries,
             self.retry_all,
@@ -990,6 +1032,15 @@ macro_rules! impl_dav_builder {
             /// Default: **5**.
             pub fn max_redirects(mut self, max: u8) -> Self {
                 self.inner = self.inner.max_redirects(max);
+                self
+            }
+
+            /// Require **HTTPS everywhere**: the base URL must be `https://`
+            /// and any redirect whose target is not `https://` is rejected
+            /// instead of followed. Default: **false**. See
+            /// [`WebDavClientBuilder::require_https`](crate::webdav::WebDavClientBuilder::require_https).
+            pub fn require_https(mut self, require: bool) -> Self {
+                self.inner = self.inner.require_https(require);
                 self
             }
 
