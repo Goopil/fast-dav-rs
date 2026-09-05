@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Opt-in `require_https(true)` builder flag (issue #200) on `WebDavClient`,
+  `CalDavClient`, and `CardDavClient` builders: a plain `http://` base URL is rejected at
+  construction with `Error::InvalidConfig`, and any redirect whose target is not `https://`
+  (including an `https`→`http` downgrade) fails the request with `Error::InvalidInput` instead
+  of being followed. The guard lives in the shared redirect pipeline, so it covers every
+  request method and `.well-known` service discovery. Default is unchanged (non-breaking);
+  without the flag an `https`→`http` downgrade redirect keeps returning the 3xx response as-is.
+
 ## [0.14.0] - 2026-09-05
 
 ### Added

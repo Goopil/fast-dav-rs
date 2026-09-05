@@ -1,4 +1,6 @@
-use fast_dav_rs::webdav::client::{is_https_to_http_downgrade, resolve_location, same_origin};
+use fast_dav_rs::webdav::client::{
+    is_https_to_http_downgrade, redirect_target_not_https, resolve_location, same_origin,
+};
 use fast_dav_rs::{Error, WebDavClient};
 use hyper::{HeaderMap, Method, header};
 
@@ -188,6 +190,26 @@ fn same_origin_variants() {
     // Scheme-less URIs fall back to the unknown-port arm.
     assert!(same_origin(&schemeless, &schemeless));
     assert!(!same_origin(&schemeless, &http));
+}
+
+#[test]
+fn require_https_redirect_guard_rejects_non_https_targets() {
+    let https: hyper::Uri = "https://dav.example/a".parse().unwrap();
+    let http: hyper::Uri = "http://dav.example/a".parse().unwrap();
+    let ftp: hyper::Uri = "ftp://dav.example/a".parse().unwrap();
+
+    assert!(
+        redirect_target_not_https(&http),
+        "http redirect target must be rejected (https→http downgrade)"
+    );
+    assert!(
+        redirect_target_not_https(&ftp),
+        "any non-https redirect target must be rejected"
+    );
+    assert!(
+        !redirect_target_not_https(&https),
+        "an https redirect target is followable under require_https"
+    );
 }
 
 fn make_client(base: &str) -> WebDavClient {

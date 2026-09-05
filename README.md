@@ -838,6 +838,24 @@ never travel over plain `http://` in production. Token material — access token
 client secrets — never appears in the crate's `Debug` output, error messages, or tracing events;
 errors about failed token refreshes carry only a typed reason and an HTTP status.
 
+For deployments that know they never talk plain HTTP, the builder offers an opt-in
+**require HTTPS** guard (issue #200). With `require_https(true)` a plain `http://` base URL is
+rejected at construction with `Error::InvalidConfig`, and any redirect whose target is not
+`https://` — including an `https`→`http` downgrade during request handling **or** `.well-known`
+service discovery — fails the request with `Error::InvalidInput` instead of being followed:
+
+```rust,no_run
+# use fast_dav_rs::WebDavClient;
+let client = WebDavClient::builder("https://dav.example.com/")
+    .require_https(true)
+    .build()?;
+# Ok::<(), fast_dav_rs::Error>(())
+```
+
+The flag is additive and off by default: without it, behavior is unchanged (an `https`→`http`
+downgrade redirect is never followed in any configuration — the 3xx response is returned
+as-is — but plain `http://` base URLs remain accepted for isolated test environments).
+
 ## Observability
 
 The client optionally emits structured diagnostics through the [`tracing`](https://crates.io/crates/tracing)
