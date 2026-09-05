@@ -420,6 +420,25 @@ pub fn redirect_target_not_https(next: &Uri) -> bool {
     next.scheme_str() != Some("https")
 }
 
+/// Enforce the `require_https` redirect policy (opt-in, issue #200):
+/// with the flag on, a redirect whose target is not `https://` is rejected
+/// as [`Error::InvalidInput`](crate::Error::InvalidInput); with the flag
+/// off, every target is allowed. Pure so the full policy — including the
+/// error construction — is unit-testable without a live TLS server; called
+/// from the shared validation point in `build_and_send`, which covers every
+/// redirect consumer, discovery included.
+#[doc(hidden)]
+pub fn ensure_redirect_allowed(require_https: bool, target: &Uri) -> Result<()> {
+    if require_https && redirect_target_not_https(target) {
+        return Err(Error::InvalidInput(format!(
+            "require_https is enabled; refusing to follow redirect to \
+             non-https target `{}`",
+            redact_userinfo(target)
+        )));
+    }
+    Ok(())
+}
+
 fn normalize_decompressed_headers(
     headers: &mut HeaderMap,
     encodings: &[ContentEncoding],
@@ -1145,13 +1164,7 @@ impl WebDavClient {
             // not `https://` is rejected as a hard error instead of being
             // followed. Discovery routes through this same pipeline, so
             // this single guard covers every redirect consumer.
-            if self.require_https && redirect_target_not_https(&next) {
-                return Err(Error::InvalidInput(format!(
-                    "require_https is enabled; refusing to follow redirect to \
-                     non-https target `{}`",
-                    redact_userinfo(&next)
-                )));
-            }
+            ensure_redirect_allowed(self.require_https, &next)?;
 
             // Never follow an https→http downgrade (RFC 6764 §6 is
             // TLS-first): return the 3xx so the caller observes the redirect

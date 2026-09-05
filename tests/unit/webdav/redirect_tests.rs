@@ -1,5 +1,6 @@
 use fast_dav_rs::webdav::client::{
-    is_https_to_http_downgrade, redirect_target_not_https, resolve_location, same_origin,
+    ensure_redirect_allowed, is_https_to_http_downgrade, redirect_target_not_https,
+    resolve_location, same_origin,
 };
 use fast_dav_rs::{Error, WebDavClient};
 use hyper::{HeaderMap, Method, header};
@@ -210,6 +211,46 @@ fn require_https_redirect_guard_rejects_non_https_targets() {
         !redirect_target_not_https(&https),
         "an https redirect target is followable under require_https"
     );
+}
+
+#[test]
+fn ensure_redirect_allowed_rejects_non_https_targets_when_flag_on() {
+    let userinfo_http: hyper::Uri = "http://user:pass@dav.example/a".parse().unwrap();
+    let ftp: hyper::Uri = "ftp://dav.example/a".parse().unwrap();
+
+    let Err(err) = ensure_redirect_allowed(true, &userinfo_http) else {
+        panic!("http target must be rejected when require_https is on");
+    };
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg) if msg.contains("require_https")),
+        "should be InvalidInput mentioning require_https, got: {err}"
+    );
+    assert!(
+        !err.to_string().contains("user:pass"),
+        "error display must not echo userinfo: {err}"
+    );
+
+    assert!(ensure_redirect_allowed(true, &ftp).is_err());
+}
+
+#[test]
+fn ensure_redirect_allowed_accepts_https_target_when_flag_on() {
+    let https: hyper::Uri = "https://dav.example/a".parse().unwrap();
+    assert!(
+        ensure_redirect_allowed(true, &https).is_ok(),
+        "an https redirect target is followable under require_https"
+    );
+}
+
+#[test]
+fn ensure_redirect_allowed_accepts_everything_when_flag_off() {
+    let http: hyper::Uri = "http://dav.example/a".parse().unwrap();
+    let ftp: hyper::Uri = "ftp://dav.example/a".parse().unwrap();
+    assert!(
+        ensure_redirect_allowed(false, &http).is_ok(),
+        "with the flag off, non-https targets are not policed by this guard"
+    );
+    assert!(ensure_redirect_allowed(false, &ftp).is_ok());
 }
 
 fn make_client(base: &str) -> WebDavClient {
