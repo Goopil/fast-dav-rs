@@ -44,6 +44,9 @@ cargo nextest run --test unit_tests webdav::client::tests
 
 # Run coverage report
 cargo llvm-cov nextest --test unit_tests --all-features --no-fail-fast --lcov --output-path target/llvm-cov/lcov.info
+
+# Run the fuzz targets locally (nightly + cargo-fuzz required; see fuzz/)
+cargo +nightly fuzz run <target> -- -max_total_time=60
 ```
 
 ### Shell Scripts

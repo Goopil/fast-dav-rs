@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-b"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:sync-token>http://example.com/sync/2</D:sync-token>
+</D:multistatus>
