@@ -48,6 +48,9 @@ cargo llvm-cov nextest --test unit_tests --all-features --no-fail-fast --lcov --
 # Run the criterion benchmarks (PERFORMANCE.md §5 scenarios)
 cargo bench --bench performance
 # NOTE: bare `cargo bench` also runs lib tests, which fail until #204 is fixed.
+
+# Run the fuzz targets locally (nightly + cargo-fuzz required; see fuzz/)
+cargo +nightly fuzz run <target> -- -max_total_time=60
 ```
 
 ### Shell Scripts

@@ -1,0 +1,57 @@
+name: Fuzz
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: Fuzz (nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install Rust nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-fuzz
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz multistatus/REPORT XML parsing
+        run: cargo fuzz run multistatus_xml -- -max_total_time=300 -max_len=262144
+
+      - name: Fuzz sync-collection responses
+        run: cargo fuzz run sync_response -- -max_total_time=300 -max_len=262144
+
+      - name: Fuzz ETag/URI helpers
+        run: cargo fuzz run uri_etag -- -max_total_time=300 -max_len=262144
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: fuzz/artifacts
+          if-no-files-found: ignore

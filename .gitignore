@@ -15,3 +15,8 @@
 
 # Minted at runtime by nextcloud-test/setup.sh — never commit.
 nextcloud-test/.app-password
+
+# cargo-fuzz build artifacts (nightly libFuzzer runs)
+fuzz/target
+fuzz/artifacts
+fuzz/coverage

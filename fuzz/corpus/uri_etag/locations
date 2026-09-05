@@ -1,0 +1,7 @@
+/dav/cal/other.ics
+../sibling/cal.ics
+//other-host.example.com/dav/cal/
+HTTPS://DAV.EXAMPLE.COM/dav/cal/
+a%41b.txt?query#frag
+../../other-user/cal
+mailto:user@example.com
