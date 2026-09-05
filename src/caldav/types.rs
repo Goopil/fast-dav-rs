@@ -41,13 +41,13 @@ pub struct CalendarInfo {
     pub sync_token: Option<String>,
     pub supported_components: Vec<String>,
     /// Maximum resource size in octets the server accepts for this collection
-    /// (RFC 4791 §5.2.3); `None` when the server does not advertise it.
+    /// (RFC 4791 §5.2.5); `None` when the server does not advertise it.
     pub max_resource_size: Option<u64>,
     /// Media types the server accepts for calendar data in this collection
-    /// (RFC 4791 §5.2.6), e.g. `text/calendar` version `2.0`.
+    /// (RFC 4791 §5.2.4), e.g. `text/calendar` version `2.0`.
     pub supported_calendar_data: Vec<MediaType>,
     /// Maximum number of attendees per scheduling instance the server accepts
-    /// (RFC 4791 §5.2.4); `None` when the server does not advertise it.
+    /// (RFC 4791 §5.2.9); `None` when the server does not advertise it.
     pub max_attendees_per_instance: Option<u32>,
 }
 
@@ -84,6 +84,7 @@ pub struct SyncItem {
 /// collection entry and skipped, so a non-compliant server can hide member
 /// changes that way (observable via the token, not via `truncated`).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SyncResponse {
     pub sync_token: Option<String>,
     pub items: Vec<SyncItem>,

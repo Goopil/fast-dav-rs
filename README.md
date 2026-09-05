@@ -561,6 +561,15 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .build()?;
 ```
 
+### Base-URL credentials are rejected
+
+A base URL carrying `user:pass@` userinfo is rejected at build time with
+`Error::InvalidConfig` — before any network I/O. Pass credentials via
+`basic_auth(...)`, `bearer_token(...)`, or a `TokenProvider` instead. URLs
+discovered through `.well-known` redirects (RFC 6764 §5) are likewise
+returned without userinfo: redirect targets are server-controlled, so
+discovery never echoes credentials back to the caller.
+
 ### Pluggable token provider (renewable OAuth2)
 
 `token_provider(...)` is the third auth mode (mutually exclusive with
@@ -694,7 +703,9 @@ documented fallback; any other non-success status fails with `Error::UnexpectedS
 except a 3xx that could not be followed (redirect following disabled, unresolvable
 `Location`, or an https→http downgrade), which fails with a descriptive error. Client
 credentials are attached to the probe and stripped
-automatically on cross-origin redirect hops. DNS SRV record lookup (RFC 6764 §3) is not
+automatically on cross-origin redirect hops, and the discovered service URL is returned
+without userinfo (redirect targets are server-controlled; see "Base-URL credentials are
+rejected"). DNS SRV record lookup (RFC 6764 §3) is not
 implemented:
 
 ```rust

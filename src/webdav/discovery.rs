@@ -26,10 +26,44 @@
 //! service URL); their own fallback on a `404` is the base URL (RFC 6764 §6).
 
 use bytes::Bytes;
-use hyper::{HeaderMap, Method, StatusCode, header};
+use hyper::http::uri::Authority;
+use hyper::{HeaderMap, Method, StatusCode, Uri, header};
 
 use crate::webdav::client::{PROBE_BODY, WebDavClient};
 use crate::{Error, Operation, Result};
+
+/// Strip any `user:password@` userinfo from a URI's authority.
+///
+/// Redirect hops are server-controlled: never echo credentials that a
+/// hostile `Location` might embed (RFC 6764 §5). The builder already
+/// rejects userinfo in the base URL; a discovered URL gets the same
+/// guarantee before it leaves [`discover_well_known`]. `http::Uri` offers
+/// no in-place userinfo setters, so the URI is rebuilt from its parts with
+/// the credentials dropped (`Authority::host()` excludes userinfo by
+/// construction).
+fn redact_userinfo(uri: &Uri) -> Result<Uri> {
+    let Some(authority) = uri.authority() else {
+        return Ok(uri.clone());
+    };
+    if !authority.as_str().contains('@') {
+        return Ok(uri.clone());
+    }
+    let host_port = match authority.port() {
+        Some(port) => format!("{}:{}", authority.host(), port.as_u16()),
+        None => authority.host().to_owned(),
+    };
+    let mut parts = uri.clone().into_parts();
+    parts.authority = Some(Authority::try_from(host_port.as_str()).map_err(|e| {
+        Error::other(format!(
+            "discovered service URL carries an invalid authority: {e}"
+        ))
+    })?);
+    Uri::from_parts(parts).map_err(|e| {
+        Error::other(format!(
+            "discovered service URL could not be rebuilt without userinfo: {e}"
+        ))
+    })
+}
 
 /// Shared implementation behind [`discover_caldav`] / [`discover_carddav`]:
 /// probe `{base}/.well-known/{service}` and resolve the service URL from the
@@ -83,8 +117,13 @@ async fn discover_well_known(
         Ok(client.base().to_string())
     } else {
         // Redirects were followed by the pipeline: the final request URL is
-        // the discovered service URL.
-        Ok(final_uri.to_string())
+        // the discovered service URL. Redirect hops are server-controlled:
+        // never echo credentials that a hostile `Location` might embed
+        // (RFC 6764 §5) — the builder already rejects userinfo in the base
+        // URL, so the discovered URL gets the same guarantee before it
+        // leaves this function.
+        let service = redact_userinfo(&final_uri)?;
+        Ok(service.to_string())
     }
 }
 

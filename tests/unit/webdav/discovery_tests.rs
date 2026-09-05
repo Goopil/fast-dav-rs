@@ -1,7 +1,9 @@
 use fast_dav_rs::webdav::{discover_caldav, discover_carddav};
 use fast_dav_rs::{Error, Operation, RequestCompressionMode, WebDavClient};
 
-use crate::common::http_helpers::{response_head, serve_capture, serve_sequence, unreachable_base};
+use crate::common::http_helpers::{
+    response_head, serve_always, serve_capture, serve_sequence, unreachable_base,
+};
 
 const REDIRECT_301: &str = "HTTP/1.1 301 Moved Permanently\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 const REDIRECT_307: &str = "HTTP/1.1 307 Temporary Redirect\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -198,6 +200,42 @@ async fn discover_carddav_probes_well_known_carddav_and_resolves() {
     assert!(
         req.contains("PROPFIND /.well-known/carddav HTTP/1.1"),
         "the probe must target .well-known/carddav (RFC 6764 §5): {req}"
+    );
+}
+
+#[tokio::test]
+async fn discover_caldav_strips_userinfo_from_hostile_redirect_location() {
+    // A hostile redirect hop controls the `Location` and may embed
+    // credentials in it (RFC 3986 userinfo, RFC 6764 §5). The discovered
+    // service URL must never echo them: strip the userinfo before the URL
+    // leaves discovery, while keeping host and path intact.
+    let ok_body = b"ok".to_vec();
+    let target_base = serve_always(response_head("", ok_body.len()), ok_body).await;
+
+    let hostile_location = format!(
+        "{}caldav/",
+        target_base.replacen("http://", "http://user:secret@", 1)
+    );
+    let (base, _captured) =
+        serve_capture(redirect_head(REDIRECT_301, &hostile_location), Vec::new()).await;
+    let client = make_client(&base);
+
+    let service_url = discover_caldav(&client).await.unwrap();
+    assert!(
+        !service_url.contains("user"),
+        "no username may leak into the discovered service URL"
+    );
+    assert!(
+        !service_url.contains("secret"),
+        "no password may leak into the discovered service URL"
+    );
+    assert!(
+        service_url.starts_with(&target_base),
+        "the discovered URL must still point at the redirect target host"
+    );
+    assert!(
+        service_url.ends_with("/caldav/"),
+        "the discovered service path must be preserved"
     );
 }
 

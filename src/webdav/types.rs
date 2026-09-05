@@ -245,13 +245,19 @@ impl TextMatch {
     }
 
     /// Render this text-match as the `<C:text-match>` element using the
-    /// CardDAV serialization (RFC 6352 §10.4): `collation` and `match-type`
-    /// are always present. For CalDAV serialization (no `match-type` and no
-    /// `collation` attribute per RFC 4791 §9.7.5 — the wire default is
-    /// `i;ascii-casemap`) the CalDAV filters call the protocol-aware variant
-    /// internally.
+    /// CardDAV serialization (RFC 6352 §10.5.4): `collation` and
+    /// `match-type` are always present. For the CalDAV serialization use
+    /// [`TextMatch::to_caldav_xml`].
     pub fn to_xml(&self) -> String {
         self.to_xml_for(false)
+    }
+
+    /// Render this text-match as the `<C:text-match>` element using the
+    /// CalDAV serialization (RFC 4791 §9.7.5): neither `collation` nor
+    /// `match-type` is emitted (the wire default is `i;ascii-casemap`).
+    /// `negate-condition` is serialized as in the CardDAV flavor.
+    pub fn to_caldav_xml(&self) -> String {
+        self.to_xml_for(true)
     }
 
     pub(crate) fn to_xml_for(&self, caldav: bool) -> String {
@@ -299,9 +305,18 @@ impl ParamFilter {
 
     /// Render this param-filter as the `<C:param-filter>` element using the
     /// CardDAV serialization for a nested `text-match` (see
-    /// [`TextMatch::to_xml`]).
+    /// [`TextMatch::to_xml`]). For the CalDAV serialization use
+    /// [`ParamFilter::to_caldav_xml`].
     pub fn to_xml(&self) -> String {
         self.to_xml_for(false)
+    }
+
+    /// Render this param-filter as the `<C:param-filter>` element using the
+    /// CalDAV serialization: a nested `text-match` (RFC 4791 §9.7.3)
+    /// serializes via [`TextMatch::to_caldav_xml`] — without `collation`
+    /// and `match-type` attributes.
+    pub fn to_caldav_xml(&self) -> String {
+        self.to_xml_for(true)
     }
 
     pub(crate) fn to_xml_for(&self, caldav: bool) -> String {
@@ -570,7 +585,7 @@ impl DavCapabilities {
 }
 
 /// A media type advertised by a calendar collection via `supported-calendar-data`
-/// (RFC 4791 §5.2.6).
+/// (RFC 4791 §5.2.4).
 ///
 /// Parsed from the `content-type` and optional `version` attributes of the
 /// `<C:calendar-data-type>` elements inside the property, e.g.
@@ -668,11 +683,11 @@ pub struct DavItem {
     pub is_addressbook: bool,
     pub supported_components: Vec<String>,
     pub supported_address_data: Vec<String>,
-    /// `max-resource-size` in octets (RFC 4791 §5.2.3); `None` when absent or unparseable.
+    /// `max-resource-size` in octets (RFC 4791 §5.2.5); `None` when absent or unparseable.
     pub max_resource_size: Option<u64>,
-    /// Media types from `supported-calendar-data` (RFC 4791 §5.2.6).
+    /// Media types from `supported-calendar-data` (RFC 4791 §5.2.4).
     pub supported_calendar_data: Vec<MediaType>,
-    /// `max-attendees-per-instance` (RFC 4791 §5.2.4); `None` when absent or unparseable.
+    /// `max-attendees-per-instance` (RFC 4791 §5.2.9); `None` when absent or unparseable.
     pub max_attendees_per_instance: Option<u32>,
     pub calendar_data: Option<String>,
     pub address_data: Option<String>,

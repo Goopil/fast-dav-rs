@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking (0.x)**: `SyncResponse` (CalDAV + CardDAV) is now `#[non_exhaustive]`,
+  matching `SyncItem`. External struct-literal construction no longer compiles;
+  use the values returned by the sync methods.
+
 ## [0.13.0] - 2026-09-05
 
 ### Added

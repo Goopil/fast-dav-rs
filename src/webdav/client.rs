@@ -1794,7 +1794,6 @@ impl WebDavClient {
     ) -> Vec<BatchItem<Response<Bytes>>> {
         let requests = paths.into_iter().map(move |p| (p, xml_body.clone()));
         self.many(
-            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"PROPFIND").unwrap(),
             requests,
             depth,
@@ -1813,7 +1812,6 @@ impl WebDavClient {
     ) -> Vec<BatchItem<Response<Bytes>>> {
         let requests = paths.into_iter().map(move |p| (p, xml_body.clone()));
         self.many(
-            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"REPORT").unwrap(),
             requests,
             depth,
@@ -1833,7 +1831,6 @@ impl WebDavClient {
         max_concurrency: usize,
     ) -> Vec<BatchItem<Response<Bytes>>> {
         self.many(
-            // ponytail: static literal cannot fail; no-panic needs Result signatures (0.10 window)
             Method::from_bytes(b"REPORT").unwrap(),
             requests,
             Depth::Zero,
