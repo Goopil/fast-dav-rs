@@ -109,7 +109,7 @@ END:VCALENDAR"#
     let body = get.into_body();
     assert!(
         String::from_utf8_lossy(&body).contains(&uid),
-        "GET must return the stored event containing UID {uid}, got: {}",
+        "GET must return the stored event containing the event UID, got: {}",
         String::from_utf8_lossy(&body)
     );
 

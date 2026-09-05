@@ -73,7 +73,7 @@ END:VCALENDAR"#
     let event_body = String::from_utf8_lossy(&get.into_body()).into_owned();
     assert!(
         event_body.contains(&uid),
-        "GET must return the stored event containing UID {uid}, got: {event_body}"
+        "GET must return the stored event containing the event UID, got: {event_body}"
     );
 
     // VTODO round-trip (task coverage).

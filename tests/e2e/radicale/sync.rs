@@ -91,7 +91,7 @@ async fn test_sync_collection_unknown_token_records_observed_behavior() {
     assert!(!items.is_empty(), "the resync must return the live items");
     assert!(token.is_some(), "the resync must hand out a fresh token");
     println!(
-        "resilient resync returned {} item(s) with token {token:?}",
+        "resilient resync returned {} item(s) with a fresh token",
         items.len()
     );
 
@@ -189,7 +189,10 @@ async fn test_sync_session_invalid_token_transparent_resync() {
     assert!(!next.resynced);
     assert!(
         next.added.is_empty() && next.modified.is_empty() && next.deleted.is_empty(),
-        "no changes since the resync: {next:?}"
+        "no changes since the resync: {} added, {} modified, {} deleted",
+        next.added.len(),
+        next.modified.len(),
+        next.deleted.len()
     );
 
     let _ = client.delete(&event_path).await;
