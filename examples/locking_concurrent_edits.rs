@@ -15,42 +15,20 @@
 //! fails gracefully in that case (see the match at the bottom of `run`) and
 //! you should fall back to etag-conditional writes (`put_if_match`).
 
+#[path = "common/mod.rs"]
+mod common;
+
 use bytes::Bytes;
 use fast_dav_rs::{CalDavClient, Error, LockScope, Operation};
 
-const USER: &str = "test";
-const PASS: &str = "test";
-
-fn sabredav_url() -> String {
-    let mut url = std::env::var("SABREDAV_URL").unwrap_or_else(|_| "http://localhost:8080".into());
-    if !url.ends_with('/') {
-        url.push('/');
-    }
-    url
-}
-
-fn event_ics(uid: &str, summary: &str) -> String {
-    format!(
-        "BEGIN:VCALENDAR\r\n\
-         VERSION:2.0\r\n\
-         PRODID:-//fast-dav-rs//locking example//EN\r\n\
-         BEGIN:VEVENT\r\n\
-         UID:{uid}\r\n\
-         DTSTAMP:20260101T000000Z\r\n\
-         DTSTART:20260913T100000Z\r\n\
-         DTEND:20260913T110000Z\r\n\
-         SUMMARY:{summary}\r\n\
-         END:VEVENT\r\n\
-         END:VCALENDAR"
-    )
-}
+use common::{event_ics, sabredav_client, sabredav_webdav_client};
 
 #[tokio::main]
 async fn main() -> fast_dav_rs::Result<()> {
-    let client = CalDavClient::new(&sabredav_url(), Some(USER), Some(PASS))?;
+    let client = sabredav_client()?;
 
     // Lock-capability check first: a cheap OPTIONS probe.
-    let probe = fast_dav_rs::WebDavClient::new(&sabredav_url(), Some(USER), Some(PASS))?;
+    let probe = sabredav_webdav_client()?;
     let caps = probe.capabilities("").await?;
     if !caps.class2 {
         println!("this server does not advertise locking (class 2) — nothing to demo");

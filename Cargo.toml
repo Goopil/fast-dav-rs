@@ -51,7 +51,19 @@ path = "tests/unit/mod.rs"
 
 [[test]]
 name = "e2e_tests"
-path = "tests/e2e/mod.rs"
+path = "tests/e2e/sabredav/mod.rs"
+
+[[test]]
+name = "e2e_radicale"
+path = "tests/e2e/radicale/mod.rs"
+
+[[test]]
+name = "e2e_nextcloud"
+path = "tests/e2e/nextcloud/mod.rs"
+
+[[test]]
+name = "e2e_provider_a_smoke"
+path = "tests/e2e/provider_a/mod.rs"
 
 [features]
 default = []

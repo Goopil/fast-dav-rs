@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- E2E suite reorganization (no behavior change): one tree per fixture under
+  `tests/e2e/` — `sabredav/` (target `e2e_tests`), `radicale/` (target
+  `e2e_radicale`, monolith split into `core`/`sync`/`locking`/`attachments`),
+  `nextcloud/` (target `e2e_nextcloud`, split into
+  `crud`/`discovery`/`sync`/`locking`),
+  and `provider_a/` (target `e2e_provider_a_smoke`). Shared fixture helpers
+  (per-fixture URL/client constructors, auth constants, unique-name helpers,
+  iCalendar/vCard body builders) live in `tests/e2e/util.rs`, included per
+  target via `#[path]`; the runnable examples share `examples/common/mod.rs`.
+  CI `[[test]]` target names are unchanged, only paths moved. Two gap-closure
+  e2e tests landed in the new tree: a locking round-trip on Nextcloud (the
+  fixture enforces RFC 4918 locks on its files tree; locks on calendar
+  objects are accepted but not enforced — recorded in the test) and a VTODO
+  round-trip on Radicale.
+
 ## [0.13.0] - 2026-09-05
 
 ### Added

@@ -24,25 +24,20 @@
 //!    `403 + valid-sync-token`), so the stale-token reset path is exercised
 //!    below as well.
 
-use fast_dav_rs::{CalDavClient, Error, LockScope, Operation, WebDavClient};
+#[path = "common/mod.rs"]
+mod common;
 
-const USER: &str = "test";
-const PASS: &str = "test";
+use fast_dav_rs::{Error, LockScope, Operation};
+
+use common::{radicale_client, radicale_webdav_client};
+
 const COLLECTION: &str = "test/example-radicale-client/";
-
-fn radicale_url() -> String {
-    let mut url = std::env::var("RADICALE_URL").unwrap_or_else(|_| "http://localhost:8081".into());
-    if !url.ends_with('/') {
-        url.push('/');
-    }
-    url
-}
 
 #[tokio::main]
 async fn main() -> fast_dav_rs::Result<()> {
-    let client = CalDavClient::new(&radicale_url(), Some(USER), Some(PASS))?;
+    let client = radicale_client()?;
     // Capability probes live on the underlying WebDAV client type.
-    let probe = WebDavClient::new(&radicale_url(), Some(USER), Some(PASS))?;
+    let probe = radicale_webdav_client()?;
 
     // Fixture data (idempotent re-runs).
     let mk = r#"<?xml version="1.0" encoding="UTF-8"?>
