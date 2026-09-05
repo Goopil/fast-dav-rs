@@ -293,7 +293,14 @@ impl CalDavClient {
     /// [`Operation::ProppatchCalendarTimezone`] when the `PROPPATCH` request
     /// itself fails or when the server's per-property status inside the 207
     /// multistatus is not a success: servers commonly accept the request but
-    /// reject the property, so the per-propstat status is authoritative.
+    /// reject the property, so the per-propstat status is authoritative. One
+    /// exception per RFC 4918 §14.23: for a remove (`None`), a `404`
+    /// propstat is success — removing a property that does not exist is not
+    /// an error because the desired end state (property absent) is already
+    /// reached, making the remove idempotent; a set (`Some`) keeps strict
+    /// propstat checking. The implementation inspects the per-property
+    /// `<D:propstat>` elements of the 207, which every conformant response
+    /// carries (RFC 4918 §9.2.1).
     ///
     /// # Example
     ///
@@ -342,6 +349,7 @@ impl CalDavClient {
             None => REMOVE_BODY.to_owned(),
         };
         let resp = self.proppatch(calendar_path, &body).await?;
+        let is_remove = vtimezone.is_none();
         if !resp.status().is_success() {
             return Err(Error::unexpected_status(
                 Operation::ProppatchCalendarTimezone,
@@ -368,7 +376,11 @@ impl CalDavClient {
                     .unwrap_or(500);
                 let status =
                     StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-                if !status.is_success() {
+                if !(status.is_success() || is_remove && status.as_u16() == 404) {
+                    // RFC 4918 §14.23: removing a property that does not
+                    // exist is not an error — the desired end state
+                    // (property absent) is already reached, so the remove
+                    // is idempotent. A set keeps strict propstat checking.
                     return Err(Error::unexpected_status(
                         Operation::ProppatchCalendarTimezone,
                         status,

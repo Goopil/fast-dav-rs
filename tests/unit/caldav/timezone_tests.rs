@@ -218,6 +218,46 @@ async fn set_calendar_timezone_propstat_failure_maps_to_unexpected_status() {
 }
 
 #[tokio::test]
+async fn set_calendar_timezone_remove_absent_property_404_propstat_is_ok() {
+    // RFC 4918 §14.23: "Specifying the removal of a property that does not
+    // exist is not an error" — the desired end state (property absent) is
+    // already reached, so the remove is idempotent.
+    let body = proppatch_207_body("HTTP/1.1 404 Not Found");
+    let head = PROPPATCH_OK_HEAD.replace("{len}", &body.len().to_string());
+    let base = serve_capture(head, body.into_bytes()).await.0;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    client
+        .set_calendar_timezone("cal/", None)
+        .await
+        .expect("removing an absent property must not be an error (RFC 4918 §14.23)");
+}
+
+#[tokio::test]
+async fn set_calendar_timezone_non_success_response_maps_unexpected_status() {
+    let head =
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string();
+    let base = serve_once(head, Vec::new()).await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let err = client
+        .set_calendar_timezone("cal/", None)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            &err,
+            Error::UnexpectedStatus { operation, status, .. }
+                if *operation == Operation::ProppatchCalendarTimezone && status.as_u16() == 403
+        ),
+        "expected UnexpectedStatus(ProppatchCalendarTimezone, 403), got {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn set_calendar_timezone_rejects_empty_value() {
     let base = unreachable_base().await;
     let client = CalDavClient::new(&base, None, None).unwrap();

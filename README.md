@@ -915,15 +915,17 @@ sends a `<D:remove>`. A blank value is rejected as
 the request but reject the property, the per-property status inside the 207
 multistatus decides the outcome: a non-success propstat for
 `calendar-timezone` maps to `Error::UnexpectedStatus` with
-`Operation::ProppatchCalendarTimezone`.
+`Operation::ProppatchCalendarTimezone` — except for a remove, where a `404`
+propstat is success (removing an absent property is not an error per
+RFC 4918 §14.23, which makes the remove idempotent).
 
 Server support:
 
 | Server | `calendar-timezone` support |
 | --- | --- |
-| Radicale | Supported (3.7.6): the PROPPATCH set stores the object and the remove makes it read back absent (line endings normalized CRLF → LF); verified against the fixture |
-| SabreDAV | Supported on calendar creation (set at `MKCALENDAR` time) |
-| Nextcloud | Supported on calendar creation, and the `PROPPATCH` write path round-trips (set → read back the stored object, remove → absent; line endings normalized CRLF → LF by the VObject re-serialization; verified against the fixture) |
+| Radicale | Supported (3.7.6): the PROPPATCH set stores the object and the remove makes it read back absent (the read-back value has LF line endings — every conformant XML processor normalizes CRLF → LF in parsed content per XML 1.0 §2.11); verified against the fixture |
+| SabreDAV | Supported on calendar creation (set at `MKCALENDAR` time); the `PROPPATCH` write path is untested on this fixture |
+| Nextcloud | Supported on calendar creation, and the `PROPPATCH` write path round-trips (set → read back the stored object, remove → absent; the read-back value has LF line endings — every conformant XML processor normalizes CRLF → LF in parsed content per XML 1.0 §2.11; verified against the fixture) |
 
 ### CalDAV scheduling (RFC 6638)
 
