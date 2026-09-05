@@ -33,6 +33,10 @@ static BASE_URI: LazyLock<hyper::Uri> = LazyLock::new(|| {
 });
 
 fuzz_target!(|data: &[u8]| {
+    // Cap input processing (same as the other targets).
+    if data.len() > 1_048_576 {
+        return;
+    }
     let Ok(s) = std::str::from_utf8(data) else {
         return;
     };
