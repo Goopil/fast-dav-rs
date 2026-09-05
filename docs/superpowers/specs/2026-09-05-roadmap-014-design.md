@@ -21,10 +21,13 @@ parsing.
 | Breaking change | `SyncResponse` gains `#[non_exhaustive]` on CalDAV + CardDAV — breaks external struct literals; accepted at 0.x, flagged in CHANGELOG |
 | Cycle shape | 5 packages (H1–H5) in 2 waves; release 0.14.0 at the end (user go required) |
 | SabreDAV scheduling | Enable `Sabre\CalDAV\Schedule\Plugin` (plugin ships in the pinned `sabre/dav ^4.4`; `schedulingobjects` table already in `init.sql`) and pin `composer.lock` so the fixture stops floating |
+| E2E/examples consolidation | **H6 runs first**: reorganize e2e into one `tests/e2e/<fixture>/` tree (SabreDAV tree moved under `sabredav/`, Radicale + Nextcloud monoliths split into modules, shared `util.rs`), extract `examples/common/` (fixture detection, client constructors, iCal/VCF builders). CI `[[test]]` target **names unchanged** (`e2e_tests`, `e2e_radicale`, `e2e_nextcloud`, `e2e_provider_a_smoke`) — only paths move; job isolation preserved |
+| E2E gap closure | Absorb into reorganized suites: locking round-trip on Nextcloud + VTODO round-trip on Radicale (H6), `multiget_many` cross-fixture on Radicale + Nextcloud (H1, validates the engine move on all 3 servers) |
+| Docker fixtures | No GHCR pre-provisioning (rejected: too much work for the gain); SabreDAV determinism only (composer.lock pin + drop the redundant runtime `composer install`, folded into H3) |
 
 ## Work packages
 
-### H1 — Multiget engine + CardDAV batching + reconciliation (wave 1, medium)
+### H1 — Multiget engine + CardDAV batching + reconciliation (wave 2, medium)
 
 - Extract the chunking engine from `calendar_multiget_many` (`caldav/client.rs:555-623`)
   into shared `webdav/` machinery (duplication gate ≤3% — CardDAV must not copy-paste it).
@@ -40,10 +43,13 @@ parsing.
   comment.
 - Tests: mock server omitting hrefs → `missing_hrefs` populated; empty-href chunks;
   CardDAV batching happy path + partial failure; ordering preserved.
+- Cross-fixture e2e: `calendar_multiget_many` chunked round-trip on the Radicale and
+  Nextcloud fixtures (chunking already covered on SabreDAV) — validates the extracted
+  engine against all three servers.
 - Acceptance: both clients share one engine; reconciliation documented + tested; no
   behavior change for compliant servers.
 
-### H2 — Client correctness fixes (wave 2, small)
+### H2 — Client correctness fixes (wave 3, small)
 
 - `status_error` honors `WebDavError::parse_failed`: a 423 with a malformed `<D:error>`
   body becomes distinguishable from one with no body (today the
@@ -57,10 +63,12 @@ parsing.
 - Tests: malformed-423 through `status_error` (lock + unlock); comp-level and
   param-level exclusivity rejections; existing prop-filter rejection tests untouched.
 
-### H3 — SabreDAV scheduling fixture (wave 1, small)
+### H3 — SabreDAV scheduling fixture (wave 2, small)
 
 - Add `Sabre\CalDAV\Schedule\Plugin` in `sabredav-test/public/index.php` (one
-  `addPlugin` line); commit `composer.lock` to pin the floating `composer install`.
+  `addPlugin` line); commit `composer.lock` to pin the floating `composer install`,
+  `COPY` it before `composer install` in the Dockerfile, and drop the redundant
+  runtime `composer install` step from the CI job.
 - E2e against the real fixture: `discover_schedule_endpoints` (principal PROPFIND),
   `list_inbox`, `put_if_schedule_tag`/`delete_if_schedule_tag` round-trip.
 - Fallback: if the plugin does not surface inbox/outbox for the fixture principals,
@@ -68,7 +76,7 @@ parsing.
   exemption documented in the PR) — same convention as S1 in 0.13.
 - Acceptance: scheduling e2e green against SabreDAV, or documented fallback.
 
-### H4 — Calendar-timezone write path (wave 2, small)
+### H4 — Calendar-timezone write path (wave 3, small)
 
 - `CalDavClient::set_calendar_timezone(path, vtimezone: Option<&str>) -> Result<()>`:
   typed PROPPATCH wrapper (`Depth: 0`) composing the `<C:calendar-timezone>` body on the
@@ -106,12 +114,48 @@ parsing.
   resolved by sanitization + doc note.
 - Acceptance: `rg` for the old citations/returns finds nothing; docs tests pass.
 
+### H6 — E2E tree + examples consolidation (wave 1, runs FIRST, medium)
+
+Current state is inconsistent: the SabreDAV suite is a modular tree
+(`tests/e2e/caldav/…` with per-domain dirs + READMEs) while Radicale (561 lines) and
+Nextcloud (412 lines) are monolithic files that grow every cycle, each re-declaring its
+own URL/client/auth boilerplate; the 8 flat examples duplicate fixture-URL functions,
+client constructors, and iCal/VCF body builders. New e2e suites added in 0.14 must land
+in the new structure, not the monoliths.
+
+- One tree, per-fixture roots (CI `[[test]]` target names unchanged, only paths move):
+  ```
+  tests/e2e/
+    util.rs        # shared: unique_* helpers, per-fixture url/client constructors,
+                   # ics/vcf body builders (imported via #[path] as today)
+    sabredav/      # existing modular tree moved here (mod.rs = e2e_tests target)
+    radicale/      # monolith split: core, sync, locking, attachments, timezone, …
+    nextcloud/     # monolith split: crud, discovery, sync, addressbook, …
+    provider_a/    # smoke as-is (e2e_provider_a_smoke target)
+  ```
+- Radicale + Nextcloud monoliths split by existing test grouping (mechanical moves, no
+  test rewritten); shared boilerplate (URL fns, client constructors, auth constants)
+  moves into `tests/e2e/util.rs` or per-fixture helper modules.
+- Gap closure inside the new tree: locking round-trip e2e on Nextcloud (Sabre-based
+  Locks plugin; today SabreDAV-only) and VTODO round-trip e2e on Radicale (today
+  Nextcloud-only) — one test each.
+- `examples/common/mod.rs`: fixture detection (env vars), client constructors, shared
+  iCal/VCF builders; the 8 examples keep their per-workflow files but drop duplicated
+  boilerplate. `cargo build --examples` gate unchanged.
+- README ("Runnable Examples", testing section) and AGENTS.md test-command paths
+  updated; fixture prerequisites per example unchanged.
+- Acceptance: 4 e2e targets build and pass against their fixtures (locally + same CI
+  jobs); no boilerplate duplication between fixture suites; docs in sync; no test
+  behavior changed.
+
 ## Waves
 
-- **Wave 1 (parallel)**: H1 ∥ H3 ∥ H5 — disjoint domains (multiget machinery /
-  sabredav-test / types+docs).
-- **Wave 2 (parallel)**: H2 ∥ H4 — both touch `caldav/client.rs` (different hunks) but
-  start after wave 1 merges, keeping one conflict surface.
+- **Wave 1 (parallel)**: H6 ∥ H5 — H6 reorganizes the e2e tree + examples; H5 is
+  independent (types/docs; README sections union-resolve).
+- **Wave 2 (parallel)**: H1 ∥ H3 — H3 adds its scheduling e2e into the NEW sabredav
+  tree; H1 extracts the multiget engine.
+- **Wave 3 (parallel)**: H2 ∥ H4 — both touch `caldav/client.rs` (different hunks) but
+  start after wave 2 merges, keeping one conflict surface per wave.
 - Then final whole-branch review (diff `v0.13.0..main`), triage, release 0.14.0
   (user go required).
 
@@ -139,5 +183,8 @@ parsing.
   chunking/ordering/partial-failure test battery; engine move is mechanical.
 - Nextcloud timezone-write support is assumed (Sabre-based) but unverified until
   implementation — H4 has a documented wire-only fallback.
+- H6 is mostly mechanical file moves, but it touches CI `[[test]]` paths and four test
+  targets — the acceptance gate is "same jobs, same target names, all suites pass"
+  before any wave 2 work starts.
 - Three packages historically touch `caldav/client.rs`; wave separation keeps at most
   one conflict surface per wave.
