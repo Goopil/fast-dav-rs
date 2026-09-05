@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixture enforces RFC 4918 locks on its files tree; locks on calendar
   objects are accepted but not enforced — recorded in the test) and a VTODO
   round-trip on Radicale.
+- SabreDAV fixture scheduling support (issue #171): the fixture now enables
+  `Sabre\CalDAV\Schedule\Plugin` and pins `composer.lock`; 3 RFC 6638
+  scheduling e2e tests (2 real, 1 records-observed — sabre/dav 4.7.1 lacks
+  §8 Schedule-Tag)
 
 ## [0.13.0] - 2026-09-05
 
