@@ -741,6 +741,263 @@ async fn addressbook_multiget_sends_depth_zero() {
     );
 }
 
+/// One `addressbook-multiget` REPORT response listing `hrefs` (optionally
+/// with `address-data`), as a `(head, body)` pair for the wire helpers.
+fn addressbook_multiget_report_response(hrefs: &[&str], with_data: bool) -> (String, Vec<u8>) {
+    let mut responses = String::new();
+    for (i, href) in hrefs.iter().enumerate() {
+        let data = if with_data {
+            format!("<C:address-data>BEGIN:VCARD\r\nEND:VCARD-{i}</C:address-data>")
+        } else {
+            String::new()
+        };
+        responses.push_str(&format!(
+            "<D:response><D:href>{href}</D:href><D:propstat><D:prop>\
+             <D:getetag>\"etag-{i}\"</D:getetag>{data}</D:prop>\
+             <D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
+        ));
+    }
+    let body = format!(
+        "<?xml version=\"1.0\"?>\
+         <D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:carddav\">\
+         {responses}</D:multistatus>"
+    );
+    (
+        crate::common::http_helpers::response_head("", body.len()),
+        body.into_bytes(),
+    )
+}
+
+#[tokio::test]
+async fn addressbook_multiget_many_chunks_hrefs_and_orders_results() {
+    let hrefs: Vec<String> = (0..5).map(|i| format!("/contacts/c{i}.vcf")).collect();
+    let responses = vec![
+        addressbook_multiget_report_response(&["/contacts/c0.vcf", "/contacts/c1.vcf"], true),
+        addressbook_multiget_report_response(&["/contacts/c2.vcf", "/contacts/c3.vcf"], true),
+        addressbook_multiget_report_response(&["/contacts/c4.vcf"], true),
+    ];
+    let (base, captured) = crate::common::http_helpers::serve_sequence(responses).await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .addressbook_multiget_many("contacts/", &hrefs, true, 2, 1)
+        .await
+        .unwrap();
+
+    // 5 hrefs / batch 2 -> exactly 3 REPORTs, each carrying only its chunk.
+    let requests = captured.lock().unwrap();
+    assert_eq!(requests.len(), 3, "expected one REPORT per chunk");
+    let req1 = String::from_utf8_lossy(&requests[0]);
+    assert!(
+        req1.contains("addressbook-multiget"),
+        "expected addressbook-multiget report root: {req1}"
+    );
+    assert!(
+        req1.to_ascii_lowercase().contains("depth: 0"),
+        "multiget REPORTs must use Depth: 0 (RFC 6352 §8.7): {req1}"
+    );
+    assert!(
+        req1.contains("<D:href>/contacts/c0.vcf</D:href>")
+            && req1.contains("<D:href>/contacts/c1.vcf</D:href>"),
+        "{req1}"
+    );
+    assert!(
+        !req1.contains("/contacts/c2.vcf"),
+        "chunk 1 leaked hrefs: {req1}"
+    );
+    let req2 = String::from_utf8_lossy(&requests[1]);
+    assert!(
+        req2.contains("/contacts/c2.vcf") && req2.contains("/contacts/c3.vcf"),
+        "{req2}"
+    );
+    let req3 = String::from_utf8_lossy(&requests[2]);
+    assert!(req3.contains("/contacts/c4.vcf"), "{req3}");
+    drop(requests);
+
+    // Deterministic ordering: chunk index first, then server order in-chunk.
+    assert_eq!(items.len(), 5);
+    for item in &items {
+        assert_eq!(item.pub_path, "contacts/");
+        assert!(
+            item.result.is_ok(),
+            "expected Ok item: {:?}",
+            item.result.as_ref().err()
+        );
+    }
+    // Each BatchItem carries the hrefs its chunk's REPORT requested.
+    assert_eq!(
+        items[0].hrefs,
+        vec![
+            "/contacts/c0.vcf".to_string(),
+            "/contacts/c1.vcf".to_string()
+        ]
+    );
+    assert_eq!(
+        items[2].hrefs,
+        vec![
+            "/contacts/c2.vcf".to_string(),
+            "/contacts/c3.vcf".to_string()
+        ]
+    );
+    assert_eq!(items[4].hrefs, vec!["/contacts/c4.vcf".to_string()]);
+    // A compliant server echoes every requested href: no missing hrefs.
+    assert!(items.iter().all(|i| i.missing_hrefs.is_empty()));
+    let got: Vec<String> = items
+        .iter()
+        .map(|i| i.result.as_ref().unwrap().href.clone())
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            "/contacts/c0.vcf",
+            "/contacts/c1.vcf",
+            "/contacts/c2.vcf",
+            "/contacts/c3.vcf",
+            "/contacts/c4.vcf"
+        ]
+    );
+    assert!(
+        items[0].result.as_ref().unwrap().address_data.is_some(),
+        "include_data = true must return address-data"
+    );
+}
+
+#[tokio::test]
+async fn addressbook_multiget_many_partial_failure_isolated() {
+    let hrefs: Vec<String> = (0..3).map(|i| format!("/contacts/c{i}.vcf")).collect();
+    let ok500 =
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_string();
+    let responses = vec![
+        addressbook_multiget_report_response(&["/contacts/c0.vcf"], true),
+        (ok500, Vec::new()),
+        addressbook_multiget_report_response(&["/contacts/c2.vcf"], true),
+    ];
+    let (base, _captured) = crate::common::http_helpers::serve_sequence(responses).await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .addressbook_multiget_many("contacts/", &hrefs, true, 1, 1)
+        .await
+        .unwrap();
+
+    assert_eq!(items.len(), 3, "one BatchItem per chunk result");
+    assert!(items[0].result.is_ok());
+    assert!(
+        matches!(
+            &items[1].result,
+            Err(fast_dav_rs::Error::UnexpectedStatus {
+                operation,
+                status,
+                ..
+            })
+                if *operation == fast_dav_rs::Operation::ReportAddressbookMultiget
+                    && status.as_u16() == 500
+        ),
+        "expected UnexpectedStatus(500) for the failed chunk, got: {:?}",
+        items[1].result
+    );
+    assert!(
+        items[1].hrefs == vec!["/contacts/c1.vcf".to_string()],
+        "a failed chunk must be attributable to its requested hrefs, got: {:?}",
+        items[1].hrefs
+    );
+    assert!(items[2].result.is_ok(), "sibling chunk must be unaffected");
+}
+
+#[tokio::test]
+async fn addressbook_multiget_many_reports_missing_hrefs() {
+    // The mock answers only 2 of the 3 requested hrefs; the absent one must
+    // be surfaced via `BatchItem::missing_hrefs` (exact href string
+    // comparison) while the answered objects are still delivered.
+    let hrefs = vec![
+        "/contacts/a.vcf".to_string(),
+        "/contacts/b.vcf".to_string(),
+        "/contacts/missing.vcf".to_string(),
+    ];
+    let (head, body) =
+        addressbook_multiget_report_response(&["/contacts/a.vcf", "/contacts/b.vcf"], true);
+    let base = crate::common::http_helpers::serve_once(head, body).await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .addressbook_multiget_many("contacts/", &hrefs, true, 3, 2)
+        .await
+        .unwrap();
+
+    let mut missing: Vec<String> = items
+        .iter()
+        .flat_map(|b| b.missing_hrefs.iter().cloned())
+        .collect();
+    missing.sort();
+    missing.dedup();
+    assert_eq!(
+        missing,
+        vec!["/contacts/missing.vcf".to_string()],
+        "the href the server omitted must be reported in missing_hrefs"
+    );
+    let got: Vec<String> = items
+        .iter()
+        .map(|i| {
+            i.result
+                .as_ref()
+                .expect("answered objects must be Ok")
+                .href
+                .clone()
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec!["/contacts/a.vcf".to_string(), "/contacts/b.vcf".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn addressbook_multiget_many_rejects_zero_batch_size_before_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+
+    let Err(err) = client
+        .addressbook_multiget_many("contacts/", &["/contacts/a.vcf".to_string()], true, 0, 4)
+        .await
+    else {
+        panic!("expected batch_size=0 to fail before any network I/O");
+    };
+
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidConfig(ref msg) if msg.contains("batch_size")),
+        "expected InvalidConfig for batch_size=0, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn addressbook_multiget_many_empty_hrefs_returns_empty_without_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+
+    assert!(
+        client
+            .addressbook_multiget_many("contacts/", &[], true, 10, 4)
+            .await
+            .unwrap()
+            .is_empty(),
+        "empty input must produce no batches"
+    );
+    // Empty hrefs are filtered before chunking: an all-empty input produces
+    // no batches either.
+    assert!(
+        client
+            .addressbook_multiget_many("contacts/", &["".to_string(), String::new()], true, 10, 4)
+            .await
+            .unwrap()
+            .is_empty(),
+        "all-empty input must produce no batches"
+    );
+}
+
 #[tokio::test]
 async fn carddav_put_derives_content_type_version_from_body() {
     use bytes::Bytes;

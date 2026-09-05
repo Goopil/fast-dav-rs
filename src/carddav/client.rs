@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use hyper::{HeaderMap, Method, Response, StatusCode, header};
 
+use crate::BatchItem;
 use crate::Depth;
 use crate::carddav::builder::CardDavClientBuilder;
 use crate::carddav::streaming::parse_multistatus_bytes;
@@ -338,6 +339,104 @@ impl CardDavClient {
         Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
     }
 
+    /// Fetch specific address objects via `addressbook-multiget`, split into
+    /// concurrent batches.
+    ///
+    /// `hrefs` is chunked into slices of `batch_size`; one `addressbook-multiget`
+    /// REPORT is issued per chunk, with at most `max_concurrency` REPORTs in
+    /// flight at any time (a `max_concurrency` of 0 is treated as 1). This
+    /// avoids the single huge request/response pair of
+    /// [`addressbook_multiget`](Self::addressbook_multiget) for large fetch
+    /// lists and parallelizes the server-side work. Multiget REPORTs are sent
+    /// with `Depth: 0` (RFC 6352 §8.7).
+    ///
+    /// # Result shape and ordering
+    ///
+    /// Each item of the returned vector is one [`AddressObject`] wrapped in a
+    /// [`BatchItem`]: `pub_path` is the `addressbook_path` the REPORT was
+    /// sent to, `hrefs` holds the exact hrefs the chunk's REPORT requested,
+    /// and the object's own URL is in [`AddressObject::href`]. Results are
+    /// **deterministically ordered by chunk index first**, then by the order
+    /// in which the server returned the objects within that chunk's
+    /// multistatus (which matches the request href order for compliant
+    /// servers). A chunk that yields no objects contributes no items.
+    ///
+    /// Each item also carries [`BatchItem::missing_hrefs`]: the requested
+    /// hrefs the server did not answer with a `<D:response>` element (exact
+    /// href string comparison — a compliant server echoes every requested
+    /// href, possibly with an error status). A non-empty value signals a
+    /// non-compliant server; the answered objects are still delivered.
+    ///
+    /// Empty hrefs are dropped from `hrefs` **before** chunking (they never
+    /// reach a REPORT, and they are not recorded in any `BatchItem::hrefs`);
+    /// an input with no non-empty href yields `Ok(Vec::new())` without any
+    /// network I/O.
+    ///
+    /// # Partial failure
+    ///
+    /// A failed chunk (transport error, non-success status, or an unparsable
+    /// response body) produces exactly **one** error [`BatchItem`]; sibling
+    /// chunks are unaffected and still contribute their results. The failing
+    /// chunk's `hrefs` field carries the requested hrefs, so callers know
+    /// exactly which objects to re-fetch. The method itself only fails
+    /// before any network I/O (see below).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfig`] **before any network I/O** if
+    /// `batch_size` is 0.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::CardDavClient;
+    ///
+    /// # async fn example(client: &CardDavClient) -> fast_dav_rs::Result<()> {
+    /// let hrefs: Vec<String> = (0..250)
+    ///     .map(|i| format!("/addressbooks/user/contacts/contact-{i}.vcf"))
+    ///     .collect();
+    /// // 100 hrefs per REPORT, at most 4 REPORTs in flight.
+    /// let items = client
+    ///     .addressbook_multiget_many("addressbooks/user/contacts/", &hrefs, true, 100, 4)
+    ///     .await?;
+    /// for item in &items {
+    ///     match &item.result {
+    ///         Ok(contact) => println!("{} -> {:?}", contact.href, contact.etag),
+    ///         Err(e) => eprintln!("batch failed: {e}"),
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn addressbook_multiget_many(
+        &self,
+        addressbook_path: &str,
+        hrefs: &[String],
+        include_data: bool,
+        batch_size: usize,
+        max_concurrency: usize,
+    ) -> Result<Vec<BatchItem<AddressObject>>> {
+        if batch_size == 0 {
+            return Err(Error::InvalidConfig(
+                "addressbook_multiget_many: batch_size must be greater than zero".to_owned(),
+            ));
+        }
+        // Shared engine: empty-href filtering, chunking, chunked REPORTs,
+        // ordering, per-chunk failure isolation and missing-hrefs
+        // reconciliation.
+        crate::webdav::multiget::multiget_many(
+            &self.webdav,
+            Operation::ReportAddressbookMultiget,
+            addressbook_path,
+            hrefs,
+            batch_size,
+            max_concurrency,
+            |chunk| build_addressbook_multiget_body(chunk.iter(), include_data),
+            map_address_objects,
+        )
+        .await
+    }
+
     /// Incrementally synchronise an addressbook collection using `sync-collection`.
     ///
     /// # Truncation
@@ -575,6 +674,27 @@ pub fn build_addressbook_query_filter(
     filter.to_filter_xml()
 }
 
+/// Build an `addressbook-multiget` REPORT request body (RFC 6352 §8.7).
+///
+/// The body carries `<D:getetag/>` plus `<C:address-data/>` when
+/// `include_data` is set. Returns `None` when `hrefs` contains no non-empty
+/// href (such a request would be invalid; callers such as
+/// [`addressbook_multiget`](crate::CardDavClient::addressbook_multiget) skip
+/// the network round-trip entirely). Empty hrefs inside `hrefs` are dropped
+/// and XML metacharacters are escaped.
+///
+/// # Example
+///
+/// ```no_run
+/// use fast_dav_rs::carddav::build_addressbook_multiget_body;
+///
+/// let body = build_addressbook_multiget_body(["/contacts/a.vcf", ""], true)
+///     .expect("at least one non-empty href");
+/// assert!(body.contains("<C:addressbook-multiget"));
+/// assert!(body.contains("<D:href>/contacts/a.vcf</D:href>"));
+/// assert!(!body.contains("<D:href></D:href>"), "empty hrefs are dropped");
+/// assert!(body.contains("<C:address-data/>"));
+/// ```
 pub fn build_addressbook_multiget_body<I, S>(hrefs: I, include_data: bool) -> Option<String>
 where
     I: IntoIterator<Item = S>,

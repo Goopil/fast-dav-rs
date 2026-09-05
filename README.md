@@ -534,6 +534,31 @@ to the hrefs to re-fetch. Multiget REPORTs are sent with `Depth: 0` (RFC 4791 §
 §8.7). Pick `batch_size` (e.g. 100 hrefs per REPORT) and `max_concurrency` (e.g. 4) to match your
 server's limits.
 
+`CardDavClient::addressbook_multiget_many` mirrors those semantics for `addressbook-multiget`
+and returns `Vec<BatchItem<AddressObject>>` (no `expand` parameter). Both batched multigets share
+one engine, so they behave identically apart from the object type.
+
+#### `missing_hrefs` reconciliation
+
+Every `BatchItem` from a batched multiget also carries `missing_hrefs`: the requested hrefs the
+server did not answer with a `<D:response>` element (exact href string comparison — a compliant
+server echoes every requested href, possibly with an error status, RFC 4791 §9.6.1 / RFC 6352
+§8.7). A non-empty value signals a non-compliant server; the answered objects are still
+delivered. `missing_hrefs` is empty for non-multiget batch operations (`propfind_many`,
+`report_many`) and for batches that failed as a whole — their `hrefs` already name everything to
+re-fetch.
+
+#### Empty hrefs are dropped before chunking
+
+Both batched multigets filter empty hrefs out of the input **before** chunking: they never reach
+a REPORT and are not recorded in any `BatchItem::hrefs`. An input with no non-empty href yields
+`Ok(Vec::new())` without any network I/O.
+
+Note on exact comparison: some servers percent-encode characters such as `@` in the hrefs they
+echo (`a@b.ics` comes back `a%40b.ics`). If you construct hrefs yourself instead of using the
+hrefs the server published (e.g. from `sync_collection` or PROPFIND responses), compare against
+that server's echo behavior — `missing_hrefs` uses exact string matching.
+
 ## Advanced Configuration
 
 For production use, use the builder pattern to configure auth, timeouts,

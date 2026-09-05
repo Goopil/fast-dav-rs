@@ -355,9 +355,18 @@ pub struct BatchItem<T> {
     pub pub_path: String,
     /// The request hrefs this batch was issued for: the single request path
     /// for singleton batches (`propfind_many`/`report_many`), the chunk's
-    /// requested hrefs for multiget chunks (`calendar_multiget_many`). On a
-    /// failed batch these are exactly the hrefs to re-fetch.
+    /// requested hrefs for multiget chunks (`calendar_multiget_many` /
+    /// `addressbook_multiget_many`). On a failed batch these are exactly the
+    /// hrefs to re-fetch.
     pub hrefs: Vec<String>,
+    /// For multiget batches: the requested hrefs the server did not answer
+    /// with a `<D:response>` element (exact href string comparison — every
+    /// requested href must be echoed, possibly with an error status, RFC 4791
+    /// §9.6.1 / RFC 6352 §8.7). A non-empty value signals a non-compliant
+    /// server; the returned items are still delivered. Empty for non-multiget
+    /// batch operations and for batches that failed as a whole (their `hrefs`
+    /// already name everything to re-fetch).
+    pub missing_hrefs: Vec<String>,
     pub result: Result<T>,
 }
 

@@ -131,6 +131,127 @@ END:VCALENDAR"#
     );
 }
 
+/// Chunked `calendar_multiget_many` (0.14 H1) on Nextcloud: 3 events fetched
+/// with `batch_size` 2 and `max_concurrency` 2 — exercises the shared multiget
+/// engine beyond SabreDAV. Asserts deterministic ordering (each result is the
+/// object of its requested href), per-object data fidelity, and that the
+/// compliant server echoes every requested href (`missing_hrefs` empty).
+#[tokio::test]
+async fn test_calendar_multiget_many_chunked_on_nextcloud() {
+    let client = nextcloud_caldav_client();
+    let calendar_path = format!(
+        "calendars/{NEXTCLOUD_USER}/{}/",
+        util::unique_calendar_name("nc_multiget")
+    );
+
+    let mkcalendar_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:set>
+    <D:prop>
+      <D:displayname>{}</D:displayname>
+    </D:prop>
+  </D:set>
+</C:mkcalendar>"#,
+        calendar_path
+    );
+    let created = client
+        .mkcalendar(&calendar_path, &mkcalendar_xml)
+        .await
+        .expect("MKCALENDAR request");
+    assert!(
+        created.status().is_success(),
+        "MKCALENDAR must succeed, got {}",
+        created.status()
+    );
+
+    let mut names = Vec::new();
+    for i in 1..=3 {
+        let uid = util::unique_uid(&format!("nc-multiget-{i}"));
+        // `@`-free resource names: servers may percent-encode `@` in echoed
+        // hrefs (`a@b` comes back `a%40b`), which would defeat the engine's
+        // exact-href-string reconciliation comparison.
+        let name = format!("{}-{i}.ics", util::unique_calendar_name("nc-multiget"));
+        let event_path = format!("{calendar_path}{name}");
+        let put = client
+            .put(
+                &event_path,
+                Bytes::from(util::event_ics(
+                    &uid,
+                    &format!("Nextcloud Multiget Event {i}"),
+                )),
+            )
+            .await
+            .expect("event PUT");
+        assert!(
+            put.status().is_success(),
+            "event PUT {i} must succeed, got {}",
+            put.status()
+        );
+        names.push(name);
+    }
+
+    // Nextcloud resolves multiget hrefs against the site root: hrefs must
+    // carry the full `/remote.php/dav/` prefix exactly as the server
+    // publishes them in sync/propfind responses (a DAV-root-relative href
+    // answers 403 "out of base uri").
+    let hrefs: Vec<String> = names
+        .iter()
+        .map(|name| format!("/remote.php/dav/{calendar_path}{name}"))
+        .collect();
+
+    // batch_size 2 → 2 chunks, max_concurrency 2 → both in flight at once.
+    let results = client
+        .calendar_multiget_many(&calendar_path, &hrefs, true, None, 2, 2)
+        .await
+        .expect("calendar_multiget_many must succeed");
+
+    assert_eq!(
+        results.len(),
+        hrefs.len(),
+        "expected one result per requested href, got {}",
+        results.len()
+    );
+    assert!(
+        results.iter().all(|item| item.missing_hrefs.is_empty()),
+        "a compliant server must echo every requested href, got missing: {:?}",
+        results
+            .iter()
+            .flat_map(|item| item.missing_hrefs.iter())
+            .collect::<Vec<_>>()
+    );
+    for (i, item) in results.iter().enumerate() {
+        assert_eq!(item.pub_path, calendar_path);
+        let obj = item
+            .result
+            .as_ref()
+            .unwrap_or_else(|e| panic!("multiget chunk {i} must succeed, got {e}"));
+        assert!(
+            obj.href.ends_with(&names[i]),
+            "result {i} must be the object for its requested href, got href {:?}",
+            obj.href
+        );
+        let data = obj.calendar_data.as_deref().unwrap_or_else(|| {
+            panic!("expected full calendar data for object {i} (include_data = true)")
+        });
+        assert!(
+            data.contains("BEGIN:VCALENDAR"),
+            "calendar data for object {i} must round-trip intact"
+        );
+    }
+
+    // Teardown.
+    let deleted = client
+        .delete(&calendar_path)
+        .await
+        .expect("teardown DELETE request");
+    assert!(
+        deleted.status().is_success(),
+        "calendar DELETE must succeed, got {}",
+        deleted.status()
+    );
+}
+
 #[tokio::test]
 async fn test_addressbook_crud_round_trip() {
     let client = nextcloud_carddav_client();
