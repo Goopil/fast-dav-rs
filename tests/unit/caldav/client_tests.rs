@@ -1557,6 +1557,69 @@ async fn multiget_many_unparsable_chunk_is_one_batch_error() {
 }
 
 #[tokio::test]
+async fn multiget_many_reports_missing_hrefs() {
+    // Compliant servers echo every requested href in the multistatus (RFC 4791
+    // §9.6.1); this mock answers only 2 of the 3 requested hrefs. The absent
+    // one must be surfaced via `BatchItem::missing_hrefs` (exact href string
+    // comparison), and the returned objects must still be delivered.
+    let hrefs = vec![
+        "/cal/a.ics".to_string(),
+        "/cal/b.ics".to_string(),
+        "/cal/missing.ics".to_string(),
+    ];
+    let (head, body) = multiget_report_response(&["/cal/a.ics", "/cal/b.ics"], true);
+    let (base, captured) = crate::common::http_helpers::serve_capture(head, body).await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .calendar_multiget_many("cal/", &hrefs, true, None, 3, 2)
+        .await
+        .unwrap();
+
+    // The single chunk's REPORT must have requested all three hrefs.
+    let binding = captured.lock().unwrap();
+    let raw = String::from_utf8_lossy(&binding);
+    for href in &hrefs {
+        assert!(
+            raw.contains(format!("<D:href>{href}</D:href>").as_str()),
+            "REPORT must request {href}: {raw}"
+        );
+    }
+
+    // `missing_hrefs` has per-chunk semantics (like `hrefs`): every object
+    // delivered from the chunk carries the chunk's list, so the absent href
+    // appears once per answered object. Collecting the union gives exactly
+    // the hrefs the server omitted.
+    let mut missing: Vec<String> = items
+        .iter()
+        .flat_map(|b| b.missing_hrefs.iter().cloned())
+        .collect();
+    missing.sort();
+    missing.dedup();
+    assert_eq!(
+        missing,
+        vec!["/cal/missing.ics".to_string()],
+        "the href the server omitted must be reported in missing_hrefs"
+    );
+    // The answered objects are still delivered, in server order.
+    let got: Vec<String> = items
+        .iter()
+        .map(|i| {
+            i.result
+                .as_ref()
+                .expect("answered objects must be Ok")
+                .href
+                .clone()
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec!["/cal/a.ics".to_string(), "/cal/b.ics".to_string()]
+    );
+}
+
+#[tokio::test]
 async fn multiget_many_runs_batches_concurrently() {
     let hrefs = vec!["/cal/a.ics".to_string(), "/cal/b.ics".to_string()];
     // Chunk 1 is delayed; chunk 2 answers immediately. With real concurrency

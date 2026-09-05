@@ -2,6 +2,7 @@ pub mod auth;
 pub mod builder;
 pub mod client;
 pub mod discovery;
+pub(crate) mod multiget;
 pub mod retry;
 pub mod streaming;
 pub mod sync;

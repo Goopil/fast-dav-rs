@@ -1872,6 +1872,8 @@ impl WebDavClient {
                 BatchItem {
                     pub_path: p.clone(),
                     hrefs: vec![p],
+                    // Singleton batches have no href reconciliation.
+                    missing_hrefs: Vec::new(),
                     result: res,
                 }
             });

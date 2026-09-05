@@ -512,6 +512,17 @@ impl CalDavClient {
     /// multistatus (which matches the request href order for compliant
     /// servers). A chunk that yields no objects contributes no items.
     ///
+    /// Each item also carries [`BatchItem::missing_hrefs`]: the requested
+    /// hrefs the server did not answer with a `<D:response>` element (exact
+    /// href string comparison — a compliant server echoes every requested
+    /// href, possibly with an error status). A non-empty value signals a
+    /// non-compliant server; the answered objects are still delivered.
+    ///
+    /// Empty hrefs are dropped from `hrefs` **before** chunking (they never
+    /// reach a REPORT, and they are not recorded in any `BatchItem::hrefs`);
+    /// an input with no non-empty href yields `Ok(Vec::new())` without any
+    /// network I/O.
+    ///
     /// # Partial failure
     ///
     /// A failed chunk (transport error, non-success status, or an
@@ -567,13 +578,17 @@ impl CalDavClient {
             ));
         }
         validate_expand("invalid calendar-multiget", expand.as_ref())?;
-        if hrefs.is_empty() {
+        // Empty hrefs are dropped **before** chunking so every recorded
+        // `BatchItem::hrefs` matches the hrefs its chunk's REPORT actually
+        // carried; an input with no non-empty href produces no batches.
+        let filtered: Vec<String> = hrefs.iter().filter(|h| !h.is_empty()).cloned().collect();
+        if filtered.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut requests = Vec::new();
         let mut chunk_hrefs = Vec::new();
-        for chunk in hrefs.chunks(batch_size) {
+        for chunk in filtered.chunks(batch_size) {
             let Some(xml) =
                 build_calendar_multiget_body(chunk.iter(), include_data, expand.as_ref())
             else {
@@ -583,43 +598,17 @@ impl CalDavClient {
             chunk_hrefs.push(chunk.to_vec());
         }
 
-        let mut batches = self
-            .webdav
-            .report_many_bodies(requests, max_concurrency)
-            .await;
-        // `report_many_bodies` only knows the request path; stamp each batch
-        // with the hrefs its chunk requested so failures are attributable.
-        for (batch, hrefs) in batches.iter_mut().zip(chunk_hrefs) {
-            batch.hrefs = hrefs;
-        }
-
-        let mut out = Vec::with_capacity(hrefs.len());
-        for batch in batches {
-            let result = match batch.result {
-                Ok(resp) if !resp.status().is_success() => Err(Error::UnexpectedStatus {
-                    operation: Operation::ReportCalendarMultiget,
-                    status: resp.status(),
-                }),
-                Ok(resp) => {
-                    let body = resp.into_body();
-                    parse_multistatus_bytes(&body).map(|ms| map_calendar_objects(ms.items))
-                }
-                Err(e) => Err(e),
-            };
-            match result {
-                Ok(objects) => out.extend(objects.into_iter().map(|o| BatchItem {
-                    pub_path: batch.pub_path.clone(),
-                    hrefs: batch.hrefs.clone(),
-                    result: Ok(o),
-                })),
-                Err(e) => out.push(BatchItem {
-                    pub_path: batch.pub_path,
-                    hrefs: batch.hrefs,
-                    result: Err(e),
-                }),
-            }
-        }
-        Ok(out)
+        // Shared engine: chunked REPORTs, ordering, per-chunk failure
+        // isolation and missing-hrefs reconciliation.
+        crate::webdav::multiget::multiget_many(
+            &self.webdav,
+            Operation::ReportCalendarMultiget,
+            requests,
+            chunk_hrefs,
+            max_concurrency,
+            map_calendar_objects,
+        )
+        .await
     }
 
     /// Incrementally synchronise a calendar collection using `sync-collection`.
@@ -1042,6 +1031,28 @@ pub fn build_calendar_query_body(
     )
 }
 
+/// Build a `calendar-multiget` REPORT request body (RFC 4791 §7.9).
+///
+/// The body carries `<D:getetag/>` plus `<C:calendar-data/>` when
+/// `include_data` is set (implied when `expand` is given — the server returns
+/// expanded calendar data, RFC 4791 §9.6). Returns `None` when `hrefs`
+/// contains no non-empty href (such a request would be invalid; callers such
+/// as [`calendar_multiget`](crate::CalDavClient::calendar_multiget) skip the
+/// network round-trip entirely). Empty hrefs inside `hrefs` are dropped and
+/// XML metacharacters are escaped.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::caldav::build_calendar_multiget_body;
+///
+/// let body = build_calendar_multiget_body(["/cal/a.ics", ""], true, None)
+///     .expect("at least one non-empty href");
+/// assert!(body.contains("<C:calendar-multiget"));
+/// assert!(body.contains("<D:href>/cal/a.ics</D:href>"));
+/// assert!(!body.contains("<D:href></D:href>"), "empty hrefs are dropped");
+/// assert!(body.contains("<C:calendar-data/>"));
+/// ```
 pub fn build_calendar_multiget_body<I, S>(
     hrefs: I,
     include_data: bool,

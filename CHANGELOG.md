@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - CalDAV-flavor serialization for filter types: `TextMatch::to_caldav_xml` /
   `ParamFilter::to_caldav_xml` per RFC 4791; `to_xml` remains the CardDAV flavor
+- Batched CardDAV multiget (issue #184): `CardDavClient::addressbook_multiget_many(path, hrefs,
+  include_data, batch_size, max_concurrency)` mirrors `CalDavClient::calendar_multiget_many` —
+  chunked `addressbook-multiget` REPORTs with bounded concurrency, deterministic ordering by
+  chunk, one error `BatchItem` per failed chunk, `batch_size == 0` rejected as
+  `Error::InvalidConfig` before any I/O. Both batched multigets now run through one shared
+  engine in `webdav/`
+- Missing-href reconciliation on `BatchItem` (issue #184): every `BatchItem` from a batched
+  multiget gains `missing_hrefs: Vec<String>` — the requested hrefs the server did not answer
+  with a `<D:response>` element (exact href string comparison; a compliant server echoes every
+  requested href, RFC 4791 §9.6.1 / RFC 6352 §8.7). A non-empty value signals a non-compliant
+  server; the answered objects are still delivered. Empty for non-multiget batch operations and
+  for batches that failed as a whole
+- Empty-href contract fix on batched multigets: empty hrefs are dropped from the input **before**
+  chunking, so every recorded `BatchItem::hrefs` matches the hrefs its chunk's REPORT actually
+  carried (previously an empty href was skipped in the request XML but still recorded in
+  `hrefs`). An input with no non-empty href yields `Ok(Vec::new())` without any network I/O
+- `build_calendar_multiget_body` (public re-export, previously undocumented) now documents its
+  `None`-on-no-hrefs contract with an example
+- Cross-fixture e2e for the batched multiget: chunked round-trips (3 events, `batch_size` 2,
+  `max_concurrency` 2) against the Radicale and Nextcloud fixtures, alongside the existing
+  SabreDAV coverage
 
 ### Changed
 - **Breaking (0.x)**: `SyncResponse` (CalDAV + CardDAV) is now `#[non_exhaustive]`,

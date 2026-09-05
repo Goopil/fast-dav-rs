@@ -82,6 +82,7 @@ src/
 │   ├── types.rs        # Common types and enums
 │   ├── streaming.rs    # Streaming XML parsing
 │   ├── sync.rs         # RFC 6578 sync sessions (SyncSession engine)
+│   ├── multiget.rs     # Shared chunked-multiget engine (CalDAV + CardDAV)
 │   ├── xml.rs          # XML building utilities
 │   └── mod.rs
 ├── caldav/             # CalDAV-specific functionality
