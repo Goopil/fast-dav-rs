@@ -1285,6 +1285,24 @@ cargo test --doc
 ./run-e2e-tests.sh
 ```
 
+### Provider compatibility matrix
+
+Feature coverage per fixture — every ✅ cites the e2e test that asserts it
+(full matrix, evidence, and per-fixture notes:
+[`docs/compatibility.md`](docs/compatibility.md)):
+
+| Feature | SabreDAV | Radicale | Nextcloud | Provider A |
+| --- | --- | --- | --- | --- |
+| Discovery (RFC 6764) | ✅ | ✅ | ✅ | ◐ |
+| WebDAV-Sync (RFC 6578) | ✅ | ✅ | ✅ | — |
+| LOCK (RFC 4918 class 2) | ✅ | ❌ | ✅ | — |
+| Scheduling (RFC 6638) | ✅ | — | — | — |
+| `calendar-timezone` (RFC 4791 §5.2.2) | — | ✅ | ✅ | — |
+| Compression | ✅ | — | — | — |
+| OAuth / Bearer | — | — | — | — |
+
+✅ asserted by an e2e test · ❌ known unsupported (Radicale: `LOCK` → `405` despite an advertised class 2) · ◐ partial (Provider A: unauthenticated smoke-tier probes only) · — not tested. New providers are added only with a fixture.
+
 ## End-to-End Testing
 
 The project ships three Docker e2e fixtures (SabreDAV, Radicale, Nextcloud)
@@ -1389,18 +1407,9 @@ of scope for the fixture). See `nextcloud-test/README.md`.
 
 ### Provider quirks: UTF-8 double-encoding on CardDAV writes
 
-One real-world deployment (**Provider A**) has a CardDAV write-path quirk:
-vCard `PUT`s whose body contains multi-byte UTF-8 sequences (e.g. non-ASCII
-names in `FN`/`N`) can come back **double-encoded** on read — the stored
-bytes are a second, redundant percent/UTF-8 encoding of the original, so a
-later `GET` returns corrupted text.
-
-Until that is fixed server-side, treat CardDAV writes on that service as
-**unverified until read back**: after a successful `PUT`, issue a `GET` (or
-`addressbook-multiget` fetch) and compare the returned bytes against what you
-sent — or normalize both sides to Unicode NFC before comparing — before
-marking the contact as settled in your local store. The same read-back
-pattern is a cheap safety net for any provider you do not fully control.
+Provider A's CardDAV write path can double-encode multi-byte UTF-8 in vCard
+writes (corrupted text on later reads). The full quirk note and the
+read-back workaround live in [`docs/compatibility.md`](docs/compatibility.md#provider-a).
 
 ## Limitations & Non-Goals
 
