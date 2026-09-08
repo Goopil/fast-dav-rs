@@ -3144,15 +3144,18 @@ mod tests {
         assert_eq!(client.request_compression(), ContentEncoding::Identity);
     }
 
+    // An unrelated 400 must not retry nor pin `Identity`: only
+    // compression-specific rejections (`415`, `501`) may disable
+    // compression (mirrors tests/unit/webdav/compression_probe_tests.rs).
     #[test]
-    fn handle_compression_outcome_400_retries_and_disables() {
+    fn handle_compression_outcome_400_keeps_encoding_no_retry() {
         let client = make_client(BASE);
         let retry = client.handle_request_compression_outcome(
             Some(ContentEncoding::Zstd),
             StatusCode::BAD_REQUEST,
         );
-        assert!(retry);
-        assert_eq!(client.request_compression(), ContentEncoding::Identity);
+        assert!(!retry);
+        assert_eq!(client.request_compression(), ContentEncoding::Zstd);
     }
 
     #[test]
