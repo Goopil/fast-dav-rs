@@ -35,6 +35,7 @@ fn is_retryable(error: &Error) -> bool {
 | `Transport`            | A request was sent but the response stream broke                      |
 | `UnexpectedStatus`     | The server returned an unexpected HTTP status code                    |
 | `UnexpectedStatusWithDav` | Unexpected status with a `<D:error>` body (e.g. `423` + `no-conflicting-lock`) |
+| `SyncIncomplete`       | A `sync-collection` result set was truncated (507 inside the 207) and cannot be continued (no new sync token, or a repeated one) |
 | `PrincipalNotFound`    | Authentication succeeded but `current-user-principal` PROPFIND returned 404 — on some providers the signature of a wrong username form (e.g. email instead of the account ID) |
 | `Timeout`              | An operation exceeded its configured time limit                      |
 | `BodyTooLarge`         | A decompressed response body exceeded the 256 MiB limit              |

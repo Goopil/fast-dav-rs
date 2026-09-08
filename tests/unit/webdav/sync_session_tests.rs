@@ -803,7 +803,7 @@ async fn sync_session_continues_past_507_truncation() {
 }
 
 #[tokio::test]
-async fn sync_session_stops_when_truncation_repeats_the_same_token() {
+async fn sync_session_fails_when_truncation_repeats_the_same_token() {
     const TRUNCATED_PAGE: &str = r#"<?xml version="1.0"?>
 <D:multistatus xmlns:D="DAV:">
   <D:response>
@@ -828,19 +828,77 @@ async fn sync_session_stops_when_truncation_repeats_the_same_token() {
     .await;
     let session = make_client(&base).sync_session("cal/");
 
-    let delta = session.incremental().await.unwrap();
-    assert_eq!(
-        delta
-            .added
-            .iter()
-            .map(|e| e.href.as_str())
-            .collect::<Vec<_>>(),
-        vec!["/cal/c.ics"]
+    let err = session
+        .incremental()
+        .await
+        .expect_err("a non-continuable truncation must fail, not surface partial rows");
+    assert!(
+        matches!(
+            err,
+            fast_dav_rs::Error::SyncIncomplete {
+                token: Some(ref t),
+                ..
+            } if t == "token-same"
+        ),
+        "expected SyncIncomplete carrying the request token: {err}"
     );
+    assert_eq!(session.sync_token(), None, "state must stay unchanged");
     assert_eq!(
         captured.lock().unwrap().len(),
         3,
         "a repeated page token must stop the continuation loop"
+    );
+}
+
+#[tokio::test]
+async fn sync_session_fails_when_truncation_carries_no_token() {
+    const TRUNCATED_NO_TOKEN: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/c.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-c1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:status>HTTP/1.1 507 Insufficient Storage</D:status>
+  </D:response>
+</D:multistatus>"#;
+
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(SYNC_SUPPORTED_PROPFIND),
+        multistatus_response(INITIAL_BODY),
+        multistatus_response(TRUNCATED_NO_TOKEN),
+    ])
+    .await;
+    let session = make_client(&base).sync_session("cal/");
+    session.initial().await.unwrap();
+
+    let err = session
+        .incremental()
+        .await
+        .expect_err("a truncation without a token must fail, not surface partial rows");
+    assert!(
+        matches!(
+            err,
+            fast_dav_rs::Error::SyncIncomplete {
+                token: Some(ref t),
+                ..
+            } if t == "token-2"
+        ),
+        "expected SyncIncomplete carrying the request token: {err}"
+    );
+    assert_eq!(
+        session.sync_token().as_deref(),
+        Some("token-2"),
+        "state must stay unchanged"
+    );
+    assert_eq!(
+        captured.lock().unwrap().len(),
+        3,
+        "no continuation is attempted without a token"
     );
 }
 

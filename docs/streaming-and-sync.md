@@ -34,7 +34,9 @@ above into a per-collection, in-memory state machine — the DAVx⁵ approach:
 2. while the server supports RFC 6578 `sync-collection`, `initial()` returns
    the full state snapshot and `incremental()` returns a typed delta
    (`added` / `modified` / `deleted`) carrying the token to persist; 507
-   result-set truncation is continued transparently;
+   result-set truncation is continued with the page token, and a truncation
+   that cannot be continued (no new token, or a repeated token) fails with
+   `Error::SyncIncomplete` instead of surfacing a partial delta;
 3. on an unsupported server (or one that rejects the report with `403`/`405`)
    it falls back transparently to a `PROPFIND Depth: 1` etag diff, fetching
    content for changed members via batched `calendar-multiget` /

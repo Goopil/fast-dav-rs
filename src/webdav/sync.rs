@@ -157,7 +157,8 @@ struct SessionState {
 ///
 /// 1. probe `supported-report-set` once per session;
 /// 2. `sync-collection` REPORTs while the server supports them (507
-///    result-set truncation is continued transparently);
+///    result-set truncation is continued with the page token; a truncation
+///    that cannot be continued fails with [`Error::SyncIncomplete`]);
 /// 3. on an unsupported server — or one that rejects the report with `403`/
 ///    `405` — fall back transparently to `PROPFIND Depth: 1` + etag diff,
 ///    fetching content for changed members via batched multiget REPORTs;
@@ -371,7 +372,9 @@ impl SyncSession {
     /// Incremental delta via `sync-collection` with the stored token.
     /// Result-set truncation (RFC 6578 §3.6, a 507 status inside the
     /// multistatus) is continued with the returned token until a page
-    /// arrives without truncation (or stops handing out new tokens).
+    /// arrives without truncation; a truncation that cannot be continued
+    /// (no token, or a repeated token) fails with [`Error::SyncIncomplete`]
+    /// and leaves the session state unchanged.
     async fn sync_collection_delta(&self) -> Result<SyncDelta> {
         let start = self.state.lock().token.clone();
         let (rows, token, resynced) = self.sync_pages(start.clone()).await?;
@@ -427,10 +430,13 @@ impl SyncSession {
                 final_token = page_token.clone();
             }
             match (truncated, page_token) {
-                // Continue with the page token; a server that repeats the
-                // same (or no) token cannot be continued — stop instead of
-                // looping forever.
+                // Continue with the page token.
                 (true, Some(next)) if Some(&next) != token.as_ref() => token = Some(next),
+                // Truncation that cannot be continued (no token, or the
+                // same token repeated): the rows so far are a partial
+                // result (RFC 6578 §3.6) — fail instead of presenting
+                // them as a complete delta.
+                (true, _) => return Err(Error::SyncIncomplete { token }),
                 _ => return Ok((dedup_rows(rows), final_token, resynced)),
             }
         }

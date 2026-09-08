@@ -258,6 +258,25 @@ pub enum Error {
         dav: WebDavError,
     },
 
+    /// A `sync-collection` REPORT result set was truncated (RFC 6578 §3.6:
+    /// a `507` status inside the 207 multistatus) and the answer does not
+    /// allow continuing it — the server sent no sync token, or repeated the
+    /// request's token. The rows received so far are a **partial** result
+    /// that must not be applied as complete.
+    ///
+    /// Returned by [`SyncSession`](crate::webdav::SyncSession) only; the
+    /// session state is unchanged — retry the sync later, or fall back to
+    /// a full `initial()` sync.
+    #[error(
+        "sync-collection result set is truncated and cannot be continued (request sync token: {token:?})"
+    )]
+    #[non_exhaustive]
+    SyncIncomplete {
+        /// The sync token the truncated request was sent with (`None` for
+        /// an initial sync).
+        token: Option<String>,
+    },
+
     /// Principal discovery returned `404 Not Found` even though
     /// authentication succeeded.
     ///
