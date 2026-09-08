@@ -1,129 +1,33 @@
 # Unit Tests
 
-This directory contains unit tests for the fast-dav-rs library, organized by module.
+Unit tests for fast-dav-rs, organized by module. Entry point: `tests/unit/mod.rs`
+(the `unit_tests` target in `Cargo.toml`).
 
-## Test Organization
+## Layout
 
-### 📦 CalDAV Module Tests
-- **Client Tests** - `client_tests.rs`
-  - Client creation and URI building
-  - Depth enum values
-  - XML escaping functions
-  - XML body builders
+| Directory | Files | Covers |
+|---|---|---|
+| `caldav/` | `client_tests.rs`, `caldav_helpers.rs`, `parser_tests.rs`, `parser_edge_cases.rs`, `streaming_tests.rs`, `filter_tests.rs`, `validation_tests.rs`, `etag_tests.rs`, `scheduling_tests.rs`, `timezone_tests.rs`, `attachments_tests.rs`, `xml_helper_tests.rs` | CalDAV client, filters (RFC 4791 DTD exclusivity), iCalendar validation, scheduling (RFC 6638), timezones (RFC 4791 §5.2.2), managed attachments (RFC 8607), ETag helpers, XML building |
+| `carddav/` | `client_tests.rs`, `carddav_helpers.rs`, `parser_tests.rs`, `parser_edge_cases.rs`, `streaming_tests.rs`, `filter_tests.rs`, `prop_extraction_tests.rs`, `etag_tests.rs`, `xml_helper_tests.rs` | CardDAV client, vCard filters (RFC 6352 DTD exclusivity), property extraction, ETag helpers |
+| `webdav/` | `auth_tests.rs`, `builder_tests.rs`, `compliance_tests.rs`, `compression_probe_tests.rs`, `discovery_tests.rs`, `locking_tests.rs`, `prefer_tests.rs`, `privileges_tests.rs`, `protocol_tests.rs`, `redirect_tests.rs`, `retry_tests.rs`, `streaming_tests.rs`, `sync_tests.rs`, `sync_capability_tests.rs`, `sync_session_tests.rs`, `tracing_tests.rs`, `uri_tests.rs` | Shared WebDAV core: auth (Basic/Bearer/`TokenProvider`), builder, `DAV:` header parsing, compression negotiation, discovery, locking (RFC 4918), `Prefer` (RFC 7240), privileges (RFC 3744), redirects, retry/backoff, streaming, sync (RFC 6578) + `SyncSession`, `tracing` instrumentation, URI handling |
+| `common/` | `compression_tests.rs`, `compression_integration_tests.rs`, `error_tests.rs`, `http_helpers.rs` | Shared compression helpers, the typed `Error` enum, HTTP test helpers |
 
-- **Helpers Tests** - `caldav_helpers.rs`
-  - Calendar query builders
-  - Calendar multiget builders
-  - Sync collection builders
-  - Response mapping functions
+## Running
 
-- **Parser Tests** - `parser_tests.rs`
-  - Multistatus XML parsing
-  - Calendar property extraction
-
-- **Streaming Tests** - `streaming_tests.rs`
-  - Streaming XML parsing (if applicable)
-
-- **Integration Tests** - `integration_tests.rs`
-  - Combined functionality tests
-
-- **ETag Tests** - `etag_tests.rs`
-  - ETag header parsing and handling
-  - Conditional request helpers
-
-- **Builder Tests** - `builder_tests.rs`
-  - XML body builder edge cases
-  - Complex query construction
-
-- **XML Helper Tests** - `xml_helper_tests.rs`
-  - XML escaping utilities
-  - Unicode handling
-
-- **Parser Edge Cases** - `parser_edge_cases.rs`
-  - Malformed XML handling
-  - Performance testing
-  - Unexpected element handling
-
-### 📦 CardDAV Module Tests
-- **Client Tests** - `client_tests.rs`
-  - Client creation and URI building
-  - Depth enum values
-  - XML escaping functions
-  - XML body builders
-
-- **Helpers Tests** - `carddav_helpers.rs`
-  - Addressbook query builders
-  - Addressbook multiget builders
-  - Sync collection builders
-  - Response mapping functions
-
-- **Parser Tests** - `parser_tests.rs`
-  - Multistatus XML parsing
-  - Addressbook property extraction
-
-- **Streaming Tests** - `streaming_tests.rs`
-  - Streaming XML parsing (if applicable)
-
-- **Integration Tests** - `integration_tests.rs`
-  - Combined functionality tests
-
-- **ETag Tests** - `etag_tests.rs`
-  - ETag header parsing and handling
-  - Conditional request helpers
-
-- **XML Helper Tests** - `xml_helper_tests.rs`
-  - XML escaping utilities
-  - Unicode handling
-
-- **Parser Edge Cases** - `parser_edge_cases.rs`
-  - Malformed XML handling
-  - Performance testing
-  - Unexpected element handling
-
-### 🗜️ Common Module Tests
-- **Compression Tests** - `compression_tests.rs`
-  - Content encoding detection
-  - Header manipulation
-  - Basic compression functions
-
-- **Compression Integration Tests** - `compression_integration_tests.rs`
-  - Full compress/decompress cycles
-  - Performance with large data
-  - Multiple compression formats
-
-## Running Tests
-
-### Execute All Unit Tests
 ```bash
-cargo test --test unit_tests
+# All unit tests (preferred)
+cargo nextest run --all-features --locked --test unit_tests
+
+# One module
+cargo nextest run --test unit_tests webdav::locking_tests
+
+# One test, verbose
+cargo nextest run --test unit_tests webdav::locking_tests::test_name -- --nocapture
 ```
 
-### Execute Specific Test Module
-```bash
-# Client tests
-cargo test --test unit_tests client_tests
+## Notes
 
-# Parser tests
-cargo test --test unit_tests parser_tests
-
-# Compression tests
-cargo test --test unit_tests compression_tests
-
-# ETag tests
-cargo test --test unit_tests etag_tests
-```
-
-## Test Coverage
-
-The unit tests validate:
-- ✅ Client creation and configuration
-- ✅ URI building logic
-- ✅ XML escaping and construction
-- ✅ HTTP header handling
-- ✅ Response parsing and mapping
-- ✅ Compression/decompression
-- ✅ ETag handling
-- ✅ Error conditions
-- ✅ Edge cases
-- ✅ Performance characteristics
-- ✅ Unicode support
+- E2E tests (against live Docker fixtures) live in `tests/e2e/` — see the
+  per-fixture READMEs there and `README.md` ("End-to-End Testing").
+- Every new public API or error variant needs unit tests here, including the
+  error case; SonarCloud enforces ≥80% coverage on new code.

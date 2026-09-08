@@ -1,27 +1,60 @@
 # Contributing to fast-dav-rs
 
-Thank you for your interest in contributing to fast-dav-rs! We welcome contributions from everyone.
+Thank you for your interest in contributing to fast-dav-rs!
 
 ## Getting Started
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/goopil/fast-dav-rs.git`
+2. Clone your fork: `git clone https://github.com/Goopil/fast-dav-rs.git`
 3. Create a new branch: `git checkout -b my-feature-branch`
 4. Make your changes
-5. Test your changes: `cargo test`
-6. Commit your changes: `git commit -am "Add some feature"`
-7. Push to the branch: `git push origin my-feature-branch`
-8. Submit a pull request
+5. Run the checks below (all of them run in CI)
+6. Submit a pull request
+
+## Checks (all mandatory, same as CI)
+
+```bash
+# Formatting — must produce no diff
+cargo fmt --all --check
+
+# Lint — strict: any warning fails the build
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Unit tests (nextest; equivalent: cargo test --all-features --test unit_tests)
+cargo nextest run --all-features --locked --test unit_tests
+
+# Doc tests — every Rust snippet in README.md and the API docs must compile and run
+cargo test --doc --all-features
+
+# Examples must build
+cargo build --examples --all-features --locked
+```
+
+E2E tests run against Docker fixtures (SabreDAV, Radicale, Nextcloud) — see
+`README.md` ("End-to-End Testing") and the README in each `*-test/` directory.
+
+## Quality Gates (SonarCloud, enforced on every PR)
+
+1. **Coverage on new code ≥ 80%** — unit-test your new lines. Code reachable
+   only through e2e tests against a live DAV server is exempt; say so in the
+   PR if a gate fails for that reason.
+2. **Duplications on new code ≤ 3%** — do not copy-paste between `caldav/`
+   and `carddav/`; share logic via `webdav/` or `common/` instead.
+
+These gates must not be bypassed.
 
 ## Code Style
 
-We follow the Rust community coding standards:
-
-- Use `rustfmt` to format your code: `cargo fmt`
-- Ensure code passes `clippy`: `cargo clippy --all-targets --all-features`
-- Write clear, concise commit messages
-- Add documentation for public APIs
-- Include tests for new functionality
+- `rustfmt` + strict `clippy`, as above
+- Typed errors: use the `Error` enum in `src/error.rs`; add specific variants
+  rather than `Error::other` when a case is worth matching on
+- All public APIs need doc comments, including error conditions; doc examples
+  are doctests and must pass
+- Keep `README.md`, `AGENTS.md`, and `examples/` in sync when you add,
+  remove, or change public APIs or configuration — stale documentation is a
+  bug
+- No TODO/FIXME comments in final code
+- Write clear, concise commit messages focused on the why
 
 ## API Stability (semver)
 
@@ -36,12 +69,10 @@ Intentional breaking changes:
 
 ## Testing
 
-Before submitting a pull request, please ensure:
-
-1. All existing tests pass: `cargo test`
-2. Your changes include appropriate tests
-3. Code coverage is maintained or improved
-4. Documentation tests pass: `cargo test --doc`
+- Include tests for new functionality: happy path *and* error cases
+- Unit tests live in `tests/unit/` (per-module subdirectories)
+- E2E tests live in `tests/e2e/`, one subtree per fixture
+- Code coverage is maintained or improved
 
 ## Reporting Issues
 
@@ -54,17 +85,12 @@ Please use the GitHub issue tracker to report bugs or suggest features:
 
 ## Pull Request Process
 
-1. Ensure your code follows the style guidelines
-2. Update documentation as needed
-3. Add tests for new functionality
-4. Describe your changes in the PR description
-5. Link to any related issues
-6. Be responsive to feedback during review
-
-## Code of Conduct
-
-Please note that this project is released with a Contributor Code of Conduct. By participating in this project you agree to abide by its terms.
+1. Ensure all checks and quality gates pass
+2. Update documentation as needed (including README and examples)
+3. Describe your changes in the PR description and link related issues
+4. Be responsive to feedback during review
 
 ## Questions?
 
-Feel free to ask questions by opening an issue or reaching out to the maintainers directly.
+Open an issue on the [issue tracker](https://github.com/Goopil/fast-dav-rs/issues)
+or start a [discussion](https://github.com/Goopil/fast-dav-rs/discussions).

@@ -36,11 +36,6 @@ This library focuses on correctness and predictable behavior across CalDAV and C
 - Incremental improvements to error reporting and diagnostics.
 - API stability gated by `cargo-semver-checks` on every PR, with 1.0 to be declared once the remediation roadmap stabilizes.
 
-## Governance & Project Direction
-
-The project prioritizes correctness, performance, and a low-ceremony API. New features are welcome
-when they improve protocol compliance or compatibility without adding unnecessary abstraction.
-
 ## Versioning & Backward Compatibility
 
 This project follows Semantic Versioning. Patch releases fix bugs, minor releases add compatible
@@ -51,7 +46,6 @@ features, and major releases introduce breaking changes when needed.
 - [Why This Library?](#why-this-library)
 - [Stability & Maturity](#stability--maturity)
 - [Roadmap](#roadmap)
-- [Governance & Project Direction](#governance--project-direction)
 - [Versioning & Backward Compatibility](#versioning--backward-compatibility)
 - [Features](#features)
 - [Requirements](#requirements)
@@ -108,6 +102,9 @@ features, and major releases introduce breaking changes when needed.
 - Rust 2024 edition.
 - tokio runtime with the `macros`, `rt-multi-thread`, and `time` features.
 - Optional: Docker and Docker Compose for e2e tests.
+- The low-level APIs in some snippets on this page use `hyper` (`HeaderMap`,
+  `Method`) and `bytes` (`Bytes`) directly; `fast-dav-rs` does not re-export
+  them, so add them to your own `Cargo.toml` when you use those APIs.
 
 ## Installation
 
@@ -119,7 +116,7 @@ cargo add fast-dav-rs
 
 ### CalDAV discovery
 
-```rust
+```rust,no_run
 use fast_dav_rs::{CalDavClient, Error, Result};
 
 #[tokio::main]
@@ -148,7 +145,7 @@ async fn main() -> Result<()> {
 
 ### CardDAV discovery
 
-```rust
+```rust,no_run
 use fast_dav_rs::{CardDavClient, Error, Result};
 
 #[tokio::main]
@@ -189,8 +186,10 @@ On some providers this is the signature of a wrong username form — e.g. an
 email address where the provider expects an internal short account ID:
 
 ```rust
+# use fast_dav_rs::CalDavClient;
 use fast_dav_rs::Error;
 
+# async fn retry_guidance(client: &CalDavClient) -> fast_dav_rs::Result<()> {
 match client.discover_current_user_principal().await {
     Err(Error::PrincipalNotFound { url, .. }) => {
         eprintln!(
@@ -202,6 +201,8 @@ match client.discover_current_user_principal().await {
         other?;
     }
 }
+# Ok(())
+# }
 ```
 
 The `OPTIONS` `DAV:` compliance header (RFC 4918 §10.1) is available as a
@@ -222,8 +223,10 @@ ACEs, and an absent privilege does not prove an operation will be denied.
 Unrecognized privilege elements surface as `Privilege::Other(name)`:
 
 ```rust
+# use fast_dav_rs::CalDavClient;
 use fast_dav_rs::webdav::Privilege;
 
+# async fn check_privileges(client: &CalDavClient) -> fast_dav_rs::Result<()> {
 let privileges = client.current_user_privileges("calendars/alice/").await?;
 if privileges.contains(&Privilege::WriteContent) {
     // safe to offer editing in the UI
@@ -236,6 +239,8 @@ for privilege in &privileges {
         _ => println!("other"),
     }
 }
+# Ok(())
+# }
 ```
 
 ## Error Handling & Migration
@@ -382,17 +387,18 @@ application-level failures and `Error::with_source` to wrap an underlying cause:
 
 ```rust,no_run
 use fast_dav_rs::{CalDavClient, Depth, Error, Result};
-use fast_dav_rs::caldav::{parse_multistatus_stream_visit, DavItem};
+use fast_dav_rs::caldav::{DavItem, parse_multistatus_bytes_visit};
 
 async fn sync_calendar(client: &CalDavClient, path: &str) -> Result<()> {
-    let resp = client.report(path, Depth::One, "<body/>").await?;
+    let report_xml = r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/></D:prop></C:calendar-query>"#;
+    let resp = client.report(path, Depth::One, report_xml).await?;
 
-    parse_multistatus_stream_visit(resp.into_body(), &[], |item: DavItem| {
+    parse_multistatus_bytes_visit(&resp.into_body(), |item: DavItem| {
         // Save to a database; wrap the DB error with context.
         save_to_db(&item).map_err(|e| {
             Error::with_source(format!("failed to save {}", item.href), e)
         })
-    }).await?;
+    })?;
 
     Ok(())
 }
@@ -417,6 +423,8 @@ If your codebase uses `anyhow::Context` to add context to library errors,
 replace `.context("...")` with `.map_err(|e| Error::with_source("...", e))`:
 
 ```rust
+# use fast_dav_rs::CalDavClient;
+# async fn migrate(client: &CalDavClient) -> anyhow::Result<()> {
 // Before (anyhow)
 use anyhow::Context;
 let principal = client
@@ -432,25 +440,22 @@ let principal = client
     .await
     .map_err(|e| Error::with_source("discovery failed", e))?
     .ok_or_else(|| Error::other("no principal"))?;
+# let _ = principal;
+# Ok(())
+# }
 ```
 
 ### Complete migration example
 
-A compilable, step-by-step migration example lives in
-[`examples/migration.rs`](examples/migration.rs). It covers defining a typed
-`Error` enum with `#[from]` and `#[error(...)]`, using `?` with automatic
-conversions, replacing `anyhow!()` and `.context()`, and pattern matching on
-variants for programmatic error handling.
-
-Run it:
-
-```sh
-cargo run --example migration
-```
+The doctest below covers defining a typed `Error` enum with `#[from]` and
+`#[error(...)]`, using `?` with automatic conversions, replacing `anyhow!()`
+and `.context()`, and pattern matching on variants for programmatic error
+handling.
 
 Key patterns at a glance:
 
 ```rust
+# use std::num::ParseIntError;
 // 1. Define typed variants — #[from] for simple variants, #[source] for rich ones
 //
 // #[from] generates a From<E> impl so `?` works automatically — but only
@@ -480,6 +485,7 @@ match parse_port("abc") {
     Ok(port) => println!("port: {port}"),
     Err(AppError::InvalidPort { raw, .. }) => eprintln!("bad input: {raw}"),
     Err(AppError::OutOfRange(p)) => eprintln!("port {p} is reserved"),
+    Err(AppError::Parse(source)) => eprintln!("not a number: {source}"),
 }
 ```
 
@@ -499,6 +505,7 @@ use fast_dav_rs::caldav::streaming::parse_multistatus_stream;
 ### Request compression
 
 ```rust
+# fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::{CalDavClient, ContentEncoding};
 use fast_dav_rs::webdav::RequestCompressionMode;
 
@@ -506,6 +513,8 @@ let mut client = CalDavClient::new("https://caldav.example.com/users/alice/", No
 client.set_request_compression_mode(RequestCompressionMode::Force(ContentEncoding::Gzip));
 client.set_request_compression_mode(RequestCompressionMode::Auto);
 client.set_request_compression_mode(RequestCompressionMode::Disabled);
+# Ok(())
+# }
 ```
 
 In `Auto` mode the client sends one extra compressed `PROPFIND` probe per client
@@ -568,6 +577,7 @@ connection pool, TLS, proxy, and more:
 ### Basic auth + timeout + pool
 
 ```rust
+# fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::CalDavClient;
 use std::time::Duration;
 
@@ -577,14 +587,22 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .user_agent("MyApp/1.0")
     .pool_max_idle_per_host(10)
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 ### Bearer/OAuth 2.0 token
 
 ```rust
+# use fast_dav_rs::CalDavClient;
+# fn main() -> fast_dav_rs::Result<()> {
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .bearer_token("ya29.token...")
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 ### Base-URL credentials are rejected
@@ -607,6 +625,7 @@ refresh grant (pure HTTP — no browser flows, no provider presets; obtaining
 the initial refresh token is the caller's job):
 
 ```rust
+# fn main() -> fast_dav_rs::Result<()> {
 use std::sync::Arc;
 use fast_dav_rs::webdav::{OAuth2RefreshProvider, WebDavClient};
 
@@ -620,6 +639,9 @@ let provider = OAuth2RefreshProvider::new(
 let client = WebDavClient::builder("https://dav.example.com/")
     .token_provider(Arc::new(provider))
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 Renewal is transparent and single-flight: tokens are cached until
@@ -641,13 +663,19 @@ implementing the `TokenProvider` trait (see its docs for the exact
 Route traffic through a debugging proxy (Proxyman/Charles/mitmproxy)
 and trust its MITM CA — works on Android non-rooted and iOS/macOS alike:
 
-```rust
+```rust,no_run
+# use fast_dav_rs::CalDavClient;
+# fn main() -> fast_dav_rs::Result<()> {
+let proxy_uri: hyper::Uri = "http://127.0.0.1:9090".parse().expect("valid proxy URI");
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .basic_auth("user", "pass")
-    .proxy("http://127.0.0.1:9090")
+    .proxy(proxy_uri)
     .proxy_basic_auth("proxyuser", "proxypass")
     .extra_root_certs_pem(vec![std::fs::read("/path/proxyman-ca.pem")?])
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 ### Force HTTP/1.1
@@ -655,9 +683,14 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
 For servers or proxies that misbehave with HTTP/2:
 
 ```rust
+# use fast_dav_rs::CalDavClient;
+# fn main() -> fast_dav_rs::Result<()> {
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .force_http1(true)
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 > HTTP/2 is negotiated over **TLS via ALPN** on `https://` URLs only. Cleartext
@@ -673,6 +706,8 @@ Request-level options (auth, timeout, compression, redirects, `Prefer`,
 retries) still apply:
 
 ```rust
+# use fast_dav_rs::CalDavClient;
+# fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::common::http::MaybeProxied;
 use fast_dav_rs::webdav::{HyperClient, WebDavClient};
 use hyper_rustls::HttpsConnectorBuilder;
@@ -694,6 +729,9 @@ let hyper_client: HyperClient = Client::builder(TokioExecutor::new())
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .with_hyper_client(hyper_client)
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 The method is available on `WebDavClientBuilder`, `CalDavClientBuilder`, and
@@ -710,10 +748,15 @@ response is returned as-is so the caller can observe it. Exceeding the limit fai
 with `Error::TooManyRedirects`:
 
 ```rust
+# use fast_dav_rs::CalDavClient;
+# fn main() -> fast_dav_rs::Result<()> {
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .follow_redirects(true) // default
     .max_redirects(5)       // default
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 ### Auto-discovery (RFC 6764)
@@ -762,10 +805,15 @@ handling. The retry budget counts every HTTP attempt across the whole redirect c
 same per-request timeout:
 
 ```rust
+# use fast_dav_rs::CalDavClient;
+# fn main() -> fast_dav_rs::Result<()> {
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .max_retries(3)     // default 0 — no retry
     .retry_all(false)   // default — only idempotent methods are retried
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 ### Prefer header
@@ -781,11 +829,16 @@ the `HeaderMap` accepted by `send`/`send_stream` (an explicit per-request `Prefe
 header wins over the builder default):
 
 ```rust
+# use fast_dav_rs::CalDavClient;
+# fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::webdav::Prefer;
 
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .prefer(Some(Prefer::Minimal)) // default: none
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 ### Conditional requests (If-Match)
@@ -812,6 +865,7 @@ checks that the body is valid UTF-8, starts with `BEGIN:VCALENDAR`, ends with
 being sent:
 
 ```rust
+# fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::caldav::ValidationLevel;
 use fast_dav_rs::CalDavClient;
 
@@ -819,6 +873,9 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .validation_level(ValidationLevel::Strict) // also require UID in every VEVENT/VTODO
     // .validation_level(ValidationLevel::None) // pre-validation behavior
     .build()?;
+# let _ = client;
+# Ok(())
+# }
 ```
 
 `fast_dav_rs::caldav::validate_icalendar(&body)` runs all seven structural
@@ -868,7 +925,7 @@ tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).init();
 
 ### CalDAV event CRUD
 
-```rust
+```rust,no_run
 use fast_dav_rs::{CalDavClient, Result};
 use bytes::Bytes;
 
@@ -878,7 +935,7 @@ async fn main() -> Result<()> {
     let calendar_path = "calendars/alice/work/";
 
     let event_path = format!("{calendar_path}kickoff.ics");
-    let create = Bytes::from("BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:kickoff\nEND:VEVENT\nEND:VCALENDAR\n");
+    let create = Bytes::from("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//example//EN\nBEGIN:VEVENT\nUID:kickoff\nEND:VEVENT\nEND:VCALENDAR\n");
     client.put_if_none_match(&event_path, create).await?;
 
     let events = client
@@ -887,7 +944,7 @@ async fn main() -> Result<()> {
 
     if let Some(event) = events.first() {
         if let Some(etag) = &event.etag {
-            let updated = Bytes::from("BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:kickoff\nSUMMARY:Updated\nEND:VEVENT\nEND:VCALENDAR\n");
+            let updated = Bytes::from("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//example//EN\nBEGIN:VEVENT\nUID:kickoff\nSUMMARY:Updated\nEND:VEVENT\nEND:VCALENDAR\n");
             client.put_if_match(&event.href, updated, etag).await?;
         }
     }
@@ -930,7 +987,7 @@ Server support:
 
 ### CalDAV scheduling (RFC 6638)
 
-```rust
+```rust,no_run
 use fast_dav_rs::{CalDavClient, Result};
 use bytes::Bytes;
 
@@ -978,7 +1035,7 @@ async fn main() -> Result<()> {
 
 ### CardDAV contact CRUD
 
-```rust
+```rust,no_run
 use fast_dav_rs::{CardDavClient, Result};
 use bytes::Bytes;
 
@@ -1139,7 +1196,7 @@ async fn edit_shared_doc(client: &CalDavClient) -> Result<()> {
 
     // Write while holding the lock: the token goes in an If header.
     let mut headers = hyper::HeaderMap::new();
-    headers.insert("If", format!("(<{}>)", lock.token).parse().unwrap());
+    headers.insert("If", format!("(<{}>)", lock.token).parse().expect("valid coded-URL token"));
     client
         .send(
             hyper::Method::PUT,
@@ -1181,14 +1238,14 @@ async fn sync(client: &CalDavClient) -> Result<()> {
 
 ### CalDAV streaming example
 
-```rust
+```rust,no_run
 use fast_dav_rs::{CalDavClient, Depth, Result, detect_encoding};
 use fast_dav_rs::caldav::parse_multistatus_stream;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
-    let propfind_xml = r#"<D:propfind xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"><D:prop><D:getetag/><C:calendar-data/></D:prop></D:propfind>"#;
+    let propfind_xml = r#"<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/><C:calendar-data/></D:prop></D:propfind>"#;
 
     let response = client.propfind_stream("calendars/alice/work/", Depth::One, propfind_xml).await?;
     let encoding = detect_encoding(response.headers());
@@ -1206,14 +1263,14 @@ async fn main() -> Result<()> {
 
 ### CardDAV streaming example
 
-```rust
+```rust,no_run
 use fast_dav_rs::{CardDavClient, Depth, Result, detect_encoding};
 use fast_dav_rs::carddav::parse_multistatus_stream;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = CardDavClient::new("https://carddav.example.com/users/alice/", None, None)?;
-    let report_xml = r#"<C:addressbook-query xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:carddav\"><D:prop><D:getetag/><C:address-data/></D:prop></C:addressbook-query>"#;
+    let report_xml = r#"<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:prop><D:getetag/><C:address-data/></D:prop></C:addressbook-query>"#;
 
     let response = client.report_stream("addressbooks/alice/team/", Depth::One, report_xml).await?;
     let encoding = detect_encoding(response.headers());
@@ -1231,7 +1288,7 @@ async fn main() -> Result<()> {
 
 ## Batch Operations
 
-```rust
+```rust,no_run
 use fast_dav_rs::{CalDavClient, Depth, Result};
 use bytes::Bytes;
 use std::sync::Arc;
@@ -1241,7 +1298,7 @@ async fn main() -> Result<()> {
     let client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
     let paths = vec!["calendars/alice/work/".to_string(), "calendars/alice/home/".to_string()];
 
-    let body = Arc::new(Bytes::from(r#"<D:propfind xmlns:D=\"DAV:\"><D:prop><D:displayname/></D:prop></D:propfind>"#));
+    let body = Arc::new(Bytes::from(r#"<D:propfind xmlns:D="DAV:"><D:prop><D:displayname/></D:prop></D:propfind>"#));
     let results = client.propfind_many(paths, Depth::Zero, body, 4).await;
 
     for item in results {
@@ -1281,8 +1338,14 @@ under `sabredav-test/`, `radicale-test/`, and `nextcloud-test/`.
 ## Testing
 
 ```bash
-cargo test --all-features
-cargo test --doc
+# Unit tests (nextest; equivalent: cargo test --all-features --test unit_tests)
+cargo nextest run --all-features --locked --test unit_tests
+
+# Doc tests — compile and run every Rust snippet on this page
+cargo test --doc --all-features
+
+# E2E — bring the fixture up first (see End-to-End Testing below)
+./sabredav-test/setup.sh
 ./run-e2e-tests.sh
 ```
 
