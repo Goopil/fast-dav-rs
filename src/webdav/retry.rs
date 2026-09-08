@@ -134,11 +134,28 @@ pub fn parse_http_date(value: &str) -> Option<i64> {
     let h: i64 = hms.next()?.parse().ok()?;
     let m: i64 = hms.next()?.parse().ok()?;
     let s: i64 = hms.next()?.parse().ok()?;
-    if !(1..=31).contains(&day) || h > 23 || m > 59 || s > 59 {
+    if day < 1 || day > days_in_month(year, month) || h > 23 || m > 59 || s > 59 {
         return None;
     }
     let days = days_from_civil(year, month, day);
     Some(days * 86_400 + h * 3_600 + m * 60 + s)
+}
+
+/// Number of days in `month` of `year` (proleptic Gregorian, leap-year rule
+/// incl. the ÷100/÷400 exceptions). `month` must be 1–12.
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 0,
+    }
 }
 
 /// Days since 1970-01-01 for a proleptic Gregorian date

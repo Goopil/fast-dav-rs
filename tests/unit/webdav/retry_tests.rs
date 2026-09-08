@@ -131,6 +131,28 @@ fn retry_after_http_date_is_parsed() {
     assert_eq!(parse_http_date("06 Nov 2020 25:00:00 GMT"), None);
 }
 
+#[test]
+fn parse_http_date_rejects_impossible_day_of_month() {
+    // Feb 31 does not exist: None (caller falls back to backoff) instead of
+    // a wrong delay.
+    assert_eq!(parse_http_date("Tue, 31 Feb 2026 00:00:00 GMT"), None);
+    // Feb 29 outside a leap year.
+    assert_eq!(parse_http_date("Sat, 29 Feb 2025 00:00:00 GMT"), None);
+    // The century rule: 1900 is not a leap year, 2000 is.
+    assert_eq!(parse_http_date("Wed, 29 Feb 1900 00:00:00 GMT"), None);
+    assert_eq!(
+        parse_http_date("Tue, 29 Feb 2000 00:00:00 GMT"),
+        Some(951_782_400)
+    );
+    // Real leap years keep Feb 29.
+    assert_eq!(
+        parse_http_date("Mon, 29 Feb 2016 12:00:00 GMT"),
+        Some(1_456_747_200)
+    );
+    // 30-day months reject day 31.
+    assert_eq!(parse_http_date("31 Apr 2026 00:00:00 GMT"), None);
+}
+
 // ---------------------------------------------------------------------------
 // Retry delay policy (`retry_delay`)
 // ---------------------------------------------------------------------------
