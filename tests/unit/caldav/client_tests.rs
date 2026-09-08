@@ -110,6 +110,66 @@ async fn free_busy_query_parses_bare_text_calendar_body() {
 }
 
 #[tokio::test]
+async fn free_busy_query_unfolds_folded_freebusy_lines() {
+    // RFC 5545 §3.1: a continuation line inside a period value must be
+    // joined, not lose (or truncate) the period.
+    let ical = "BEGIN:VCALENDAR\r\nBEGIN:VFREEBUSY\r\n\
+        FREEBUSY;FBTYPE=BUSY:20260908T090000Z/20260908T1\r\n 00000Z\r\n\
+        END:VFREEBUSY\r\nEND:VCALENDAR\r\n";
+    let (base, _captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head(
+            "Content-Type: text/calendar;charset=UTF-8\r\n",
+            ical.len(),
+        ),
+        ical.as_bytes().to_vec(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let periods = client
+        .free_busy_query("cal/", "20260908T000000Z", "20260909T000000Z")
+        .await
+        .unwrap();
+
+    assert_eq!(periods.len(), 1);
+    assert_eq!(periods[0].fb_type, FreeBusyType::Busy);
+    assert_eq!(periods[0].start, "20260908T090000Z");
+    assert_eq!(periods[0].end, "20260908T100000Z");
+}
+
+#[tokio::test]
+async fn free_busy_query_splits_params_outside_quoted_values() {
+    // A quoted parameter value may contain ':' (RFC 5545 quoted-string); the
+    // params/value split must happen at the first ':' outside quotes. An
+    // unrecognized quoted FBTYPE still skips the line's periods.
+    let ical = "BEGIN:VCALENDAR\r\nBEGIN:VFREEBUSY\r\n\
+        FREEBUSY;X-NOTE=\"a:b\";FBTYPE=BUSY:19970105T100000Z/19970105T120000Z\r\n\
+        FREEBUSY;FBTYPE=\"a:b\":19970105T130000Z/19970105T140000Z\r\n\
+        END:VFREEBUSY\r\nEND:VCALENDAR\r\n";
+    let (base, _captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head(
+            "Content-Type: text/calendar;charset=UTF-8\r\n",
+            ical.len(),
+        ),
+        ical.as_bytes().to_vec(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let periods = client
+        .free_busy_query("cal/", "19970101T000000Z", "19970201T000000Z")
+        .await
+        .unwrap();
+
+    assert_eq!(periods.len(), 1);
+    assert_eq!(periods[0].fb_type, FreeBusyType::Busy);
+    assert_eq!(periods[0].start, "19970105T100000Z");
+    assert_eq!(periods[0].end, "19970105T120000Z");
+}
+
+#[tokio::test]
 async fn free_busy_query_rejects_invalid_start() {
     let client = CalDavClient::new("https://example.com/dav/", None, None).unwrap();
     let err = client
