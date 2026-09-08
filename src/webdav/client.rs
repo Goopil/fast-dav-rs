@@ -1628,8 +1628,10 @@ impl WebDavClient {
             .chars()
             .all(|c| c.is_ascii_graphic() && !matches!(c, '<' | '>' | '(' | ')'))
         {
+            // The token may be sensitive; echo only a short prefix.
+            let shown: String = token.chars().take(8).collect();
             return Err(Error::InvalidInput(format!(
-                "lock token contains characters invalid in a Coded-URL (RFC 4918 §10.5): {token:?}"
+                "lock token contains characters invalid in a Coded-URL (RFC 4918 §10.5): {shown}…"
             )));
         }
         Ok(())
