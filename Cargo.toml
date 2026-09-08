@@ -44,6 +44,10 @@ chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 # Parsing stays caller-side (see examples/sync_loop.rs); parser-only, no chrono-tz.
 icalendar = { version = "0.17", default-features = false, features = ["parser"] }
+# Benchmarks (PERFORMANCE.md §5): criterion drives the benches, the extra
+# hyper `server` feature powers the in-process DAV fixture (no network).
+criterion = { version = "0.7", features = ["async_tokio"] }
+hyper = { version = "1", features = ["server"] }
 
 [[test]]
 name = "unit_tests"
@@ -64,6 +68,10 @@ path = "tests/e2e/nextcloud/mod.rs"
 [[test]]
 name = "e2e_provider_a_smoke"
 path = "tests/e2e/provider_a/mod.rs"
+
+[[bench]]
+name = "performance"
+harness = false
 
 [features]
 default = []
