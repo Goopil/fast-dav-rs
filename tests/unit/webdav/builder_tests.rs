@@ -187,6 +187,34 @@ fn builder_timeout_zero_errors() {
 }
 
 #[test]
+fn builder_connect_timeout_zero_errors() {
+    let Err(err) = WebDavClient::builder(BASE)
+        .connect_timeout(Duration::ZERO)
+        .build()
+    else {
+        panic!("connect_timeout ZERO must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("connect_timeout")),
+        "should be InvalidConfig mentioning connect_timeout, got: {err}"
+    );
+}
+
+#[test]
+fn builder_pool_idle_timeout_zero_errors() {
+    let Err(err) = WebDavClient::builder(BASE)
+        .pool_idle_timeout(Duration::ZERO)
+        .build()
+    else {
+        panic!("pool_idle_timeout ZERO must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("pool_idle_timeout")),
+        "should be InvalidConfig mentioning pool_idle_timeout, got: {err}"
+    );
+}
+
+#[test]
 fn builder_pool_zero_errors() {
     assert!(
         WebDavClient::builder(BASE)
