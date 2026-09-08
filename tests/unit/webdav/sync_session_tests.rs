@@ -3,6 +3,7 @@
 //! paths of the DAVx⁵ algorithm.
 
 use fast_dav_rs::{CalDavClient, RequestCompressionMode, WebDavClient};
+use hyper::StatusCode;
 
 use crate::common::http_helpers::{response_head, serve_sequence};
 
@@ -383,25 +384,74 @@ async fn sync_session_fallback_error_status_member_is_neither_deleted_nor_added(
 }
 
 #[tokio::test]
-async fn sync_session_403_during_sync_downgrades_to_fallback() {
-    // The probe confirms support, but the incremental report is rejected
-    // with a plain 403 (e.g. report-not-supported): the session must
-    // permanently downgrade to the full-list path.
+async fn sync_session_bare_403_propagates_without_pinning_capability() {
+    // A bare 403 (no valid-sync-token precondition) is often transient
+    // (ACL flap): it must propagate as an error WITHOUT pinning the
+    // capability to Unsupported — the next call re-attempts the
+    // sync-collection report instead of silently degrading to PROPFIND.
     let (base, captured) = serve_sequence(vec![
         multistatus_response(SYNC_SUPPORTED_PROPFIND),
         multistatus_response(INITIAL_BODY),
         report_not_supported_403(),
+        multistatus_response(DELTA_BODY),
+    ])
+    .await;
+    let session = make_client(&base).sync_session("cal/");
+
+    session.initial().await.unwrap();
+
+    let err = session
+        .incremental()
+        .await
+        .expect_err("a bare 403 must propagate");
+    assert!(
+        matches!(
+            err,
+            fast_dav_rs::Error::UnexpectedStatus {
+                status: StatusCode::FORBIDDEN,
+                ..
+            }
+        ),
+        "the 403 must surface unchanged: {err}"
+    );
+
+    // Capability not pinned: the retry is a sync-collection REPORT (which
+    // now succeeds against the healthy mock), not the PROPFIND fallback.
+    let delta = session.incremental().await.unwrap();
+    assert_eq!(delta.added.len(), 1);
+    assert_eq!(delta.added[0].href, "/cal/c.ics");
+    assert_eq!(delta.deleted, vec!["/cal/a.ics".to_string()]);
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 4, "probe + initial + 403 + retry report");
+    let retry = String::from_utf8_lossy(&reqs[3]);
+    assert!(
+        retry.contains("<D:sync-collection")
+            && retry.contains("<D:sync-token>token-2</D:sync-token>"),
+        "the retry must re-attempt sync-collection, not the fallback: {retry}"
+    );
+}
+
+#[tokio::test]
+async fn sync_session_405_report_downgrades_to_fallback() {
+    // A 405 means REPORT is not implemented at all — a deterministic
+    // rejection: the session pins Unsupported and takes the full-list path
+    // for its lifetime.
+    const NOT_ALLOWED_405: &str =
+        "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(SYNC_SUPPORTED_PROPFIND),
+        multistatus_response(INITIAL_BODY),
+        (NOT_ALLOWED_405.to_string(), Vec::new()),
         multistatus_response(LIST_AC),
         multistatus_response(LIST_AC),
     ])
     .await;
     let session = make_client(&base).sync_session("cal/");
 
-    let snapshot = session.initial().await.unwrap();
-    assert_eq!(snapshot.sync_token.as_deref(), Some("token-2"));
+    session.initial().await.unwrap();
 
     let delta = session.incremental().await.unwrap();
-    assert!(!delta.resynced);
     assert_eq!(
         delta
             .added
@@ -417,7 +467,7 @@ async fn sync_session_403_during_sync_downgrades_to_fallback() {
     assert!(next.added.is_empty() && next.modified.is_empty() && next.deleted.is_empty());
 
     let reqs = captured.lock().unwrap();
-    assert_eq!(reqs.len(), 5, "probe + initial + 403 + two PROPFINDs");
+    assert_eq!(reqs.len(), 5, "probe + initial + 405 + two PROPFINDs");
     let second_propfind = String::from_utf8_lossy(&reqs[4]);
     assert!(
         second_propfind.starts_with("PROPFIND"),

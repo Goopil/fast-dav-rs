@@ -159,9 +159,11 @@ struct SessionState {
 /// 2. `sync-collection` REPORTs while the server supports them (507
 ///    result-set truncation is continued with the page token; a truncation
 ///    that cannot be continued fails with [`Error::SyncIncomplete`]);
-/// 3. on an unsupported server — or one that rejects the report with `403`/
+/// 3. on an unsupported server — or one that rejects the report with
 ///    `405` — fall back transparently to `PROPFIND Depth: 1` + etag diff,
 ///    fetching content for changed members via batched multiget REPORTs;
+///    a bare `403` (e.g. a transient ACL denial) propagates instead of
+///    downgrading, so the next call re-attempts `sync-collection`;
 /// 4. a stale token (`410 Gone`, `403` + `valid-sync-token`) resets to a
 ///    full initial sync flagged `resynced`;
 /// 5. conflicts: the server wins.
@@ -274,7 +276,9 @@ impl SyncSession {
     ///
     /// # Errors
     ///
-    /// Propagates the underlying report/PROPFIND error.
+    /// Propagates the underlying report/PROPFIND error. Like
+    /// [`incremental`](Self::incremental), a bare `403` propagates without
+    /// downgrading the session; only a `405` pins the fallback.
     pub async fn initial(&self) -> Result<SyncSnapshot> {
         if self.capability().await != SyncCapability::Unsupported {
             match self.sync_snapshot().await {
@@ -307,7 +311,11 @@ impl SyncSession {
     ///
     /// # Errors
     ///
-    /// Propagates the underlying report/PROPFIND error.
+    /// Propagates the underlying report/PROPFIND error. A bare `403` from
+    /// the sync-collection report propagates without changing the session:
+    /// the next call re-attempts `sync-collection`. Only a `405` (REPORT
+    /// not implemented) pins the capability to `Unsupported` for the
+    /// session's lifetime and switches to the full-list fallback.
     pub async fn incremental(&self) -> Result<SyncDelta> {
         if self.capability().await != SyncCapability::Unsupported {
             match self.sync_collection_delta().await {
@@ -333,14 +341,23 @@ impl SyncSession {
         cap
     }
 
-    /// A `403`/`405` from the sync-collection report means the server does
-    /// not honor the report (despite the probe, or after a retry): pin the
-    /// capability to `Unsupported` and take the full-list path.
+    /// A `405` from the sync-collection report means the server does not
+    /// implement the REPORT method at all — a deterministic rejection — so
+    /// pin the capability to `Unsupported` and take the full-list path.
+    ///
+    /// A bare `403` is deliberately *not* a downgrade signal: it is
+    /// frequently transient (an ACL flap, a temporary denial), and pinning
+    /// `Unsupported` on it would silently route every future sync through
+    /// the slow full-list path. The error propagates instead and the next
+    /// call re-attempts `sync-collection`. A `403` carrying the
+    /// `valid-sync-token` precondition never reaches this method as a bare
+    /// status: `WebDavClient::sync_collection_resilient_report` consumes it
+    /// as a stale-token signal and retries internally.
     fn downgrade_on_rejected_report(&self, err: &Error) -> bool {
         let rejected = matches!(
             err,
             Error::UnexpectedStatus {
-                status: StatusCode::FORBIDDEN | StatusCode::METHOD_NOT_ALLOWED,
+                status: StatusCode::METHOD_NOT_ALLOWED,
                 ..
             }
         );

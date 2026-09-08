@@ -37,10 +37,13 @@ above into a per-collection, in-memory state machine — the DAVx⁵ approach:
    result-set truncation is continued with the page token, and a truncation
    that cannot be continued (no new token, or a repeated token) fails with
    `Error::SyncIncomplete` instead of surfacing a partial delta;
-3. on an unsupported server (or one that rejects the report with `403`/`405`)
-   it falls back transparently to a `PROPFIND Depth: 1` etag diff, fetching
+3. on an unsupported server (or one that rejects the report with `405`) it
+   falls back transparently to a `PROPFIND Depth: 1` etag diff, fetching
    content for changed members via batched `calendar-multiget` /
-   `addressbook-multiget` REPORTs (CalDAV/CardDAV sessions);
+   `addressbook-multiget` REPORTs (CalDAV/CardDAV sessions); a bare `403`
+   propagates as an error instead of downgrading (a transient ACL flap must
+   not silently pin the session to the slow path — the next call re-attempts
+   `sync-collection`);
 4. a stale token — `410 Gone`, or `403` + `valid-sync-token` as observed on
    Radicale — resets the session transparently to a full initial sync,
    flagged `resynced == true` (rebuild caches; per RFC 6578 §3.4 the delta
