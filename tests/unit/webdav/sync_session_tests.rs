@@ -509,6 +509,153 @@ async fn sync_session_caldav_fallback_fetches_content_via_multiget() {
 }
 
 #[tokio::test]
+async fn sync_session_caldav_fallback_multiget_rejected_member_is_excluded_this_pass() {
+    // Full listing: a changed (etag-a2), b unchanged, c added.
+    const LIST_ABC2: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:propstat>
+      <D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a2"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-b1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/c.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-c1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    const MULTIGET_AB: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-a1"</D:getetag>
+        <C:calendar-data>BEGIN:VCALENDAR...a1</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-b1"</D:getetag>
+        <C:calendar-data>BEGIN:VCALENDAR...b1</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    // The multiget echoes a with a 404 (deleted between the listing and the
+    // content fetch) and serves c normally.
+    const MULTIGET_C_A404: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/c.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-c1"</D:getetag>
+        <C:calendar-data>BEGIN:VCALENDAR...c1</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:status>HTTP/1.1 404 Not Found</D:status>
+  </D:response>
+</D:multistatus>"#;
+
+    const MULTIGET_A_OK: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-a2"</D:getetag>
+        <C:calendar-data>BEGIN:VCALENDAR...a2</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(PLAIN_PROPFIND),
+        report_not_supported_403(),
+        multistatus_response(LIST_AB),
+        multistatus_response(MULTIGET_AB),
+        multistatus_response(LIST_ABC2),
+        multistatus_response(MULTIGET_C_A404),
+        multistatus_response(LIST_ABC2),
+        multistatus_response(MULTIGET_A_OK),
+    ])
+    .await;
+    let session = make_caldav_client(&base).sync_session("cal/");
+
+    session.initial().await.unwrap();
+
+    // a changed and c is new; the multiget answers a with 404: a must be
+    // excluded from the delta this pass (not reported modified with a
+    // silent data=None), c delivered normally, nothing deleted.
+    let delta = session.incremental().await.unwrap();
+    assert_eq!(
+        delta
+            .added
+            .iter()
+            .map(|e| e.href.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/cal/c.ics"]
+    );
+    assert_eq!(delta.added[0].data.as_deref(), Some("BEGIN:VCALENDAR...c1"));
+    assert!(
+        delta.modified.is_empty(),
+        "a multiget-404 member must not be reported modified: {delta:?}"
+    );
+    assert!(delta.deleted.is_empty());
+
+    // a keeps its previous state entry: the next pass re-classifies it as
+    // modified and delivers it once the multiget answers.
+    let next = session.incremental().await.unwrap();
+    assert!(next.added.is_empty() && next.deleted.is_empty());
+    assert_eq!(
+        next.modified
+            .iter()
+            .map(|e| e.href.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/cal/a.ics"]
+    );
+    assert_eq!(
+        next.modified[0].data.as_deref(),
+        Some("BEGIN:VCALENDAR...a2")
+    );
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 8, "probe x2 + 2x (PROPFIND + multiget)");
+}
+
+#[tokio::test]
 async fn sync_session_caldav_fallback_propagates_multiget_failure() {
     let (base, _captured) = serve_sequence(vec![
         multistatus_response(PLAIN_PROPFIND),

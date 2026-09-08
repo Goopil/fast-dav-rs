@@ -451,7 +451,7 @@ impl SyncSession {
         items.sort_by(|a, b| a.href.cmp(&b.href));
         if let Some(spec) = self.data {
             let hrefs: Vec<String> = items.iter().map(|e| e.href.clone()).collect();
-            let data = self.multiget_data(&hrefs, spec).await?;
+            let (data, _skipped) = self.multiget_data(&hrefs, spec).await?;
             for item in &mut items {
                 item.data = data.get(&item.href).cloned();
             }
@@ -473,7 +473,7 @@ impl SyncSession {
     async fn propfind_delta(&self) -> Result<SyncDelta> {
         let (current, unknown) = self.propfind_state().await?;
         let prev = self.state.lock().prev.clone();
-        let diff = diff_maps(&prev, &current, &unknown);
+        let mut diff = diff_maps(&prev, &current, &unknown);
         let (mut added, mut modified) = (diff.added, diff.modified);
         let deleted = diff.deleted;
         if let Some(spec) = self.data {
@@ -483,9 +483,24 @@ impl SyncSession {
                 .map(|entry| entry.href.clone())
                 .collect();
             if !hrefs.is_empty() {
-                let data = self.multiget_data(&hrefs, spec).await?;
+                let (data, skipped) = self.multiget_data(&hrefs, spec).await?;
                 for entry in added.iter_mut().chain(modified.iter_mut()) {
                     entry.data = data.get(&entry.href).cloned();
+                }
+                // Members the multiget rejected are unknown this pass too:
+                // drop them from the delta and restore their previous
+                // state-map entry so a later pass re-classifies them.
+                for href in skipped {
+                    added.retain(|entry| entry.href != href);
+                    modified.retain(|entry| entry.href != href);
+                    match prev.as_ref().and_then(|map| map.get(&href)) {
+                        Some(old) => {
+                            diff.next.insert(href, old.clone());
+                        }
+                        None => {
+                            diff.next.remove(&href);
+                        }
+                    }
                 }
             }
         }
@@ -545,11 +560,15 @@ impl SyncSession {
     /// Fetch resource bodies for `hrefs` via batched multiget REPORTs
     /// (chunked, concurrency-bounded). Any failed chunk fails the call so
     /// the session state stays unchanged and the caller can retry cleanly.
+    /// Members echoed with an error status (4xx/5xx inside the 207)
+    /// contribute no data and are returned in the skipped set so the
+    /// caller can exclude them from the delta this pass (they keep their
+    /// session-state entry for a later pass).
     async fn multiget_data(
         &self,
         hrefs: &[String],
         spec: SyncDataSpec,
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<(HashMap<String, String>, HashSet<String>)> {
         let requests: Vec<(String, Arc<Bytes>)> = hrefs
             .chunks(MULTIGET_BATCH_SIZE)
             .filter_map(|chunk| {
@@ -565,7 +584,7 @@ impl SyncSession {
             })
             .collect();
         if requests.is_empty() {
-            return Ok(HashMap::new());
+            return Ok((HashMap::new(), HashSet::new()));
         }
 
         let batches = self
@@ -573,6 +592,7 @@ impl SyncSession {
             .report_many_bodies(requests, MULTIGET_CONCURRENCY)
             .await;
         let mut out = HashMap::new();
+        let mut skipped = HashSet::new();
         for batch in batches {
             let resp = batch.result?;
             if !resp.status().is_success() {
@@ -583,6 +603,10 @@ impl SyncSession {
             }
             let parsed = parse_multistatus_bytes(resp.body())?;
             for item in parsed.items {
+                if has_error_status(item.status.as_deref()) {
+                    skipped.insert(item.href);
+                    continue;
+                }
                 if let Some(data) = item.calendar_data.or(item.address_data) {
                     if !item.href.is_empty() {
                         out.insert(item.href, data);
@@ -590,7 +614,7 @@ impl SyncSession {
                 }
             }
         }
-        Ok(out)
+        Ok((out, skipped))
     }
 }
 
