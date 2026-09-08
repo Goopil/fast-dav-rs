@@ -1192,6 +1192,14 @@ impl WebDavClient {
                 // (RFC 9110 §13.1.1) and must not leak to a new origin.
                 base_headers.remove(header::IF_MATCH);
                 base_headers.remove(header::IF_NONE_MATCH);
+                // WebDAV capability/scheduling headers carry origin-bound
+                // values: `Lock-Token` is a bearer capability URL,
+                // `Destination` an internal URL, `If-Schedule-Tag-Match` a
+                // scheduling validator — none of the target origin's
+                // business.
+                base_headers.remove("Lock-Token");
+                base_headers.remove("Destination");
+                base_headers.remove("If-Schedule-Tag-Match");
             }
             if resp.status() == StatusCode::SEE_OTHER {
                 method = Method::GET;

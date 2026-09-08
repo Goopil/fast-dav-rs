@@ -542,6 +542,55 @@ async fn absolute_url_cross_origin_omits_authorization() {
 }
 
 #[tokio::test]
+async fn redirect_cross_origin_strips_webdav_capability_headers() {
+    // Destination server: answers 200 and captures the redirected request.
+    let ok_body = b"ok".to_vec();
+    let (target_base, captured_b) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", ok_body.len()),
+        ok_body,
+    )
+    .await;
+
+    // Origin server: redirects (absolute URL) to the destination server.
+    let location = format!("{target_base}target");
+    let (origin_base, _captured_a) = crate::common::http_helpers::serve_capture(
+        redirect_head(REDIRECT_307, &location),
+        Vec::new(),
+    )
+    .await;
+
+    let client = WebDavClient::builder(&origin_base).build().unwrap();
+    client.set_request_compression_mode(fast_dav_rs::RequestCompressionMode::Disabled);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Lock-Token", "<opaquelocktoken:xyz>".parse().unwrap());
+    headers.insert("Destination", "http://127.0.0.1:1/dest".parse().unwrap());
+    headers.insert("If-Schedule-Tag-Match", "\"sched-tag\"".parse().unwrap());
+
+    let resp = client
+        .send(Method::POST, "", headers, None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let guard = captured_b.lock().unwrap();
+    let second = String::from_utf8_lossy(&guard);
+    let lower = second.to_ascii_lowercase();
+    assert!(
+        !lower.contains("lock-token:"),
+        "Lock-Token (a bearer capability URL) must not leak across origins: {second}"
+    );
+    assert!(
+        !lower.contains("destination:"),
+        "Destination (an internal URL) must not leak across origins: {second}"
+    );
+    assert!(
+        !lower.contains("if-schedule-tag-match:"),
+        "If-Schedule-Tag-Match must not leak across origins: {second}"
+    );
+}
+
+#[tokio::test]
 async fn redirect_follow_disabled_returns_redirect_response() {
     let location = "http://127.0.0.1:1/never-requested/";
     let (base, captured) = crate::common::http_helpers::serve_capture(
