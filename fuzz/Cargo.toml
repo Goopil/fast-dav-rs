@@ -1,0 +1,34 @@
+[package]
+name = "fast-dav-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+fast-dav-rs = { path = ".." }
+hyper = { version = "1", default-features = false }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "multistatus_xml"
+path = "fuzz_targets/multistatus_xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sync_response"
+path = "fuzz_targets/sync_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "uri_etag"
+path = "fuzz_targets/uri_etag.rs"
+test = false
+doc = false
+bench = false
