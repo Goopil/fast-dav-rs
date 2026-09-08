@@ -9,7 +9,9 @@
 //! automatically when a hop crosses origins. With `follow_redirects(false)`
 //! — or when a `Location` cannot be resolved or would downgrade https→http
 //! — the probe returns the 3xx and discovery fails with a descriptive
-//! error.
+//! error. With `require_https(true)` on the client, a redirect whose target
+//! is not `https://` fails the probe with
+//! [`Error::InvalidInput`](crate::Error::InvalidInput).
 //!
 //! DNS SRV record lookup (RFC 6764 §3/§6 step 2) is not implemented — the
 //! caller supplies the base URL.

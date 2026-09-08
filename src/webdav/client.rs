@@ -15,11 +15,8 @@ use crate::common::compression::{
     detect_encodings, detect_request_compression_preference,
 };
 use crate::common::http::HyperClient;
-use crate::common::{dav_debug, dav_trace};
-// Only referenced inside `dav_debug!` arguments, which compile out without
-// the `tracing` feature.
-#[cfg(feature = "tracing")]
 use crate::common::redact_userinfo;
+use crate::common::{dav_debug, dav_trace};
 use crate::error::EtagReason;
 use crate::webdav::auth::TokenProvider;
 use crate::webdav::builder::WebDavClientBuilder;
@@ -413,6 +410,35 @@ pub fn is_https_to_http_downgrade(current: &Uri, next: &Uri) -> bool {
     next.scheme_str() == Some("http") && current.scheme_str() == Some("https")
 }
 
+/// True when the `require_https` policy forbids following a redirect to
+/// `next`: the target scheme is not `https` (a downgrade like https→http,
+/// or any other non-https target). Only consulted when the client was built
+/// with `require_https(true)`; the shared validation point in
+/// `build_and_send` covers every redirect consumer, discovery included.
+#[doc(hidden)]
+pub fn redirect_target_not_https(next: &Uri) -> bool {
+    next.scheme_str() != Some("https")
+}
+
+/// Enforce the `require_https` redirect policy (opt-in, issue #200):
+/// with the flag on, a redirect whose target is not `https://` is rejected
+/// as [`Error::InvalidInput`](crate::Error::InvalidInput); with the flag
+/// off, every target is allowed. Pure so the full policy — including the
+/// error construction — is unit-testable without a live TLS server; called
+/// from the shared validation point in `build_and_send`, which covers every
+/// redirect consumer, discovery included.
+#[doc(hidden)]
+pub fn ensure_redirect_allowed(require_https: bool, target: &Uri) -> Result<()> {
+    if require_https && redirect_target_not_https(target) {
+        return Err(Error::InvalidInput(format!(
+            "require_https is enabled; refusing to follow redirect to \
+             non-https target `{}`",
+            redact_userinfo(target)
+        )));
+    }
+    Ok(())
+}
+
 fn normalize_decompressed_headers(
     headers: &mut HeaderMap,
     encodings: &[ContentEncoding],
@@ -458,6 +484,10 @@ pub struct WebDavClient {
     request_compression_probe: Arc<Mutex<()>>,
     /// Whether HTTP redirects (301/302/303/307/308) are followed.
     follow_redirects: bool,
+    /// When `true` (opt-in via the builder's `require_https(true)`), the
+    /// base URL must be `https://` and any redirect whose target is not
+    /// `https://` is rejected instead of followed.
+    require_https: bool,
     /// Maximum number of redirects to follow before failing with
     /// [`Error::TooManyRedirects`](crate::Error::TooManyRedirects).
     max_redirects: u8,
@@ -533,6 +563,7 @@ impl WebDavClient {
         request_compression_mode: RequestCompressionMode,
         follow_redirects: bool,
         max_redirects: u8,
+        require_https: bool,
         prefer: Option<Prefer>,
         max_retries: usize,
         retry_all: bool,
@@ -551,6 +582,7 @@ impl WebDavClient {
             request_compression_probe: Arc::new(Mutex::new(())),
             follow_redirects,
             max_redirects,
+            require_https,
             prefer,
             max_retries,
             retry_all,
@@ -926,7 +958,9 @@ impl WebDavClient {
     /// remainder of the chain. An `https`→`http` downgrade is **never**
     /// followed (RFC 6764 §6 is TLS-first): the 3xx response is returned
     /// as-is so the caller can observe it, mirroring the
-    /// unresolvable-`Location` behavior.
+    /// unresolvable-`Location` behavior. With `require_https(true)` the
+    /// policy is stricter: any redirect whose target is not `https://`
+    /// fails the request with [`Error::InvalidInput`](crate::Error::InvalidInput).
     ///
     /// Transient-failure retry (429/503/504): when `max_retries` > 0 and the
     /// method is retryable per the idempotency policy, the request is re-sent
@@ -1125,6 +1159,12 @@ impl WebDavClient {
             let Some(next) = next else {
                 return Ok((uri, resp));
             };
+
+            // `require_https` policy (opt-in): a redirect whose target is
+            // not `https://` is rejected as a hard error instead of being
+            // followed. Discovery routes through this same pipeline, so
+            // this single guard covers every redirect consumer.
+            ensure_redirect_allowed(self.require_https, &next)?;
 
             // Never follow an https→http downgrade (RFC 6764 §6 is
             // TLS-first): return the 3xx so the caller observes the redirect

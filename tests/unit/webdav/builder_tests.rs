@@ -101,6 +101,65 @@ fn builder_rejects_userinfo_carddav() {
 }
 
 #[test]
+fn builder_require_https_rejects_http_base_url() {
+    let Err(err) = WebDavClient::builder("http://dav.example.com/")
+        .require_https(true)
+        .build()
+    else {
+        panic!("an http:// base URL must be rejected with require_https enabled");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("require_https")),
+        "should be InvalidConfig mentioning require_https, got: {err}"
+    );
+}
+
+#[test]
+fn builder_require_https_accepts_https_base_url() {
+    let client = WebDavClient::builder(BASE)
+        .require_https(true)
+        .build()
+        .expect("an https:// base URL is accepted with require_https enabled");
+    let _ = client;
+}
+
+#[test]
+fn builder_require_https_default_off_accepts_http_base_url() {
+    let client = WebDavClient::builder("http://dav.example.com/")
+        .build()
+        .expect("default behavior unchanged: http:// base accepted without the flag");
+    let _ = client;
+}
+
+#[test]
+fn builder_require_https_threads_through_caldav_macro() {
+    let Err(err) = CalDavClient::builder("http://cal.example.com/")
+        .require_https(true)
+        .build()
+    else {
+        panic!("an http:// base URL must be rejected via the CalDAV builder");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("require_https")),
+        "should be InvalidConfig mentioning require_https, got: {err}"
+    );
+}
+
+#[test]
+fn builder_require_https_threads_through_carddav_macro() {
+    let Err(err) = CardDavClient::builder("http://cards.example.com/")
+        .require_https(true)
+        .build()
+    else {
+        panic!("an http:// base URL must be rejected via the CardDAV builder");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg.contains("require_https")),
+        "should be InvalidConfig mentioning require_https, got: {err}"
+    );
+}
+
+#[test]
 fn invalid_url_display_redacts_userinfo() {
     // Malformed URL that also carries userinfo: the parse error must not
     // echo the credentials (belt-and-braces beside the builder rejection).
