@@ -1,4 +1,8 @@
 #![doc = include_str!("../README.md")]
+#![doc = include_str!("../docs/error-handling.md")]
+#![doc = include_str!("../docs/advanced-configuration.md")]
+#![doc = include_str!("../docs/streaming-and-sync.md")]
+#![doc = include_str!("../docs/e2e-testing.md")]
 
 pub mod caldav;
 pub mod carddav;

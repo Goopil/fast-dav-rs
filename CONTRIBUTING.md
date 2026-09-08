@@ -23,7 +23,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 # Unit tests (nextest; equivalent: cargo test --all-features --test unit_tests)
 cargo nextest run --all-features --locked --test unit_tests
 
-# Doc tests — every Rust snippet in README.md and the API docs must compile and run
+# Doc tests — every Rust snippet in README.md, docs/*.md, and the API docs must compile and run
 cargo test --doc --all-features
 
 # Examples must build
@@ -31,7 +31,7 @@ cargo build --examples --all-features --locked
 ```
 
 E2E tests run against Docker fixtures (SabreDAV, Radicale, Nextcloud) — see
-`README.md` ("End-to-End Testing") and the README in each `*-test/` directory.
+`docs/e2e-testing.md` and the README in each `*-test/` directory.
 
 ## Quality Gates (SonarCloud, enforced on every PR)
 
