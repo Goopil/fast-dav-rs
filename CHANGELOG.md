@@ -767,7 +767,7 @@ Everything deprecated during the 0.9 cycle (semver 0.x → breaking shipped as a
 - `let_chains` replaced with MSRV 1.85 compatible code
 - Shared `on_end` and `apply_common` logic deduplicated via macros
 
-## [0.8.0] - 2025-01-01
+## [0.8.0] - 2026-08-25
 
 ### Added
 - Typed error handling via `thiserror` — `Error` enum replaces `anyhow`
@@ -818,18 +818,18 @@ Everything deprecated during the 0.9 cycle (semver 0.x → breaking shipped as a
 - Calendar query inputs escaped and validated against XML injection
 - Credentials hardened against leakage
 
-## [0.7.2] - 2024-12-01
+## [0.7.2] - 2026-08-19
 
 ### Changed
 - Improved release configuration and package metadata
 
-## [0.7.1] - 2024-11-01
+## [0.7.1] - 2026-08-19
 
 ### Changed
 - `webpki-roots` bumped to 1.0
 - Dev-dependencies version constraints relaxed
 
-## [0.7.0] - 2024-10-01
+## [0.7.0] - 2026-08-19
 
 ### Added
 - Client builder pattern for configurable auth, timeout, pool, TLS, and proxy
@@ -837,23 +837,23 @@ Everything deprecated during the 0.9 cycle (semver 0.x → breaking shipped as a
 ### Fixed
 - ETag and CTag reading normalized
 
-## [0.6.0] - 2024-09-01
+## [0.6.0] - 2026-08-19
 
 ### Added
 - Client builder with fluent API
 
-## [0.5.0] - 2024-08-01
+## [0.5.0] - 2026-08-07
 
 ### Fixed
 - ETag extraction and formatting improved before sending requests
 - Streaming multistatus parsing hardened
 
-## [0.4.4] - 2024-07-01
+## [0.4.4] - 2026-07-21
 
 ### Fixed
 - Streaming multistatus parsing hardened
 
-## [0.4.0] - 2024-06-01
+## [0.4.0] - 2026-01-25
 
 ### Security
 - Calendar query inputs escaped and validated to prevent XML injection
