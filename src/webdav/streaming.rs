@@ -2,11 +2,16 @@ use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{normalize_etag, normalize_sync_token};
 use crate::webdav::types::{DavItemCommon, Depth, LockInfo, LockScope, PropStat, WebDavError};
 use crate::{Error, Result};
-use quick_xml::escape::unescape;
+use quick_xml::escape::{EscapeError, unescape};
 use std::time::Duration;
 
 /// Compact dispatch of a single XML event to a [`MultistatusParser`], shared by
 /// the streaming (async) and aggregated (sync) parse loops.
+///
+/// Text content is accumulated across [`Event::Text`], [`Event::GeneralRef`]
+/// (entity references, which quick-xml splits out of text runs) and
+/// [`Event::CData`] events, and flushed to the parser when the enclosing
+/// element boundary is reached.
 ///
 /// Returns `true` when `EOF` was reached.
 fn dispatch_event<C: ItemConsumer>(
@@ -15,17 +20,28 @@ fn dispatch_event<C: ItemConsumer>(
     event: quick_xml::Result<Event<'_>>,
 ) -> Result<bool> {
     match event {
-        Ok(Event::Start(e)) => parser.on_start(&e, decoder)?,
+        Ok(Event::Start(e)) => {
+            parser.flush_text()?;
+            parser.on_start(&e, decoder)?;
+        }
         Ok(Event::Empty(e)) => {
+            parser.flush_text()?;
             parser.on_start(&e, decoder)?;
             parser.on_end(e.name().as_ref())?;
         }
-        Ok(Event::Text(e)) => parser.on_text(decode_text(e.as_ref())?),
+        Ok(Event::Text(e)) => parser.push_text(&decode_text(e.as_ref())?),
+        Ok(Event::GeneralRef(e)) => parser.push_ref(e.as_ref())?,
         Ok(Event::CData(e)) => {
-            parser.on_cdata(String::from_utf8_lossy(e.as_ref()).into_owned());
+            parser.push_cdata(String::from_utf8_lossy(e.as_ref()).into_owned());
         }
-        Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
-        Ok(Event::Eof) => return Ok(true),
+        Ok(Event::End(e)) => {
+            parser.flush_text()?;
+            parser.on_end(e.name().as_ref())?;
+        }
+        Ok(Event::Eof) => {
+            parser.flush_text()?;
+            return Ok(true);
+        }
         Err(error) => return Err(Error::from_quick_xml(error)),
         _ => {}
     }
@@ -469,6 +485,9 @@ pub(crate) struct MultistatusParser<C> {
     pub stack: Vec<ElementName>,
     pub current: DavItem,
     pub sync_token: Option<String>,
+    /// Text run accumulated across [`Event::Text`], [`Event::GeneralRef`] and
+    /// [`Event::CData`] events; flushed on element boundaries.
+    text_buf: String,
     common: CommonParser,
     sink: C,
 }
@@ -479,6 +498,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             stack: Vec::with_capacity(16),
             current: DavItem::new(),
             sync_token: None,
+            text_buf: String::new(),
             common: CommonParser::new(),
             sink,
         }
@@ -646,12 +666,28 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         Ok(())
     }
 
-    fn on_text(&mut self, text: String) {
-        self.handle_text(text);
+    fn push_text(&mut self, text: &str) {
+        self.text_buf.push_str(text);
     }
 
-    fn on_cdata(&mut self, text: String) {
+    fn push_ref(&mut self, name: &[u8]) -> Result<()> {
+        let name = String::from_utf8_lossy(name);
+        self.text_buf
+            .push_str(&decode_entity_token(&format!("&{name};"))?);
+        Ok(())
+    }
+
+    fn push_cdata(&mut self, text: String) {
+        self.text_buf.push_str(&text);
+    }
+
+    fn flush_text(&mut self) -> Result<()> {
+        if self.text_buf.is_empty() {
+            return Ok(());
+        }
+        let text = std::mem::take(&mut self.text_buf);
         self.handle_text(text);
+        Ok(())
     }
 
     fn handle_text(&mut self, text: String) {
@@ -942,11 +978,64 @@ where
     Ok(result.sync_token)
 }
 
+/// Decode raw XML text content, resolving entity references.
+///
+/// Predefined entities (`&amp;`, `&lt;`, `&gt;`, `&apos;`, `&quot;`) and
+/// numeric character references are always resolved. Named entities outside
+/// that predefined set (e.g. `&nbsp;` emitted by lenient servers) are kept as
+/// literal text instead of failing the whole parse. Malformed numeric
+/// character references still return an error.
 pub fn decode_text(raw: &[u8]) -> Result<String> {
     match std::str::from_utf8(raw) {
-        Ok(s) => Ok(unescape(s)?.into_owned()),
+        Ok(s) => match unescape(s) {
+            Ok(text) => Ok(text.into_owned()),
+            Err(EscapeError::UnrecognizedEntity(..)) => unescape_lenient(s),
+            Err(error) => Err(error.into()),
+        },
         Err(_) => Ok(String::from_utf8_lossy(raw).into_owned()),
     }
+}
+
+/// Decode a single entity reference token of the form `&name;`.
+///
+/// Mirrors [`decode_text`]: predefined entities and numeric character
+/// references resolve, unknown named entities pass through as literal text,
+/// malformed numeric references error.
+fn decode_entity_token(token: &str) -> Result<String> {
+    match unescape(token) {
+        Ok(text) => Ok(text.into_owned()),
+        Err(EscapeError::UnrecognizedEntity(..)) => Ok(token.to_string()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Lenient second pass used when [`unescape`] hit an entity it does not know.
+///
+/// Resolves predefined and numeric character references entity-by-entity and
+/// copies unrecognized named entities through verbatim. Unterminated `&`
+/// sequences and malformed numeric references keep failing with the same
+/// [`EscapeError`] the strict pass produced.
+fn unescape_lenient(s: &str) -> Result<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let tail = &rest[amp..];
+        match tail.find(';') {
+            Some(end) => {
+                let token = &tail[..end + 1];
+                match unescape(token) {
+                    Ok(decoded) => out.push_str(&decoded),
+                    Err(EscapeError::UnrecognizedEntity(..)) => out.push_str(token),
+                    Err(error) => return Err(error.into()),
+                }
+                rest = &tail[end + 1..];
+            }
+            None => return Err(EscapeError::UnterminatedEntity(amp..tail.len()).into()),
+        }
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<String>> {

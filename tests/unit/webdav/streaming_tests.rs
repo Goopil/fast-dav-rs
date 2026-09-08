@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use fast_dav_rs::Error;
 use fast_dav_rs::webdav::streaming::{
-    parse_multistatus_bytes, parse_multistatus_stream_visit,
+    decode_text, parse_multistatus_bytes, parse_multistatus_stream_visit,
     parse_multistatus_stream_visit_with_timeout,
 };
 use fast_dav_rs::{ContentEncoding, Depth, RequestCompressionMode, WebDavClient, compress_payload};
@@ -289,4 +289,48 @@ async fn send_returns_timeout_when_response_body_stalls() {
         matches!(err, Error::Timeout { .. }),
         "expected Timeout, got: {err:?}"
     );
+}
+
+#[test]
+fn decode_text_unknown_entity_passes_through_literally() {
+    // Servers emit entities outside the predefined XML set (e.g. `&nbsp;`);
+    // they must surface as literal text instead of aborting the parse.
+    assert_eq!(decode_text(b"Cal&nbsp;1").unwrap(), "Cal&nbsp;1");
+    assert_eq!(decode_text(b"&foo;").unwrap(), "&foo;");
+}
+
+#[test]
+fn decode_text_mixed_unknown_and_known_entities() {
+    assert_eq!(
+        decode_text(b"Cal&nbsp;1 &amp; x &lt;y&gt;").unwrap(),
+        "Cal&nbsp;1 & x <y>"
+    );
+}
+
+#[test]
+fn decode_text_numeric_entities_still_resolve() {
+    assert_eq!(decode_text(b"&#65;&#x42;").unwrap(), "AB");
+}
+
+#[test]
+fn decode_text_malformed_numeric_entity_still_errors() {
+    assert!(decode_text(b"&#xZZ;").is_err());
+    assert!(decode_text(b"&#999999999999;").is_err());
+}
+
+#[test]
+fn bytes_parse_displayname_with_unknown_entity() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:propstat>
+      <D:prop><D:displayname>Cal&nbsp;1</D:displayname></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].displayname.as_deref(), Some("Cal&nbsp;1"));
 }
