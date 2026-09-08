@@ -127,6 +127,56 @@ const LIST_AC: &str = r#"<?xml version="1.0"?>
   </D:response>
 </D:multistatus>"#;
 
+/// Full listing where b answers with a transient 500: b is "unknown this
+/// pass" — it must be neither deleted nor re-added by the fallback diff.
+const LIST_B_ERROR: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:propstat>
+      <D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:status>HTTP/1.1 500 Internal Server Error</D:status>
+  </D:response>
+</D:multistatus>"#;
+
+/// Full listing where b is back with a changed etag (a unchanged).
+const LIST_AB2: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:propstat>
+      <D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-b2"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
 /// Empty incremental page (fresh token, no changes).
 const EMPTY_DELTA_BODY: &str = r#"<?xml version="1.0"?>
 <D:multistatus xmlns:D="DAV:">
@@ -290,6 +340,46 @@ async fn sync_session_unsupported_server_falls_back_to_propfind_diff() {
         last.starts_with("PROPFIND") && last.contains("<D:getetag/>"),
         "the fallback must be a PROPFIND etag list: {last}"
     );
+}
+
+#[tokio::test]
+async fn sync_session_fallback_error_status_member_is_neither_deleted_nor_added() {
+    // A member answered with a transient 500 inside the PROPFIND 207 is
+    // "unknown this pass": it must not be reported deleted (data-loss bug),
+    // nor re-added, and it stays in the session state for re-classification.
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(PLAIN_PROPFIND),
+        report_not_supported_403(),
+        multistatus_response(LIST_AB),
+        multistatus_response(LIST_B_ERROR),
+        multistatus_response(LIST_AB2),
+    ])
+    .await;
+    let session = make_client(&base).sync_session("cal/");
+
+    session.initial().await.unwrap();
+
+    let delta = session.incremental().await.unwrap();
+    assert!(
+        delta.added.is_empty() && delta.modified.is_empty() && delta.deleted.is_empty(),
+        "a 500 member must be unknown this pass, not deleted: {delta:?}"
+    );
+
+    // The member keeps its previous state-map entry: when the server
+    // reports it again with a new etag it is re-classified as modified
+    // (not added), and it is still not deleted.
+    let next = session.incremental().await.unwrap();
+    assert_eq!(
+        next.modified
+            .iter()
+            .map(|e| e.href.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/cal/b.ics"]
+    );
+    assert!(next.added.is_empty() && next.deleted.is_empty());
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 5, "probe x2 + three PROPFINDs");
 }
 
 #[tokio::test]
