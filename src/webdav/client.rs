@@ -303,7 +303,9 @@ pub fn same_origin(a: &Uri, b: &Uri) -> bool {
 /// Supports absolute URLs with case-insensitive schemes (RFC 3986 §3.1 —
 /// `HTTPS://…` is absolute just like `https://…`), network-path references
 /// (`//host/path`, RFC 3986 §4.2 — resolved against the current scheme),
-/// root-relative paths, bare query references, and relative segment
+/// root-relative paths, bare query references, fragment-only references
+/// (RFC 3986 §5.3 — the current path and query are kept), and relative
+/// segment
 /// references (merged against the current directory, RFC 3986 §5). The
 /// merged path is normalized with the RFC 3986 §5.2.4 `remove_dot_segments`
 /// algorithm, so the resolved URI never contains `.` or `..` segments
@@ -325,6 +327,12 @@ pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
     if location.starts_with("//") {
         let scheme = current.scheme_str()?;
         return format!("{scheme}:{location}").parse().ok();
+    }
+
+    // Fragment-only reference (RFC 3986 §5.3): the current path and query
+    // are kept — only the fragment changes, and a `Uri` never stores one.
+    if location.starts_with('#') {
+        return Some(current.clone());
     }
 
     let scheme = current.scheme_str()?;

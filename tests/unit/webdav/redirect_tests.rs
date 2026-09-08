@@ -103,6 +103,17 @@ fn resolve_location_dot_segments_in_issue_scenario() {
 }
 
 #[test]
+fn resolve_location_fragment_only_keeps_current_path_and_query() {
+    // RFC 3986 §5.3: a fragment-only reference keeps the current path and
+    // query (the fragment itself is never represented in a Uri).
+    let base: hyper::Uri = "http://a/b/c/d;p?q".parse().unwrap();
+    assert_eq!(
+        resolve_location(&base, "#frag").unwrap().to_string(),
+        "http://a/b/c/d;p?q"
+    );
+}
+
+#[test]
 fn resolve_location_network_path_reference() {
     // RFC 3986 §4.2: `//host/path` keeps the current scheme.
     let http: hyper::Uri = "http://127.0.0.1:9000/base/".parse().unwrap();
