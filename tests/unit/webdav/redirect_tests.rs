@@ -476,6 +476,72 @@ async fn redirect_cross_origin_strips_conditional_headers() {
 }
 
 #[tokio::test]
+async fn absolute_url_same_origin_sends_authorization() {
+    let ok_body = b"ok".to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", ok_body.len()),
+        ok_body,
+    )
+    .await;
+
+    let client = WebDavClient::builder(&base)
+        .basic_auth("user", "pass")
+        .build()
+        .unwrap();
+    client.set_request_compression_mode(fast_dav_rs::RequestCompressionMode::Disabled);
+
+    let absolute = format!("{base}resource");
+    let resp = client
+        .send(Method::GET, &absolute, HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(
+        req.contains("GET /resource HTTP/1.1"),
+        "absolute URL must be used verbatim: {req}"
+    );
+    assert!(
+        req.to_ascii_lowercase().contains("authorization: basic"),
+        "auth must be sent when the absolute URL is same-origin: {req}"
+    );
+}
+
+#[tokio::test]
+async fn absolute_url_cross_origin_omits_authorization() {
+    let ok_body = b"ok".to_vec();
+    let (target_base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", ok_body.len()),
+        ok_body,
+    )
+    .await;
+
+    // The client's base origin is never contacted: only the absolute
+    // cross-origin URL is requested (e.g. a server-controlled href).
+    let client = WebDavClient::builder("http://127.0.0.1:1/")
+        .basic_auth("user", "pass")
+        .build()
+        .unwrap();
+    client.set_request_compression_mode(fast_dav_rs::RequestCompressionMode::Disabled);
+
+    let absolute = format!("{target_base}target");
+    let resp = client
+        .send(Method::GET, &absolute, HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(
+        !req.to_ascii_lowercase().contains("authorization:"),
+        "auth must never be sent to a cross-origin absolute URL: {req}"
+    );
+}
+
+#[tokio::test]
 async fn redirect_follow_disabled_returns_redirect_response() {
     let location = "http://127.0.0.1:1/never-requested/";
     let (base, captured) = crate::common::http_helpers::serve_capture(

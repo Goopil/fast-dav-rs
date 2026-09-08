@@ -677,6 +677,11 @@ impl WebDavClient {
     /// through verbatim (see [`encode_path_segments`]). An absolute URL
     /// (`http://`/`https://…`) is parsed as-is.
     ///
+    /// Credentials (the static `Authorization` header or a token-provider
+    /// token) are only ever sent to the client's base origin: a request to
+    /// an absolute URL on a different origin is sent without them, exactly
+    /// like a cross-origin redirect hop.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidUrl`](crate::Error::InvalidUrl) when the
@@ -1009,7 +1014,12 @@ impl WebDavClient {
 
             let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
 
-            if !strip_credentials {
+            // Credentials are only ever sent to the client's base origin:
+            // an absolute cross-origin path (e.g. a server-controlled href)
+            // must not receive the static header or a provider token.
+            // Relative paths always resolve to the base origin; redirect
+            // hops strip via `strip_credentials`.
+            if !strip_credentials && same_origin(&self.base, &uri) {
                 let auth = self.resolve_auth_header().await?;
                 if let Some(auth) = auth {
                     req_builder = req_builder.header(header::AUTHORIZATION, auth);
