@@ -57,6 +57,9 @@ jobs:
       - name: Cargo doc tests
         run: cargo test --doc --all-features --locked
 
+      - name: Cargo package
+        run: cargo package --locked
+
   msrv:
     name: Verify MSRV (1.85)
     runs-on: ubuntu-latest
