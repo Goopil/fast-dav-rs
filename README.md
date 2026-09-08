@@ -34,6 +34,7 @@ This library focuses on correctness and predictable behavior across CalDAV and C
 - Documentation parity across CalDAV and CardDAV, with more recipes and examples.
 - Expanded server compatibility notes and fixtures.
 - Incremental improvements to error reporting and diagnostics.
+- API stability gated by `cargo-semver-checks` on every PR, with 1.0 to be declared once the remediation roadmap stabilizes.
 
 ## Governance & Project Direction
 
