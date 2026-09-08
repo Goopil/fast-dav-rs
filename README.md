@@ -186,10 +186,10 @@ On some providers this is the signature of a wrong username form — e.g. an
 email address where the provider expects an internal short account ID:
 
 ```rust
-# use fast_dav_rs::CalDavClient;
+use fast_dav_rs::CalDavClient;
 use fast_dav_rs::Error;
 
-# async fn retry_guidance(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+async fn retry_guidance(client: &CalDavClient) -> fast_dav_rs::Result<()> {
 match client.discover_current_user_principal().await {
     Err(Error::PrincipalNotFound { url, .. }) => {
         eprintln!(
@@ -201,8 +201,8 @@ match client.discover_current_user_principal().await {
         other?;
     }
 }
-# Ok(())
-# }
+Ok(())
+}
 ```
 
 The `OPTIONS` `DAV:` compliance header (RFC 4918 §10.1) is available as a
@@ -223,10 +223,10 @@ ACEs, and an absent privilege does not prove an operation will be denied.
 Unrecognized privilege elements surface as `Privilege::Other(name)`:
 
 ```rust
-# use fast_dav_rs::CalDavClient;
+use fast_dav_rs::CalDavClient;
 use fast_dav_rs::webdav::Privilege;
 
-# async fn check_privileges(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+async fn check_privileges(client: &CalDavClient) -> fast_dav_rs::Result<()> {
 let privileges = client.current_user_privileges("calendars/alice/").await?;
 if privileges.contains(&Privilege::WriteContent) {
     // safe to offer editing in the UI
@@ -239,8 +239,8 @@ for privilege in &privileges {
         _ => println!("other"),
     }
 }
-# Ok(())
-# }
+Ok(())
+}
 ```
 
 ## Error Handling & Migration
@@ -423,8 +423,8 @@ If your codebase uses `anyhow::Context` to add context to library errors,
 replace `.context("...")` with `.map_err(|e| Error::with_source("...", e))`:
 
 ```rust
-# use fast_dav_rs::CalDavClient;
-# async fn migrate(client: &CalDavClient) -> anyhow::Result<()> {
+use fast_dav_rs::CalDavClient;
+async fn migrate(client: &CalDavClient) -> anyhow::Result<()> {
 // Before (anyhow)
 use anyhow::Context;
 let principal = client
@@ -440,9 +440,9 @@ let principal = client
     .await
     .map_err(|e| Error::with_source("discovery failed", e))?
     .ok_or_else(|| Error::other("no principal"))?;
-# let _ = principal;
-# Ok(())
-# }
+let _ = principal;
+Ok(())
+}
 ```
 
 ### Complete migration example
@@ -455,7 +455,7 @@ handling.
 Key patterns at a glance:
 
 ```rust
-# use std::num::ParseIntError;
+use std::num::ParseIntError;
 // 1. Define typed variants — #[from] for simple variants, #[source] for rich ones
 //
 // #[from] generates a From<E> impl so `?` works automatically — but only
@@ -505,7 +505,7 @@ use fast_dav_rs::caldav::streaming::parse_multistatus_stream;
 ### Request compression
 
 ```rust
-# fn main() -> fast_dav_rs::Result<()> {
+fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::{CalDavClient, ContentEncoding};
 use fast_dav_rs::webdav::RequestCompressionMode;
 
@@ -513,8 +513,8 @@ let mut client = CalDavClient::new("https://caldav.example.com/users/alice/", No
 client.set_request_compression_mode(RequestCompressionMode::Force(ContentEncoding::Gzip));
 client.set_request_compression_mode(RequestCompressionMode::Auto);
 client.set_request_compression_mode(RequestCompressionMode::Disabled);
-# Ok(())
-# }
+Ok(())
+}
 ```
 
 In `Auto` mode the client sends one extra compressed `PROPFIND` probe per client
@@ -577,7 +577,7 @@ connection pool, TLS, proxy, and more:
 ### Basic auth + timeout + pool
 
 ```rust
-# fn main() -> fast_dav_rs::Result<()> {
+fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::CalDavClient;
 use std::time::Duration;
 
@@ -587,22 +587,22 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .user_agent("MyApp/1.0")
     .pool_max_idle_per_host(10)
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 ### Bearer/OAuth 2.0 token
 
 ```rust
-# use fast_dav_rs::CalDavClient;
-# fn main() -> fast_dav_rs::Result<()> {
+use fast_dav_rs::CalDavClient;
+fn main() -> fast_dav_rs::Result<()> {
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .bearer_token("ya29.token...")
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 ### Base-URL credentials are rejected
@@ -625,7 +625,7 @@ refresh grant (pure HTTP — no browser flows, no provider presets; obtaining
 the initial refresh token is the caller's job):
 
 ```rust
-# fn main() -> fast_dav_rs::Result<()> {
+fn main() -> fast_dav_rs::Result<()> {
 use std::sync::Arc;
 use fast_dav_rs::webdav::{OAuth2RefreshProvider, WebDavClient};
 
@@ -639,9 +639,9 @@ let provider = OAuth2RefreshProvider::new(
 let client = WebDavClient::builder("https://dav.example.com/")
     .token_provider(Arc::new(provider))
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 Renewal is transparent and single-flight: tokens are cached until
@@ -664,8 +664,8 @@ Route traffic through a debugging proxy (Proxyman/Charles/mitmproxy)
 and trust its MITM CA — works on Android non-rooted and iOS/macOS alike:
 
 ```rust,no_run
-# use fast_dav_rs::CalDavClient;
-# fn main() -> fast_dav_rs::Result<()> {
+use fast_dav_rs::CalDavClient;
+fn main() -> fast_dav_rs::Result<()> {
 let proxy_uri: hyper::Uri = "http://127.0.0.1:9090".parse().expect("valid proxy URI");
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .basic_auth("user", "pass")
@@ -673,9 +673,9 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .proxy_basic_auth("proxyuser", "proxypass")
     .extra_root_certs_pem(vec![std::fs::read("/path/proxyman-ca.pem")?])
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 ### Force HTTP/1.1
@@ -683,14 +683,14 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
 For servers or proxies that misbehave with HTTP/2:
 
 ```rust
-# use fast_dav_rs::CalDavClient;
-# fn main() -> fast_dav_rs::Result<()> {
+use fast_dav_rs::CalDavClient;
+fn main() -> fast_dav_rs::Result<()> {
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .force_http1(true)
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 > HTTP/2 is negotiated over **TLS via ALPN** on `https://` URLs only. Cleartext
@@ -706,8 +706,8 @@ Request-level options (auth, timeout, compression, redirects, `Prefer`,
 retries) still apply:
 
 ```rust
-# use fast_dav_rs::CalDavClient;
-# fn main() -> fast_dav_rs::Result<()> {
+use fast_dav_rs::CalDavClient;
+fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::common::http::MaybeProxied;
 use fast_dav_rs::webdav::{HyperClient, WebDavClient};
 use hyper_rustls::HttpsConnectorBuilder;
@@ -729,9 +729,9 @@ let hyper_client: HyperClient = Client::builder(TokioExecutor::new())
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .with_hyper_client(hyper_client)
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 The method is available on `WebDavClientBuilder`, `CalDavClientBuilder`, and
@@ -748,15 +748,15 @@ response is returned as-is so the caller can observe it. Exceeding the limit fai
 with `Error::TooManyRedirects`:
 
 ```rust
-# use fast_dav_rs::CalDavClient;
-# fn main() -> fast_dav_rs::Result<()> {
+use fast_dav_rs::CalDavClient;
+fn main() -> fast_dav_rs::Result<()> {
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .follow_redirects(true) // default
     .max_redirects(5)       // default
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 ### Auto-discovery (RFC 6764)
@@ -780,13 +780,13 @@ implemented:
 ```rust
 use fast_dav_rs::{WebDavClient, discover_caldav};
 
-# async fn example() -> fast_dav_rs::Result<()> {
+async fn example() -> fast_dav_rs::Result<()> {
 let client = WebDavClient::builder("https://dav.example.com/")
     .basic_auth("user", "pass")
     .build()?;
 let service_url = discover_caldav(&client).await?;
-# Ok(())
-# }
+Ok(())
+}
 ```
 
 ### Retry & backoff
@@ -805,15 +805,15 @@ handling. The retry budget counts every HTTP attempt across the whole redirect c
 same per-request timeout:
 
 ```rust
-# use fast_dav_rs::CalDavClient;
-# fn main() -> fast_dav_rs::Result<()> {
+use fast_dav_rs::CalDavClient;
+fn main() -> fast_dav_rs::Result<()> {
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .max_retries(3)     // default 0 — no retry
     .retry_all(false)   // default — only idempotent methods are retried
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 ### Prefer header
@@ -829,16 +829,16 @@ the `HeaderMap` accepted by `send`/`send_stream` (an explicit per-request `Prefe
 header wins over the builder default):
 
 ```rust
-# use fast_dav_rs::CalDavClient;
-# fn main() -> fast_dav_rs::Result<()> {
+use fast_dav_rs::CalDavClient;
+fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::webdav::Prefer;
 
 let client = CalDavClient::builder("https://cal.example.com/dav/")
     .prefer(Some(Prefer::Minimal)) // default: none
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 ### Conditional requests (If-Match)
@@ -865,7 +865,7 @@ checks that the body is valid UTF-8, starts with `BEGIN:VCALENDAR`, ends with
 being sent:
 
 ```rust
-# fn main() -> fast_dav_rs::Result<()> {
+fn main() -> fast_dav_rs::Result<()> {
 use fast_dav_rs::caldav::ValidationLevel;
 use fast_dav_rs::CalDavClient;
 
@@ -873,9 +873,9 @@ let client = CalDavClient::builder("https://cal.example.com/dav/")
     .validation_level(ValidationLevel::Strict) // also require UID in every VEVENT/VTODO
     // .validation_level(ValidationLevel::None) // pre-validation behavior
     .build()?;
-# let _ = client;
-# Ok(())
-# }
+let _ = client;
+Ok(())
+}
 ```
 
 `fast_dav_rs::caldav::validate_icalendar(&body)` runs all seven structural
@@ -903,11 +903,11 @@ rejected at construction with `Error::InvalidConfig`, and any redirect whose tar
 service discovery — fails the request with `Error::InvalidInput` instead of being followed:
 
 ```rust,no_run
-# use fast_dav_rs::WebDavClient;
+use fast_dav_rs::WebDavClient;
 let client = WebDavClient::builder("https://dav.example.com/")
     .require_https(true)
     .build()?;
-# Ok::<(), fast_dav_rs::Error>(())
+Ok::<(), fast_dav_rs::Error>(())
 ```
 
 The flag is additive and off by default: without it, behavior is unchanged (plain `http://` base
