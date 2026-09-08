@@ -184,6 +184,7 @@ examples/               # Runnable example binaries (one per workflow; fixture p
 - Document error conditions and edge cases
 - Include performance considerations where relevant
 - **Keep documentation files in sync with code changes** — when adding, removing, or modifying public APIs, error variants, features, or configuration options, always update `README.md`, `AGENTS.md`, and any relevant examples in `examples/`. Stale documentation is a bug.
+- **`docs/` guides are crate docs** — `README.md` and `docs/error-handling.md`, `docs/advanced-configuration.md`, `docs/streaming-and-sync.md`, and `docs/e2e-testing.md` are pulled into the crate documentation via `#![doc = include_str!(...)]` in `src/lib.rs`. Their Rust snippets are doctests: every snippet must stay self-contained (no rustdoc hidden `#` lines) and `cargo test --doc --all-features` must pass. Relative links inside `docs/*.md` must resolve on GitHub (paths relative to `docs/`).
 
 ### Module Re-exports
 - Each module's `mod.rs` should contain `pub use` re-exports for clean public API
