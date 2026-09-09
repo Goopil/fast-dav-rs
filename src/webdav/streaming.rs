@@ -475,6 +475,95 @@ fn parse_type_attributes(
     Ok((content_type, version))
 }
 
+/// Namespace URIs in which multistatus element names are recognized.
+const DAV_XML_NS: &[u8] = b"DAV:";
+const CALDAV_XML_NS: &[u8] = b"urn:ietf:params:xml:ns:caldav";
+const CARDDAV_XML_NS: &[u8] = b"urn:ietf:params:xml:ns:carddav";
+/// Apple's iCal extension namespace; the CalDAV and CardDAV clients request
+/// `calendar-color` / `addressbook-color` in it, so those two elements keep
+/// being recognized there.
+const APPLE_ICAL_XML_NS: &[u8] = b"http://apple.com/ns/ical/";
+
+/// Marker prepended to the local name of a foreign-namespace element whose
+/// local name collides with a recognized one (`(` cannot start an XML name,
+/// so the rewritten form can never re-match a real element).
+const FOREIGN_ELEMENT_MARKER: &[u8] = b"(foreign-ns)";
+
+/// `true` when a recognized element may keep its typed name under namespace
+/// `ns` (`None` = no declaration in scope).
+fn ns_allows(ns: Option<&[u8]>, element: ElementName) -> bool {
+    match ns {
+        // Undeclared namespaces stay tolerated: some servers emit multistatus
+        // bodies without any xmlns declaration, and prefix-stripped matching
+        // has always accepted those.
+        None => true,
+        Some(ns) => {
+            ns == DAV_XML_NS
+                || ns == CALDAV_XML_NS
+                || ns == CARDDAV_XML_NS
+                || (ns == APPLE_ICAL_XML_NS
+                    && matches!(
+                        element,
+                        ElementName::CalendarColor | ElementName::AddressbookColor
+                    ))
+        }
+    }
+}
+
+/// In-scope XML namespace declarations during a multistatus parse.
+///
+/// Tracks `xmlns` / `xmlns:prefix` attributes with an undo log so closing an
+/// element restores exactly the declarations it introduced.
+struct NsScopes {
+    /// Prefix → namespace URI; the empty prefix is the default namespace.
+    bindings: std::collections::HashMap<Vec<u8>, Vec<u8>>,
+    /// Reverse log of [`NsScopes::declare`] calls for scope restoration.
+    undo: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// Undo-log length at each open element (one mark per start event).
+    marks: Vec<usize>,
+}
+
+impl NsScopes {
+    fn new() -> Self {
+        Self {
+            bindings: std::collections::HashMap::new(),
+            undo: Vec::new(),
+            marks: Vec::new(),
+        }
+    }
+
+    fn declare(&mut self, prefix: &[u8], uri: Vec<u8>) {
+        let previous = self.bindings.insert(prefix.to_vec(), uri);
+        self.undo.push((prefix.to_vec(), previous));
+    }
+
+    /// Namespace URI declared for `raw`'s prefix, `None` when undeclared.
+    /// An element without a prefix resolves through the default namespace.
+    fn resolve(&self, raw: &[u8]) -> Option<&[u8]> {
+        self.bindings.get(namespace_prefix(raw)).map(Vec::as_slice)
+    }
+
+    fn mark(&mut self) {
+        self.marks.push(self.undo.len());
+    }
+
+    fn pop_mark(&mut self) {
+        if let Some(mark) = self.marks.pop() {
+            while self.undo.len() > mark {
+                let (prefix, previous) = self.undo.pop().expect("undo log aligned with marks");
+                match previous {
+                    Some(uri) => {
+                        self.bindings.insert(prefix, uri);
+                    }
+                    None => {
+                        self.bindings.remove(&prefix);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl ItemConsumer for Vec<DavItem> {
     fn consume(&mut self, item: DavItem) -> Result<()> {
         self.push(item);
@@ -506,6 +595,7 @@ pub(crate) struct MultistatusParser<C> {
     /// [`Event::CData`] events; flushed on element boundaries.
     text_buf: String,
     common: CommonParser,
+    ns: NsScopes,
     sink: C,
 }
 
@@ -517,6 +607,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             sync_token: None,
             text_buf: String::new(),
             common: CommonParser::new(),
+            ns: NsScopes::new(),
             sink,
         }
     }
@@ -539,9 +630,22 @@ impl<C: ItemConsumer> MultistatusParser<C> {
     }
 
     fn on_start(&mut self, event: &BytesStart<'_>, decoder: Decoder) -> Result<()> {
-        self.common.on_start(event.name().as_ref());
-        let element = element_from_bytes(event.name().as_ref());
+        // Namespace declarations carried by the element itself apply to it
+        // (XML 1.0 §3.3), so declare before resolving.
+        for attr in event.attributes().flatten() {
+            let key = attr.key.as_ref();
+            if key == b"xmlns" {
+                self.ns.declare(b"", attr.value.into_owned());
+            } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                self.ns.declare(prefix, attr.value.into_owned());
+            }
+        }
+        let binding = event.name();
+        let raw = self.ns_qualified_name(binding.as_ref());
+        self.common.on_start(&raw);
+        let element = element_from_bytes(&raw);
         self.stack.push(element);
+        self.ns.mark();
 
         match element {
             ElementName::Response => {
@@ -662,16 +766,41 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                 ],
             )
         {
-            self.current
-                .current_user_privileges
-                .push(privilege_from_local_name(event.name().as_ref()));
+            let binding = event.name();
+            let privilege_raw = binding.as_ref();
+            let privilege = if ns_allows(self.ns.resolve(privilege_raw), ElementName::Other) {
+                privilege_from_local_name(privilege_raw)
+            } else {
+                Privilege::Other(String::from_utf8_lossy(local_name(privilege_raw)).into_owned())
+            };
+            self.current.current_user_privileges.push(privilege);
         }
 
         Ok(())
     }
 
+    /// Resolve `raw` against the in-scope namespace declarations and return
+    /// the name bytes to parse with.
+    ///
+    /// Recognized local names are only honored in the accepted namespaces
+    /// (see [`ns_allows`]); a colliding name from a foreign namespace is
+    /// rewritten to a non-XML-name form so it parses as [`ElementName::Other`]
+    /// while keeping the original local name visible in property listings.
+    fn ns_qualified_name<'a>(&self, raw: &'a [u8]) -> std::borrow::Cow<'a, [u8]> {
+        let element = element_from_bytes(raw);
+        if element == ElementName::Other || ns_allows(self.ns.resolve(raw), element) {
+            std::borrow::Cow::Borrowed(raw)
+        } else {
+            let mut rewritten = FOREIGN_ELEMENT_MARKER.to_vec();
+            rewritten.extend_from_slice(local_name(raw));
+            std::borrow::Cow::Owned(rewritten)
+        }
+    }
+
     fn on_end(&mut self, name: &[u8]) -> Result<()> {
-        self.common.on_end(name)?;
+        let name = self.ns_qualified_name(name);
+        self.common.on_end(&name)?;
+        self.ns.pop_mark();
         if let Some(popped) = self.stack.pop() {
             if popped == ElementName::Response {
                 let common = self.common.finish_response();
