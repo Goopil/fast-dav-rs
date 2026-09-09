@@ -81,7 +81,11 @@ pub(crate) fn validate_utc_datetime(value: &str, context: &str) -> Result<()> {
 /// Render a CalDAV/CardDAV data element (`calendar-data` / `address-data`):
 /// bare when `expand` is `None`, or wrapping an `<C:expand>` element
 /// (RFC 4791 §9.6) when server-side expansion is requested.
+///
+/// `data_element` is an XML element name; it is escaped so a hostile value
+/// cannot inject markup (a server will reject the resulting ill-formed name).
 pub(crate) fn data_element_xml(data_element: &str, expand: Option<(&str, Option<&str>)>) -> String {
+    let data_element = escape_xml(data_element);
     let Some((start, end)) = expand else {
         return format!("<C:{data_element}/>");
     };
@@ -93,7 +97,7 @@ pub(crate) fn data_element_xml(data_element: &str, expand: Option<(&str, Option<
         out.push_str(&format!(" end=\"{}\"", escape_xml(e)));
     }
     out.push_str("/></C:");
-    out.push_str(data_element);
+    out.push_str(&data_element);
     out.push('>');
     out
 }
@@ -130,7 +134,10 @@ pub fn build_sync_collection_body(
     expand: Option<(&str, Option<&str>)>,
     sync_level: SyncLevel,
 ) -> String {
-    let mut body = format!(r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{namespace}">"#);
+    let mut body = format!(
+        r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{}">"#,
+        escape_xml(namespace)
+    );
     if let Some(token) = sync_token {
         body.push_str("<D:sync-token>");
         body.push_str(&escape_xml(token));
@@ -248,8 +255,11 @@ where
         return None;
     }
 
-    let mut body =
-        format!(r#"<C:{root_element} xmlns:D="DAV:" xmlns:C="{namespace}"><D:prop><D:getetag/>"#);
+    let mut body = format!(
+        r#"<C:{} xmlns:D="DAV:" xmlns:C="{}"><D:prop><D:getetag/>"#,
+        escape_xml(root_element),
+        escape_xml(namespace)
+    );
     if include_data || expand.is_some() {
         body.push_str(&data_element_xml(data_element, expand));
     }
