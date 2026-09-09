@@ -458,8 +458,16 @@ impl WebDavClientBuilder {
     /// non-idempotent ones (`PUT`, `POST`, `DELETE`, `MKCOL`, `COPY`, `MOVE`,
     /// `LOCK`, …). Default: **false** — only idempotent methods (`GET`,
     /// `HEAD`, `OPTIONS`, `PROPFIND`, `REPORT`) are retried, so a failed
-    /// write is never silently re-sent (the write may have been applied
-    /// before the failure).
+    /// write is never silently re-sent.
+    ///
+    /// # Risk of duplicated writes
+    ///
+    /// Re-sending a non-idempotent write whose first attempt actually
+    /// reached the origin duplicates its effect: a `PUT` behind a gateway
+    /// that answers `504` **after** applying the write is sent a second
+    /// time (creation duplicated, or the retry overwritten against a moved
+    /// ETag). Only enable this against origins where a duplicated write is
+    /// acceptable.
     ///
     /// Only meaningful when [`max_retries`](Self::max_retries) > 0.
     ///
