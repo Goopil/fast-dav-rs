@@ -38,6 +38,40 @@ fn sync_level_as_str_values() {
 }
 
 #[test]
+fn build_sync_collection_body_escapes_namespace_attribute() {
+    let body = build_sync_collection_body(
+        None,
+        None,
+        false,
+        "DAV:\"><D:hack/>",
+        "calendar-data",
+        None,
+        SyncLevel::One,
+    );
+    assert!(
+        !body.contains("<D:hack/>"),
+        "namespace must be escaped, got: {body}"
+    );
+}
+
+#[test]
+fn build_sync_collection_body_escapes_data_element_name() {
+    let body = build_sync_collection_body(
+        None,
+        None,
+        true,
+        "urn:ietf:params:xml:ns:caldav",
+        "calendar-data\"><D:hack/>",
+        None,
+        SyncLevel::One,
+    );
+    assert!(
+        !body.contains("<D:hack/>"),
+        "data element must be escaped, got: {body}"
+    );
+}
+
+#[test]
 fn build_sync_collection_body_sends_level_one() {
     let body = build_sync_collection_body(
         Some("http://token"),

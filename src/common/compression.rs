@@ -219,15 +219,25 @@ pub(crate) fn stack_decoders(
 /// # Errors
 ///
 /// Returns [`Error::BodyTooLarge`] when the decompressed payload exceeds
-/// `MAX_DECOMPRESSED_SIZE` (256 MiB).
+/// `MAX_DECOMPRESSED_SIZE` (256 MiB). The cap is checked incrementally while
+/// reading, so an oversized payload aborts as soon as the limit is crossed
+/// instead of buffering up to the limit first.
 pub async fn decompress_body(body: Incoming, encodings: &[ContentEncoding]) -> Result<Bytes> {
-    let decoder = stack_decoders(body_stream_reader(body), encodings);
+    let mut decoder = stack_decoders(body_stream_reader(body), encodings);
+    let limit = MAX_DECOMPRESSED_SIZE as usize;
     let mut out = Vec::with_capacity(32 * 1024);
-    decoder
-        .take(MAX_DECOMPRESSED_SIZE + 1)
-        .read_to_end(&mut out)
-        .await?;
-    cap_check(out.len(), MAX_DECOMPRESSED_SIZE as usize)?;
+    // Reads append straight into `out` spare capacity: no stack-allocated
+    // staging buffer (a large one overflows the async poll stack), and the
+    // cap aborts after each read instead of buffering up to the limit first.
+    loop {
+        out.reserve(8 * 1024);
+        if decoder.read_buf(&mut out).await? == 0 {
+            break;
+        }
+        if out.len() > limit {
+            return Err(Error::BodyTooLarge { limit });
+        }
+    }
 
     Ok(Bytes::from(out))
 }

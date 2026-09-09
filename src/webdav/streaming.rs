@@ -2,11 +2,16 @@ use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{normalize_etag, normalize_sync_token};
 use crate::webdav::types::{DavItemCommon, Depth, LockInfo, LockScope, PropStat, WebDavError};
 use crate::{Error, Result};
-use quick_xml::escape::unescape;
+use quick_xml::escape::{EscapeError, unescape};
 use std::time::Duration;
 
 /// Compact dispatch of a single XML event to a [`MultistatusParser`], shared by
 /// the streaming (async) and aggregated (sync) parse loops.
+///
+/// Text content is accumulated across [`Event::Text`], [`Event::GeneralRef`]
+/// (entity references, which quick-xml splits out of text runs) and
+/// [`Event::CData`] events, and flushed to the parser when the enclosing
+/// element boundary is reached.
 ///
 /// Returns `true` when `EOF` was reached.
 fn dispatch_event<C: ItemConsumer>(
@@ -15,17 +20,28 @@ fn dispatch_event<C: ItemConsumer>(
     event: quick_xml::Result<Event<'_>>,
 ) -> Result<bool> {
     match event {
-        Ok(Event::Start(e)) => parser.on_start(&e, decoder)?,
+        Ok(Event::Start(e)) => {
+            parser.flush_text()?;
+            parser.on_start(&e, decoder)?;
+        }
         Ok(Event::Empty(e)) => {
+            parser.flush_text()?;
             parser.on_start(&e, decoder)?;
             parser.on_end(e.name().as_ref())?;
         }
-        Ok(Event::Text(e)) => parser.on_text(decode_text(e.as_ref())?),
+        Ok(Event::Text(e)) => parser.push_text(&decode_text(e.as_ref())?)?,
+        Ok(Event::GeneralRef(e)) => parser.push_ref(e.as_ref())?,
         Ok(Event::CData(e)) => {
-            parser.on_cdata(String::from_utf8_lossy(e.as_ref()).into_owned());
+            parser.push_cdata(String::from_utf8_lossy(e.as_ref()).into_owned())?;
         }
-        Ok(Event::End(e)) => parser.on_end(e.name().as_ref())?,
-        Ok(Event::Eof) => return Ok(true),
+        Ok(Event::End(e)) => {
+            parser.flush_text()?;
+            parser.on_end(e.name().as_ref())?;
+        }
+        Ok(Event::Eof) => {
+            parser.flush_text()?;
+            return Ok(true);
+        }
         Err(error) => return Err(Error::from_quick_xml(error)),
         _ => {}
     }
@@ -222,6 +238,7 @@ impl CommonParser {
 // Unified multistatus parser (shared by CalDAV and CardDAV)
 // ---------------------------------------------------------------------------
 
+use crate::common::compression::MAX_DECOMPRESSED_SIZE;
 use crate::common::compression::{body_stream_reader, stack_decoders};
 use crate::webdav::types::{DavItem, MediaType, Privilege};
 use hyper::body::Incoming;
@@ -236,6 +253,22 @@ use std::io::{BufRead, Cursor};
 /// a cap on the total parse duration: arbitrarily large responses are fine as long as
 /// data keeps flowing.
 pub const STREAM_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Maximum bytes of text accumulated for a single parsed item (text runs plus
+/// `calendar-data` / `address-data` / `calendar-timezone` payloads). Matches the
+/// aggregate [`MAX_DECOMPRESSED_SIZE`] cap enforced on response bodies.
+const MAX_ITEM_TEXT_BYTES: usize = MAX_DECOMPRESSED_SIZE as usize;
+
+/// Append `text` to `target` unless that would push it past `limit`; aborts
+/// with [`Error::BodyTooLarge`] (leaving `target` unchanged) instead of
+/// growing an unbounded buffer.
+fn append_capped(target: &mut String, text: &str, limit: usize) -> Result<()> {
+    if target.len() + text.len() > limit {
+        return Err(Error::BodyTooLarge { limit });
+    }
+    target.push_str(text);
+    Ok(())
+}
 
 /// Element names inside a `207 Multi-Status` body — union of the DAV core,
 /// CalDAV, and CardDAV element sets. Domain variants only appear in responses
@@ -290,6 +323,18 @@ pub enum ElementName {
     Privilege,
 }
 
+/// Map a raw XML element name (`prefix:local` or `local`) to an
+/// [`ElementName`].
+///
+/// Matching is performed on the local name with any prefix stripped, and is
+/// ASCII-case-insensitive: `<D:HREF>`, `<d:Href>` and `<href>` all map to
+/// [`ElementName::Href`]. This documented tolerance accepts servers that
+/// emit non-canonical element-name casing in multistatus bodies.
+///
+/// Namespace resolution happens in the multistatus parser: a recognized
+/// local name is only honored in the DAV:, CalDAV and CardDAV namespaces
+/// (plus Apple's iCal namespace for the two color elements); colliding
+/// foreign-namespace elements are rewritten to [`ElementName::Other`].
 pub fn element_from_bytes(raw: &[u8]) -> ElementName {
     let local = local_name(raw);
 
@@ -442,6 +487,95 @@ fn parse_type_attributes(
     Ok((content_type, version))
 }
 
+/// Namespace URIs in which multistatus element names are recognized.
+const DAV_XML_NS: &[u8] = b"DAV:";
+const CALDAV_XML_NS: &[u8] = b"urn:ietf:params:xml:ns:caldav";
+const CARDDAV_XML_NS: &[u8] = b"urn:ietf:params:xml:ns:carddav";
+/// Apple's iCal extension namespace; the CalDAV and CardDAV clients request
+/// `calendar-color` / `addressbook-color` in it, so those two elements keep
+/// being recognized there.
+const APPLE_ICAL_XML_NS: &[u8] = b"http://apple.com/ns/ical/";
+
+/// Marker prepended to the local name of a foreign-namespace element whose
+/// local name collides with a recognized one (`(` cannot start an XML name,
+/// so the rewritten form can never re-match a real element).
+const FOREIGN_ELEMENT_MARKER: &[u8] = b"(foreign-ns)";
+
+/// `true` when a recognized element may keep its typed name under namespace
+/// `ns` (`None` = no declaration in scope).
+fn ns_allows(ns: Option<&[u8]>, element: ElementName) -> bool {
+    match ns {
+        // Undeclared namespaces stay tolerated: some servers emit multistatus
+        // bodies without any xmlns declaration, and prefix-stripped matching
+        // has always accepted those.
+        None => true,
+        Some(ns) => {
+            ns == DAV_XML_NS
+                || ns == CALDAV_XML_NS
+                || ns == CARDDAV_XML_NS
+                || (ns == APPLE_ICAL_XML_NS
+                    && matches!(
+                        element,
+                        ElementName::CalendarColor | ElementName::AddressbookColor
+                    ))
+        }
+    }
+}
+
+/// In-scope XML namespace declarations during a multistatus parse.
+///
+/// Tracks `xmlns` / `xmlns:prefix` attributes with an undo log so closing an
+/// element restores exactly the declarations it introduced.
+struct NsScopes {
+    /// Prefix → namespace URI; the empty prefix is the default namespace.
+    bindings: std::collections::HashMap<Vec<u8>, Vec<u8>>,
+    /// Reverse log of [`NsScopes::declare`] calls for scope restoration.
+    undo: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// Undo-log length at each open element (one mark per start event).
+    marks: Vec<usize>,
+}
+
+impl NsScopes {
+    fn new() -> Self {
+        Self {
+            bindings: std::collections::HashMap::new(),
+            undo: Vec::new(),
+            marks: Vec::new(),
+        }
+    }
+
+    fn declare(&mut self, prefix: &[u8], uri: Vec<u8>) {
+        let previous = self.bindings.insert(prefix.to_vec(), uri);
+        self.undo.push((prefix.to_vec(), previous));
+    }
+
+    /// Namespace URI declared for `raw`'s prefix, `None` when undeclared.
+    /// An element without a prefix resolves through the default namespace.
+    fn resolve(&self, raw: &[u8]) -> Option<&[u8]> {
+        self.bindings.get(namespace_prefix(raw)).map(Vec::as_slice)
+    }
+
+    fn mark(&mut self) {
+        self.marks.push(self.undo.len());
+    }
+
+    fn pop_mark(&mut self) {
+        if let Some(mark) = self.marks.pop() {
+            while self.undo.len() > mark {
+                let (prefix, previous) = self.undo.pop().expect("undo log aligned with marks");
+                match previous {
+                    Some(uri) => {
+                        self.bindings.insert(prefix, uri);
+                    }
+                    None => {
+                        self.bindings.remove(&prefix);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl ItemConsumer for Vec<DavItem> {
     fn consume(&mut self, item: DavItem) -> Result<()> {
         self.push(item);
@@ -469,7 +603,11 @@ pub(crate) struct MultistatusParser<C> {
     pub stack: Vec<ElementName>,
     pub current: DavItem,
     pub sync_token: Option<String>,
+    /// Text run accumulated across [`Event::Text`], [`Event::GeneralRef`] and
+    /// [`Event::CData`] events; flushed on element boundaries.
+    text_buf: String,
     common: CommonParser,
+    ns: NsScopes,
     sink: C,
 }
 
@@ -479,7 +617,9 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             stack: Vec::with_capacity(16),
             current: DavItem::new(),
             sync_token: None,
+            text_buf: String::new(),
             common: CommonParser::new(),
+            ns: NsScopes::new(),
             sink,
         }
     }
@@ -502,9 +642,22 @@ impl<C: ItemConsumer> MultistatusParser<C> {
     }
 
     fn on_start(&mut self, event: &BytesStart<'_>, decoder: Decoder) -> Result<()> {
-        self.common.on_start(event.name().as_ref());
-        let element = element_from_bytes(event.name().as_ref());
+        // Namespace declarations carried by the element itself apply to it
+        // (XML 1.0 §3.3), so declare before resolving.
+        for attr in event.attributes().flatten() {
+            let key = attr.key.as_ref();
+            if key == b"xmlns" {
+                self.ns.declare(b"", attr.value.into_owned());
+            } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                self.ns.declare(prefix, attr.value.into_owned());
+            }
+        }
+        let binding = event.name();
+        let raw = self.ns_qualified_name(binding.as_ref());
+        self.common.on_start(&raw);
+        let element = element_from_bytes(&raw);
         self.stack.push(element);
+        self.ns.mark();
 
         match element {
             ElementName::Response => {
@@ -625,16 +778,41 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                 ],
             )
         {
-            self.current
-                .current_user_privileges
-                .push(privilege_from_local_name(event.name().as_ref()));
+            let binding = event.name();
+            let privilege_raw = binding.as_ref();
+            let privilege = if ns_allows(self.ns.resolve(privilege_raw), ElementName::Other) {
+                privilege_from_local_name(privilege_raw)
+            } else {
+                Privilege::Other(String::from_utf8_lossy(local_name(privilege_raw)).into_owned())
+            };
+            self.current.current_user_privileges.push(privilege);
         }
 
         Ok(())
     }
 
+    /// Resolve `raw` against the in-scope namespace declarations and return
+    /// the name bytes to parse with.
+    ///
+    /// Recognized local names are only honored in the accepted namespaces
+    /// (see [`ns_allows`]); a colliding name from a foreign namespace is
+    /// rewritten to a non-XML-name form so it parses as [`ElementName::Other`]
+    /// while keeping the original local name visible in property listings.
+    fn ns_qualified_name<'a>(&self, raw: &'a [u8]) -> std::borrow::Cow<'a, [u8]> {
+        let element = element_from_bytes(raw);
+        if element == ElementName::Other || ns_allows(self.ns.resolve(raw), element) {
+            std::borrow::Cow::Borrowed(raw)
+        } else {
+            let mut rewritten = FOREIGN_ELEMENT_MARKER.to_vec();
+            rewritten.extend_from_slice(local_name(raw));
+            std::borrow::Cow::Owned(rewritten)
+        }
+    }
+
     fn on_end(&mut self, name: &[u8]) -> Result<()> {
-        self.common.on_end(name)?;
+        let name = self.ns_qualified_name(name);
+        self.common.on_end(&name)?;
+        self.ns.pop_mark();
         if let Some(popped) = self.stack.pop() {
             if popped == ElementName::Response {
                 let common = self.common.finish_response();
@@ -646,17 +824,31 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         Ok(())
     }
 
-    fn on_text(&mut self, text: String) {
-        self.handle_text(text);
+    fn push_text(&mut self, text: &str) -> Result<()> {
+        append_capped(&mut self.text_buf, text, MAX_ITEM_TEXT_BYTES)
     }
 
-    fn on_cdata(&mut self, text: String) {
-        self.handle_text(text);
+    fn push_ref(&mut self, name: &[u8]) -> Result<()> {
+        let name = String::from_utf8_lossy(name);
+        let token = decode_entity_token(&format!("&{name};"))?;
+        append_capped(&mut self.text_buf, &token, MAX_ITEM_TEXT_BYTES)
     }
 
-    fn handle_text(&mut self, text: String) {
+    fn push_cdata(&mut self, text: String) -> Result<()> {
+        append_capped(&mut self.text_buf, &text, MAX_ITEM_TEXT_BYTES)
+    }
+
+    fn flush_text(&mut self) -> Result<()> {
+        if self.text_buf.is_empty() {
+            return Ok(());
+        }
+        let text = std::mem::take(&mut self.text_buf);
+        self.handle_text(text)
+    }
+
+    fn handle_text(&mut self, text: String) -> Result<()> {
         if text.is_empty() {
-            return;
+            return Ok(());
         }
 
         self.common.on_text(&text);
@@ -669,12 +861,8 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Prop,
             ElementName::CalendarData,
         ]) {
-            if let Some(existing) = self.current.calendar_data.as_mut() {
-                existing.push_str(&text);
-            } else {
-                self.current.calendar_data = Some(text);
-            }
-            return;
+            let existing = self.current.calendar_data.get_or_insert_with(String::new);
+            return append_capped(existing, &text, MAX_ITEM_TEXT_BYTES);
         }
         if self.path_ends_with(&[
             ElementName::Response,
@@ -682,12 +870,8 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Prop,
             ElementName::AddressData,
         ]) {
-            if let Some(existing) = self.current.address_data.as_mut() {
-                existing.push_str(&text);
-            } else {
-                self.current.address_data = Some(text);
-            }
-            return;
+            let existing = self.current.address_data.get_or_insert_with(String::new);
+            return append_capped(existing, &text, MAX_ITEM_TEXT_BYTES);
         }
 
         // calendar-timezone can also contain multi-line iCalendar content; preserve it.
@@ -697,17 +881,16 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Prop,
             ElementName::CalendarTimezone,
         ]) {
-            if let Some(existing) = self.current.calendar_timezone.as_mut() {
-                existing.push_str(&text);
-            } else {
-                self.current.calendar_timezone = Some(text.clone());
-            }
-            return;
+            let existing = self
+                .current
+                .calendar_timezone
+                .get_or_insert_with(String::new);
+            return append_capped(existing, &text, MAX_ITEM_TEXT_BYTES);
         }
 
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            return;
+            return Ok(());
         }
 
         if self.path_ends_with(&[
@@ -804,6 +987,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             // element name keeps this independent of the parent nesting.
             self.current.managed_ids.push(trimmed.to_string());
         }
+        Ok(())
     }
 }
 
@@ -942,11 +1126,64 @@ where
     Ok(result.sync_token)
 }
 
+/// Decode raw XML text content, resolving entity references.
+///
+/// Predefined entities (`&amp;`, `&lt;`, `&gt;`, `&apos;`, `&quot;`) and
+/// numeric character references are always resolved. Named entities outside
+/// that predefined set (e.g. `&nbsp;` emitted by lenient servers) are kept as
+/// literal text instead of failing the whole parse. Malformed numeric
+/// character references still return an error.
 pub fn decode_text(raw: &[u8]) -> Result<String> {
     match std::str::from_utf8(raw) {
-        Ok(s) => Ok(unescape(s)?.into_owned()),
+        Ok(s) => match unescape(s) {
+            Ok(text) => Ok(text.into_owned()),
+            Err(EscapeError::UnrecognizedEntity(..)) => unescape_lenient(s),
+            Err(error) => Err(error.into()),
+        },
         Err(_) => Ok(String::from_utf8_lossy(raw).into_owned()),
     }
+}
+
+/// Decode a single entity reference token of the form `&name;`.
+///
+/// Mirrors [`decode_text`]: predefined entities and numeric character
+/// references resolve, unknown named entities pass through as literal text,
+/// malformed numeric references error.
+fn decode_entity_token(token: &str) -> Result<String> {
+    match unescape(token) {
+        Ok(text) => Ok(text.into_owned()),
+        Err(EscapeError::UnrecognizedEntity(..)) => Ok(token.to_string()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Lenient second pass used when [`unescape`] hit an entity it does not know.
+///
+/// Resolves predefined and numeric character references entity-by-entity and
+/// copies unrecognized named entities through verbatim. Unterminated `&`
+/// sequences and malformed numeric references keep failing with the same
+/// [`EscapeError`] the strict pass produced.
+fn unescape_lenient(s: &str) -> Result<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let tail = &rest[amp..];
+        match tail.find(';') {
+            Some(end) => {
+                let token = &tail[..end + 1];
+                match unescape(token) {
+                    Ok(decoded) => out.push_str(&decoded),
+                    Err(EscapeError::UnrecognizedEntity(..)) => out.push_str(token),
+                    Err(error) => return Err(error.into()),
+                }
+                rest = &tail[end + 1..];
+            }
+            None => return Err(EscapeError::UnterminatedEntity(amp..tail.len()).into()),
+        }
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 pub(crate) fn parse_current_user_principal_bytes(body: &[u8]) -> Result<Option<String>> {
@@ -1532,5 +1769,39 @@ mod tests {
         ));
         let result = parse_current_user_principal_bytes(&xml).unwrap();
         assert_eq!(result.as_deref(), Some("/principals/first/"));
+    }
+
+    #[test]
+    fn append_capped_rejects_text_past_limit() {
+        let mut buf = String::new();
+        append_capped(&mut buf, "abc", 4).unwrap();
+        let err = append_capped(&mut buf, "de", 4).unwrap_err();
+        assert!(matches!(err, Error::BodyTooLarge { limit: 4 }), "{err:?}");
+        assert_eq!(buf, "abc", "aborted append must leave the buffer unchanged");
+    }
+
+    #[test]
+    fn per_item_text_accumulation_is_capped() {
+        let mut parser = MultistatusParser::new(Vec::<DavItem>::new());
+        parser.stack = vec![
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::CalendarData,
+        ];
+        let chunk = "x".repeat(64 * 1024);
+        let chunks = MAX_ITEM_TEXT_BYTES / chunk.len() + 2;
+        let mut result = Ok(());
+        for _ in 0..chunks {
+            result = parser.handle_text(chunk.clone());
+            if result.is_err() {
+                break;
+            }
+        }
+        let err = result.expect_err("per-item cap must abort accumulation");
+        assert!(
+            matches!(err, Error::BodyTooLarge { limit } if limit == MAX_ITEM_TEXT_BYTES),
+            "{err:?}"
+        );
     }
 }

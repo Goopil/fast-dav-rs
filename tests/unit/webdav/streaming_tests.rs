@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use fast_dav_rs::Error;
 use fast_dav_rs::webdav::streaming::{
-    parse_multistatus_bytes, parse_multistatus_stream_visit,
+    decode_text, parse_multistatus_bytes, parse_multistatus_stream_visit,
     parse_multistatus_stream_visit_with_timeout,
 };
 use fast_dav_rs::{ContentEncoding, Depth, RequestCompressionMode, WebDavClient, compress_payload};
@@ -289,4 +289,150 @@ async fn send_returns_timeout_when_response_body_stalls() {
         matches!(err, Error::Timeout { .. }),
         "expected Timeout, got: {err:?}"
     );
+}
+
+#[test]
+fn decode_text_unknown_entity_passes_through_literally() {
+    // Servers emit entities outside the predefined XML set (e.g. `&nbsp;`);
+    // they must surface as literal text instead of aborting the parse.
+    assert_eq!(decode_text(b"Cal&nbsp;1").unwrap(), "Cal&nbsp;1");
+    assert_eq!(decode_text(b"&foo;").unwrap(), "&foo;");
+}
+
+#[test]
+fn decode_text_mixed_unknown_and_known_entities() {
+    assert_eq!(
+        decode_text(b"Cal&nbsp;1 &amp; x &lt;y&gt;").unwrap(),
+        "Cal&nbsp;1 & x <y>"
+    );
+}
+
+#[test]
+fn decode_text_numeric_entities_still_resolve() {
+    assert_eq!(decode_text(b"&#65;&#x42;").unwrap(), "AB");
+}
+
+#[test]
+fn decode_text_malformed_numeric_entity_still_errors() {
+    assert!(decode_text(b"&#xZZ;").is_err());
+    assert!(decode_text(b"&#999999999999;").is_err());
+}
+
+#[test]
+fn bytes_parse_displayname_with_unknown_entity() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:propstat>
+      <D:prop><D:displayname>Cal&nbsp;1</D:displayname></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].displayname.as_deref(), Some("Cal&nbsp;1"));
+}
+
+/// A foreign-namespace element whose local name collides with a DAV element
+/// must not be interpreted as a DAV element.
+#[test]
+fn foreign_namespace_elements_are_not_dav_elements() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/real.ics</D:href>
+    <x:href xmlns:x="urn:mal">/injected/pwned</x:href>
+    <D:propstat>
+      <D:prop><D:getetag>"1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].href, "/cal/real.ics");
+}
+
+#[test]
+fn foreign_namespace_status_is_not_dav_status() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+      <x:status xmlns:x="urn:mal">HTTP/1.1 500 Server Error</x:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].status.as_deref(), Some("HTTP/1.1 200 OK"));
+}
+
+#[test]
+fn default_dav_namespace_elements_are_parsed() {
+    let xml = br#"<?xml version="1.0"?>
+<multistatus xmlns="DAV:">
+  <response>
+    <href>/cal/a.ics</href>
+    <propstat>
+      <prop><getetag>"1"</getetag></prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+</multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].href, "/cal/a.ics");
+}
+
+#[test]
+fn caldav_namespace_calendar_data_is_parsed() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <C:calendar-data>BEGIN:VCALENDAR
+END:VCALENDAR
+        </C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert!(
+        result.items[0]
+            .calendar_data
+            .as_deref()
+            .unwrap_or_default()
+            .contains("BEGIN:VCALENDAR")
+    );
+}
+
+/// Element matching is ASCII-case-insensitive by design (documented
+/// tolerance for non-canonical server element-name casing).
+#[test]
+fn uppercase_element_names_are_matched() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:RESPONSE>
+    <D:HREF>/cal/a.ics</D:HREF>
+    <D:PROPSTAT>
+      <D:PROP><D:GETETAG>"1"</D:GETETAG></D:PROP>
+      <D:STATUS>HTTP/1.1 200 OK</D:STATUS>
+    </D:PROPSTAT>
+  </D:RESPONSE>
+</D:multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].href, "/cal/a.ics");
+    assert_eq!(result.items[0].etag.as_deref(), Some("1"));
 }
