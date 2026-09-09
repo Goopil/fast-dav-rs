@@ -403,6 +403,26 @@ async fn refresh_lock_rejects_invalid_token_characters() {
 }
 
 #[tokio::test]
+async fn lock_token_error_does_not_echo_full_token() {
+    let client = dav_client("http://127.0.0.1:1/").await;
+    let token = "opaquelocktoken:super-secret-guid-that-must-not-be-echoed>";
+    let err = client.unlock("docs/plan.txt", token).await.unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(ref msg) if msg.contains("Coded-URL")),
+        "token must be rejected before any I/O, got: {err:?}"
+    );
+    let msg = err.to_string();
+    assert!(
+        !msg.contains(token),
+        "the error message must not echo the full token: {msg}"
+    );
+    assert!(
+        msg.contains("opaquelo"),
+        "the message still shows a truncated prefix: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn unlock_sends_lock_token_header() {
     let head = http_head("HTTP/1.1 204 No Content", "", "");
     let (base, captured) = crate::common::http_helpers::serve_capture(head, Vec::new()).await;

@@ -243,7 +243,8 @@ impl OAuth2RefreshProvider {
     /// # Errors
     ///
     /// Returns [`Error::InvalidUrl`](crate::Error::InvalidUrl) when
-    /// `token_endpoint` is not a valid URI, [`Error::InvalidConfig`] when the
+    /// `token_endpoint` is not a valid URI, [`Error::InvalidConfig`] when
+    /// `token_endpoint` is not `https` (loopback hosts are exempt), when the
     /// token HTTP client cannot be constructed, and
     /// [`Error::InvalidInput`](crate::Error::InvalidInput) when any
     /// credential is empty.
@@ -257,6 +258,23 @@ impl OAuth2RefreshProvider {
         let endpoint: Uri = token_endpoint
             .parse()
             .map_err(|source| Error::invalid_url(token_endpoint, source))?;
+        // Refresh credentials travel in the POST form body: never send them
+        // to a non-https endpoint over the network. Loopback hosts (local
+        // dev / test token servers) are exempt — that traffic never leaves
+        // the host.
+        let host = endpoint.host().unwrap_or_default().trim_matches(['[', ']']);
+        if endpoint.scheme_str() != Some("https")
+            && !matches!(
+                host.to_ascii_lowercase().as_str(),
+                "localhost" | "127.0.0.1" | "::1"
+            )
+        {
+            return Err(Error::InvalidConfig(
+                "token_endpoint must use https (a non-https remote endpoint would send \
+                 client_secret and refresh_token in plaintext)"
+                    .to_owned(),
+            ));
+        }
         let client_id = client_id.into();
         let client_secret = client_secret.into();
         let refresh_token = refresh_token.into();

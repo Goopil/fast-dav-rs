@@ -303,7 +303,9 @@ pub fn same_origin(a: &Uri, b: &Uri) -> bool {
 /// Supports absolute URLs with case-insensitive schemes (RFC 3986 §3.1 —
 /// `HTTPS://…` is absolute just like `https://…`), network-path references
 /// (`//host/path`, RFC 3986 §4.2 — resolved against the current scheme),
-/// root-relative paths, bare query references, and relative segment
+/// root-relative paths, bare query references, fragment-only references
+/// (RFC 3986 §5.3 — the current path and query are kept), and relative
+/// segment
 /// references (merged against the current directory, RFC 3986 §5). The
 /// merged path is normalized with the RFC 3986 §5.2.4 `remove_dot_segments`
 /// algorithm, so the resolved URI never contains `.` or `..` segments
@@ -325,6 +327,12 @@ pub fn resolve_location(current: &Uri, location: &str) -> Option<Uri> {
     if location.starts_with("//") {
         let scheme = current.scheme_str()?;
         return format!("{scheme}:{location}").parse().ok();
+    }
+
+    // Fragment-only reference (RFC 3986 §5.3): the current path and query
+    // are kept — only the fragment changes, and a `Uri` never stores one.
+    if location.starts_with('#') {
+        return Some(current.clone());
     }
 
     let scheme = current.scheme_str()?;
@@ -677,6 +685,11 @@ impl WebDavClient {
     /// through verbatim (see [`encode_path_segments`]). An absolute URL
     /// (`http://`/`https://…`) is parsed as-is.
     ///
+    /// Credentials (the static `Authorization` header or a token-provider
+    /// token) are only ever sent to the client's base origin: a request to
+    /// an absolute URL on a different origin is sent without them, exactly
+    /// like a cross-origin redirect hop.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidUrl`](crate::Error::InvalidUrl) when the
@@ -1009,7 +1022,12 @@ impl WebDavClient {
 
             let mut req_builder = Request::builder().method(method.clone()).uri(uri.clone());
 
-            if !strip_credentials {
+            // Credentials are only ever sent to the client's base origin:
+            // an absolute cross-origin path (e.g. a server-controlled href)
+            // must not receive the static header or a provider token.
+            // Relative paths always resolve to the base origin; redirect
+            // hops strip via `strip_credentials`.
+            if !strip_credentials && same_origin(&self.base, &uri) {
                 let auth = self.resolve_auth_header().await?;
                 if let Some(auth) = auth {
                     req_builder = req_builder.header(header::AUTHORIZATION, auth);
@@ -1182,6 +1200,14 @@ impl WebDavClient {
                 // (RFC 9110 §13.1.1) and must not leak to a new origin.
                 base_headers.remove(header::IF_MATCH);
                 base_headers.remove(header::IF_NONE_MATCH);
+                // WebDAV capability/scheduling headers carry origin-bound
+                // values: `Lock-Token` is a bearer capability URL,
+                // `Destination` an internal URL, `If-Schedule-Tag-Match` a
+                // scheduling validator — none of the target origin's
+                // business.
+                base_headers.remove("Lock-Token");
+                base_headers.remove("Destination");
+                base_headers.remove("If-Schedule-Tag-Match");
             }
             if resp.status() == StatusCode::SEE_OTHER {
                 method = Method::GET;
@@ -1610,8 +1636,10 @@ impl WebDavClient {
             .chars()
             .all(|c| c.is_ascii_graphic() && !matches!(c, '<' | '>' | '(' | ')'))
         {
+            // The token may be sensitive; echo only a short prefix.
+            let shown: String = token.chars().take(8).collect();
             return Err(Error::InvalidInput(format!(
-                "lock token contains characters invalid in a Coded-URL (RFC 4918 §10.5): {token:?}"
+                "lock token contains characters invalid in a Coded-URL (RFC 4918 §10.5): {shown}…"
             )));
         }
         Ok(())

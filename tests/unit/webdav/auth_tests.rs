@@ -586,6 +586,43 @@ async fn refresh_token_rotation_is_adopted() {
 }
 
 #[test]
+fn refresh_provider_rejects_non_https_token_endpoint() {
+    let err = OAuth2RefreshProvider::new(
+        "http://auth.example.com/oauth2/token",
+        "cid",
+        "cs",
+        "refresh",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidConfig(ref m) if m.contains("https")),
+        "a non-https remote token_endpoint must be rejected at construction, got: {err}"
+    );
+}
+
+#[test]
+fn refresh_provider_accepts_https_token_endpoint() {
+    assert!(
+        OAuth2RefreshProvider::new(
+            "https://auth.example.com/oauth2/token",
+            "cid",
+            "cs",
+            "refresh"
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn refresh_provider_allows_http_loopback_token_endpoint() {
+    assert!(
+        OAuth2RefreshProvider::new("http://127.0.0.1:8080/oauth2/token", "cid", "cs", "refresh")
+            .is_ok(),
+        "loopback http is exempt: the secrets never leave the machine"
+    );
+}
+
+#[test]
 fn builder_debug_redacts_token_provider() {
     let builder = WebDavClient::builder("https://dav.example.com/")
         .token_provider(Arc::new(StaticProvider::new("secret-token")));

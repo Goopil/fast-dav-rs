@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use zeroize::Zeroize;
 
+use crate::common::dav_warn;
 use crate::common::http::{HyperClient, MaybeProxied};
 use crate::webdav::auth::TokenProvider;
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
@@ -558,12 +559,23 @@ impl WebDavClientBuilder {
     /// Returns an error if the base URL is not a valid URI, if the base URL
     /// embeds userinfo credentials (RFC 9110 §3.2), if credentials
     /// are provided but cannot be encoded, if the proxy URI is invalid,
-    /// if `timeout` or `pool_max_idle_per_host` is zero, if PEM
+    /// if `timeout`, `connect_timeout`, `pool_idle_timeout`, or
+    /// `pool_max_idle_per_host` is zero, if PEM
     /// certificates cannot be parsed, or if `require_https` is enabled and
     /// the base URL is not `https://`.
     pub fn build(mut self) -> Result<WebDavClient> {
         if self.timeout.is_zero() {
             return Err(Error::InvalidConfig("timeout must be > 0".to_owned()));
+        }
+        if self.connect_timeout.is_some_and(|d| d.is_zero()) {
+            return Err(Error::InvalidConfig(
+                "connect_timeout must be > 0".to_owned(),
+            ));
+        }
+        if self.pool_idle_timeout.is_some_and(|d| d.is_zero()) {
+            return Err(Error::InvalidConfig(
+                "pool_idle_timeout must be > 0".to_owned(),
+            ));
         }
         if self.pool_max_idle_per_host == 0 {
             return Err(Error::InvalidConfig(
@@ -784,6 +796,12 @@ fn build_rustls_config(
         #[cfg(debug_assertions)]
         eprintln!(
             "fast-dav-rs: WARNING — danger_accept_invalid_certs is enabled, \
+             TLS certificate verification is disabled"
+        );
+        // Unconditional (release builds included); zero-cost when the
+        // optional `tracing` feature is off.
+        dav_warn!(
+            "fast-dav-rs: danger_accept_invalid_certs is enabled; \
              TLS certificate verification is disabled"
         );
 

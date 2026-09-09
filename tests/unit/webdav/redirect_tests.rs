@@ -103,6 +103,17 @@ fn resolve_location_dot_segments_in_issue_scenario() {
 }
 
 #[test]
+fn resolve_location_fragment_only_keeps_current_path_and_query() {
+    // RFC 3986 §5.3: a fragment-only reference keeps the current path and
+    // query (the fragment itself is never represented in a Uri).
+    let base: hyper::Uri = "http://a/b/c/d;p?q".parse().unwrap();
+    assert_eq!(
+        resolve_location(&base, "#frag").unwrap().to_string(),
+        "http://a/b/c/d;p?q"
+    );
+}
+
+#[test]
 fn resolve_location_network_path_reference() {
     // RFC 3986 §4.2: `//host/path` keeps the current scheme.
     let http: hyper::Uri = "http://127.0.0.1:9000/base/".parse().unwrap();
@@ -472,6 +483,121 @@ async fn redirect_cross_origin_strips_conditional_headers() {
     assert!(
         !second.to_ascii_lowercase().contains("if-none-match:"),
         "If-None-Match must not leak across origins (RFC 9110 §13.1.1): {second}"
+    );
+}
+
+#[tokio::test]
+async fn absolute_url_same_origin_sends_authorization() {
+    let ok_body = b"ok".to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", ok_body.len()),
+        ok_body,
+    )
+    .await;
+
+    let client = WebDavClient::builder(&base)
+        .basic_auth("user", "pass")
+        .build()
+        .unwrap();
+    client.set_request_compression_mode(fast_dav_rs::RequestCompressionMode::Disabled);
+
+    let absolute = format!("{base}resource");
+    let resp = client
+        .send(Method::GET, &absolute, HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(
+        req.contains("GET /resource HTTP/1.1"),
+        "absolute URL must be used verbatim: {req}"
+    );
+    assert!(
+        req.to_ascii_lowercase().contains("authorization: basic"),
+        "auth must be sent when the absolute URL is same-origin: {req}"
+    );
+}
+
+#[tokio::test]
+async fn absolute_url_cross_origin_omits_authorization() {
+    let ok_body = b"ok".to_vec();
+    let (target_base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", ok_body.len()),
+        ok_body,
+    )
+    .await;
+
+    // The client's base origin is never contacted: only the absolute
+    // cross-origin URL is requested (e.g. a server-controlled href).
+    let client = WebDavClient::builder("http://127.0.0.1:1/")
+        .basic_auth("user", "pass")
+        .build()
+        .unwrap();
+    client.set_request_compression_mode(fast_dav_rs::RequestCompressionMode::Disabled);
+
+    let absolute = format!("{target_base}target");
+    let resp = client
+        .send(Method::GET, &absolute, HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let guard = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&guard);
+    assert!(
+        !req.to_ascii_lowercase().contains("authorization:"),
+        "auth must never be sent to a cross-origin absolute URL: {req}"
+    );
+}
+
+#[tokio::test]
+async fn redirect_cross_origin_strips_webdav_capability_headers() {
+    // Destination server: answers 200 and captures the redirected request.
+    let ok_body = b"ok".to_vec();
+    let (target_base, captured_b) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", ok_body.len()),
+        ok_body,
+    )
+    .await;
+
+    // Origin server: redirects (absolute URL) to the destination server.
+    let location = format!("{target_base}target");
+    let (origin_base, _captured_a) = crate::common::http_helpers::serve_capture(
+        redirect_head(REDIRECT_307, &location),
+        Vec::new(),
+    )
+    .await;
+
+    let client = WebDavClient::builder(&origin_base).build().unwrap();
+    client.set_request_compression_mode(fast_dav_rs::RequestCompressionMode::Disabled);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Lock-Token", "<opaquelocktoken:xyz>".parse().unwrap());
+    headers.insert("Destination", "http://127.0.0.1:1/dest".parse().unwrap());
+    headers.insert("If-Schedule-Tag-Match", "\"sched-tag\"".parse().unwrap());
+
+    let resp = client
+        .send(Method::POST, "", headers, None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let guard = captured_b.lock().unwrap();
+    let second = String::from_utf8_lossy(&guard);
+    let lower = second.to_ascii_lowercase();
+    assert!(
+        !lower.contains("lock-token:"),
+        "Lock-Token (a bearer capability URL) must not leak across origins: {second}"
+    );
+    assert!(
+        !lower.contains("destination:"),
+        "Destination (an internal URL) must not leak across origins: {second}"
+    );
+    assert!(
+        !lower.contains("if-schedule-tag-match:"),
+        "If-Schedule-Tag-Match must not leak across origins: {second}"
     );
 }
 
