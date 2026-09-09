@@ -121,7 +121,7 @@ impl CalDavClient {
     ///
     /// Runs before any network I/O; an invalid body fails with
     /// [`Error::InvalidICalendar`].
-    fn prepare_ical_put(&self, body: &[u8]) -> Result<header::HeaderValue> {
+    pub(crate) fn prepare_ical_put(&self, body: &[u8]) -> Result<header::HeaderValue> {
         if self.validation_level == ValidationLevel::None {
             return Ok(header::HeaderValue::from_static(ICAL_CONTENT_TYPE));
         }

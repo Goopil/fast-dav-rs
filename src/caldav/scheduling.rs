@@ -120,9 +120,10 @@ pub struct InboxItem {
 ///
 /// Surrounding quotes are stripped and re-added, so both the raw schedule-tag
 /// and the quoted form returned in the `Schedule-Tag` response header are
-/// accepted. Empty (or whitespace-only) tags are rejected before any I/O.
-/// A tag containing embedded double quotes (which cannot be quoted
-/// unambiguously) produces a malformed header value.
+/// accepted. Empty (or whitespace-only) tags, and tags that cannot form a
+/// valid HTTP header value (e.g. embedded double quotes, which cannot be
+/// quoted unambiguously), are rejected with [`Error::InvalidInput`] before
+/// any I/O.
 fn schedule_tag_header_value(schedule_tag: &str) -> Result<header::HeaderValue> {
     let binding = crate::normalize_etag(schedule_tag);
     let tag = binding.trim();
@@ -425,22 +426,25 @@ impl CalDavClient {
     /// Failed` when the tag no longer matches; the response (any status)
     /// is returned to the caller.
     ///
-    /// The body is sent verbatim with `Content-Type: text/calendar` —
-    /// unlike [`put`](crate::CalDavClient::put) no client-side iCalendar
-    /// validation is applied.
+    /// The body is validated client-side per the configured
+    /// [`ValidationLevel`](crate::caldav::ValidationLevel) and the wire
+    /// `Content-Type` gains the `version` parameter the body declares —
+    /// exactly like [`put`](crate::CalDavClient::put).
     ///
     /// Note: like the ETag quoting of [`delete_if_match`], the tag is quoted
     /// verbatim — a schedule-tag containing embedded double quotes (which
-    /// cannot be quoted unambiguously) produces a malformed
-    /// `If-Schedule-Tag-Match` header; only empty or whitespace-only tags
-    /// are rejected before any I/O.
+    /// cannot be quoted unambiguously) cannot form a valid
+    /// `If-Schedule-Tag-Match` header and is rejected with
+    /// [`Error::InvalidInput`](crate::Error::InvalidInput) before any I/O.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidInput`](crate::Error::InvalidInput) **before
     /// any network I/O** when `schedule_tag` is empty or cannot form a
-    /// valid HTTP header value, and an error when the transport itself
-    /// fails.
+    /// valid HTTP header value, and
+    /// [`Error::InvalidICalendar`](crate::Error::InvalidICalendar) when the
+    /// body fails the configured validation level; an error is also
+    /// returned when the transport itself fails.
     ///
     /// # Example
     /// ```no_run
@@ -469,11 +473,9 @@ impl CalDavClient {
         body: Bytes,
         schedule_tag: &str,
     ) -> Result<Response<Bytes>> {
+        let content_type = self.prepare_ical_put(&body)?;
         let mut h = HeaderMap::new();
-        h.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static(ICAL_CONTENT_TYPE),
-        );
+        h.insert(header::CONTENT_TYPE, content_type);
         h.insert(
             header::HeaderName::from_static("if-schedule-tag-match"),
             schedule_tag_header_value(schedule_tag)?,

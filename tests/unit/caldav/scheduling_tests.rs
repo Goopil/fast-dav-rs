@@ -286,6 +286,49 @@ async fn put_if_schedule_tag_sends_quoted_header() {
 }
 
 #[tokio::test]
+async fn put_if_schedule_tag_sends_versioned_content_type() {
+    // The scheduling PUT aligns its Content-Type with `put`: the body's
+    // declared version is carried as a parameter.
+    let (base, captured) = serve_capture(response_head("", 0), Vec::new()).await;
+    let client = make_caldav_client(&base);
+
+    client
+        .put_if_schedule_tag("cal/event.ics", Bytes::from_static(OUTBOX_ICS), "abc123")
+        .await
+        .unwrap();
+
+    let request = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+    assert!(
+        request.lines().any(|line| {
+            line.split_once(':').is_some_and(|(name, value)| {
+                name.eq_ignore_ascii_case("content-type")
+                    && value.trim() == "text/calendar; charset=utf-8; version=2.0"
+            })
+        }),
+        "expected a versioned text/calendar Content-Type, got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn put_if_schedule_tag_rejects_invalid_body_before_io() {
+    let client = CalDavClient::new("http://127.0.0.1:9/", None, None).unwrap();
+
+    let err = client
+        .put_if_schedule_tag(
+            "cal/event.ics",
+            Bytes::from_static(b"not a calendar"),
+            "abc123",
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, fast_dav_rs::Error::InvalidICalendar { .. }),
+        "expected InvalidICalendar before any I/O, got {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn delete_if_schedule_tag_sends_quoted_header() {
     let (base, captured) = serve_capture(response_head("", 0), Vec::new()).await;
     let client = make_caldav_client(&base);
