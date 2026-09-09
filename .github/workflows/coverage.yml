@@ -55,6 +55,7 @@ jobs:
           mkdir -p target/llvm-cov
           cargo llvm-cov nextest \
             --test unit_tests \
+            --all-features \
             --profile ci \
             --no-fail-fast \
             --lcov \
