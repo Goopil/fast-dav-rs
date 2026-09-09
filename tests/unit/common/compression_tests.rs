@@ -11,7 +11,7 @@ use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 async fn make_incoming_body(data: Vec<u8>) -> hyper::body::Incoming {
     let (client_io, mut server_io) = io::duplex(16 * 1024);
 
-    let server_task = tokio::spawn(async move {
+    let _server_task = tokio::spawn(async move {
         let mut buf = [0u8; 1024];
         let mut seen = Vec::new();
         loop {
@@ -25,13 +25,15 @@ async fn make_incoming_body(data: Vec<u8>) -> hyper::body::Incoming {
             }
         }
 
+        // Writes must be tolerated: the reader may abort mid-body (e.g. the
+        // size cap) and drop the connection before the full payload lands.
         let header = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             data.len()
         );
         server_io.write_all(header.as_bytes()).await.unwrap();
-        server_io.write_all(&data).await.unwrap();
-        server_io.shutdown().await.unwrap();
+        let _ = server_io.write_all(&data).await;
+        let _ = server_io.shutdown().await;
     });
 
     let (mut sender, conn) = http1::handshake(TokioIo::new(client_io)).await.unwrap();
@@ -44,7 +46,9 @@ async fn make_incoming_body(data: Vec<u8>) -> hyper::body::Incoming {
         .unwrap();
 
     let resp = sender.send_request(req).await.unwrap();
-    server_task.await.unwrap();
+    // The server task must run CONCURRENTLY with body consumption: awaiting
+    // it here would deadlock on any body larger than the duplex buffer
+    // (16 KiB), because the writer blocks until the reader drains the pipe.
     resp.into_body()
 }
 
@@ -285,6 +289,35 @@ async fn test_decompress_body_empty() {
         .await
         .unwrap();
     assert!(decompressed.is_empty());
+}
+
+/// Mirror of the crate-internal `MAX_DECOMPRESSED_SIZE` (256 MiB), which is
+/// `pub(crate)` and cannot be imported from this test harness.
+const MAX_DECOMPRESSED_SIZE: u64 = 256 * 1024 * 1024;
+
+#[tokio::test]
+async fn test_decompress_body_rejects_oversized_bomb() {
+    // The fixture is gzip level 1 of 256 MiB + 1 zero bytes (~1.1 MB on disk);
+    // compressing it in-test is slow enough to be killed under CI load, so it
+    // is committed once instead.
+    let compressed = {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/unit/common/fixtures/gzip_zeros_256mib_bomb.gz"
+        );
+        std::fs::read(path).expect("fixture must exist")
+    };
+    let body = make_incoming_body(compressed).await;
+    let err = decompress_body(body, &[ContentEncoding::Gzip])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::BodyTooLarge { limit, .. } if limit == MAX_DECOMPRESSED_SIZE as usize
+        ),
+        "unexpected error: {err:?}"
+    );
 }
 
 #[tokio::test]

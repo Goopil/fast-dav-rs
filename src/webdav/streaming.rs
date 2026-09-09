@@ -29,10 +29,10 @@ fn dispatch_event<C: ItemConsumer>(
             parser.on_start(&e, decoder)?;
             parser.on_end(e.name().as_ref())?;
         }
-        Ok(Event::Text(e)) => parser.push_text(&decode_text(e.as_ref())?),
+        Ok(Event::Text(e)) => parser.push_text(&decode_text(e.as_ref())?)?,
         Ok(Event::GeneralRef(e)) => parser.push_ref(e.as_ref())?,
         Ok(Event::CData(e)) => {
-            parser.push_cdata(String::from_utf8_lossy(e.as_ref()).into_owned());
+            parser.push_cdata(String::from_utf8_lossy(e.as_ref()).into_owned())?;
         }
         Ok(Event::End(e)) => {
             parser.flush_text()?;
@@ -238,6 +238,7 @@ impl CommonParser {
 // Unified multistatus parser (shared by CalDAV and CardDAV)
 // ---------------------------------------------------------------------------
 
+use crate::common::compression::MAX_DECOMPRESSED_SIZE;
 use crate::common::compression::{body_stream_reader, stack_decoders};
 use crate::webdav::types::{DavItem, MediaType, Privilege};
 use hyper::body::Incoming;
@@ -252,6 +253,22 @@ use std::io::{BufRead, Cursor};
 /// a cap on the total parse duration: arbitrarily large responses are fine as long as
 /// data keeps flowing.
 pub const STREAM_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Maximum bytes of text accumulated for a single parsed item (text runs plus
+/// `calendar-data` / `address-data` / `calendar-timezone` payloads). Matches the
+/// aggregate [`MAX_DECOMPRESSED_SIZE`] cap enforced on response bodies.
+const MAX_ITEM_TEXT_BYTES: usize = MAX_DECOMPRESSED_SIZE as usize;
+
+/// Append `text` to `target` unless that would push it past `limit`; aborts
+/// with [`Error::BodyTooLarge`] (leaving `target` unchanged) instead of
+/// growing an unbounded buffer.
+fn append_capped(target: &mut String, text: &str, limit: usize) -> Result<()> {
+    if target.len() + text.len() > limit {
+        return Err(Error::BodyTooLarge { limit });
+    }
+    target.push_str(text);
+    Ok(())
+}
 
 /// Element names inside a `207 Multi-Status` body — union of the DAV core,
 /// CalDAV, and CardDAV element sets. Domain variants only appear in responses
@@ -666,19 +683,18 @@ impl<C: ItemConsumer> MultistatusParser<C> {
         Ok(())
     }
 
-    fn push_text(&mut self, text: &str) {
-        self.text_buf.push_str(text);
+    fn push_text(&mut self, text: &str) -> Result<()> {
+        append_capped(&mut self.text_buf, text, MAX_ITEM_TEXT_BYTES)
     }
 
     fn push_ref(&mut self, name: &[u8]) -> Result<()> {
         let name = String::from_utf8_lossy(name);
-        self.text_buf
-            .push_str(&decode_entity_token(&format!("&{name};"))?);
-        Ok(())
+        let token = decode_entity_token(&format!("&{name};"))?;
+        append_capped(&mut self.text_buf, &token, MAX_ITEM_TEXT_BYTES)
     }
 
-    fn push_cdata(&mut self, text: String) {
-        self.text_buf.push_str(&text);
+    fn push_cdata(&mut self, text: String) -> Result<()> {
+        append_capped(&mut self.text_buf, &text, MAX_ITEM_TEXT_BYTES)
     }
 
     fn flush_text(&mut self) -> Result<()> {
@@ -686,13 +702,12 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             return Ok(());
         }
         let text = std::mem::take(&mut self.text_buf);
-        self.handle_text(text);
-        Ok(())
+        self.handle_text(text)
     }
 
-    fn handle_text(&mut self, text: String) {
+    fn handle_text(&mut self, text: String) -> Result<()> {
         if text.is_empty() {
-            return;
+            return Ok(());
         }
 
         self.common.on_text(&text);
@@ -705,12 +720,8 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Prop,
             ElementName::CalendarData,
         ]) {
-            if let Some(existing) = self.current.calendar_data.as_mut() {
-                existing.push_str(&text);
-            } else {
-                self.current.calendar_data = Some(text);
-            }
-            return;
+            let existing = self.current.calendar_data.get_or_insert_with(String::new);
+            return append_capped(existing, &text, MAX_ITEM_TEXT_BYTES);
         }
         if self.path_ends_with(&[
             ElementName::Response,
@@ -718,12 +729,8 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Prop,
             ElementName::AddressData,
         ]) {
-            if let Some(existing) = self.current.address_data.as_mut() {
-                existing.push_str(&text);
-            } else {
-                self.current.address_data = Some(text);
-            }
-            return;
+            let existing = self.current.address_data.get_or_insert_with(String::new);
+            return append_capped(existing, &text, MAX_ITEM_TEXT_BYTES);
         }
 
         // calendar-timezone can also contain multi-line iCalendar content; preserve it.
@@ -733,17 +740,16 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             ElementName::Prop,
             ElementName::CalendarTimezone,
         ]) {
-            if let Some(existing) = self.current.calendar_timezone.as_mut() {
-                existing.push_str(&text);
-            } else {
-                self.current.calendar_timezone = Some(text.clone());
-            }
-            return;
+            let existing = self
+                .current
+                .calendar_timezone
+                .get_or_insert_with(String::new);
+            return append_capped(existing, &text, MAX_ITEM_TEXT_BYTES);
         }
 
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            return;
+            return Ok(());
         }
 
         if self.path_ends_with(&[
@@ -840,6 +846,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             // element name keeps this independent of the parent nesting.
             self.current.managed_ids.push(trimmed.to_string());
         }
+        Ok(())
     }
 }
 
@@ -1621,5 +1628,39 @@ mod tests {
         ));
         let result = parse_current_user_principal_bytes(&xml).unwrap();
         assert_eq!(result.as_deref(), Some("/principals/first/"));
+    }
+
+    #[test]
+    fn append_capped_rejects_text_past_limit() {
+        let mut buf = String::new();
+        append_capped(&mut buf, "abc", 4).unwrap();
+        let err = append_capped(&mut buf, "de", 4).unwrap_err();
+        assert!(matches!(err, Error::BodyTooLarge { limit: 4 }), "{err:?}");
+        assert_eq!(buf, "abc", "aborted append must leave the buffer unchanged");
+    }
+
+    #[test]
+    fn per_item_text_accumulation_is_capped() {
+        let mut parser = MultistatusParser::new(Vec::<DavItem>::new());
+        parser.stack = vec![
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::CalendarData,
+        ];
+        let chunk = "x".repeat(64 * 1024);
+        let chunks = MAX_ITEM_TEXT_BYTES / chunk.len() + 2;
+        let mut result = Ok(());
+        for _ in 0..chunks {
+            result = parser.handle_text(chunk.clone());
+            if result.is_err() {
+                break;
+            }
+        }
+        let err = result.expect_err("per-item cap must abort accumulation");
+        assert!(
+            matches!(err, Error::BodyTooLarge { limit } if limit == MAX_ITEM_TEXT_BYTES),
+            "{err:?}"
+        );
     }
 }
