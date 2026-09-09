@@ -1,11 +1,12 @@
 //! Structural iCalendar validation for CalDAV `PUT` bodies (RFC 5545).
 //!
 //! The checks are a deliberately cheap, dependency-free line scan over the
-//! unfolded raw text: they catch the common breakage modes (truncated
-//! bodies, missing required properties, unbalanced components) before any
-//! bytes hit the wire. Full RFC 5545 parsing (line folding, `VTIMEZONE`,
+//! BOM-stripped, unfolded text: they catch the common breakage modes
+//! (truncated bodies, missing required properties, unbalanced components)
+//! before any bytes hit the wire. Full RFC 5545 parsing (`VTIMEZONE`,
 //! iTIP/`METHOD` semantics) is out of scope.
 
+use crate::common::unfold_ical_lines;
 use crate::error::ICalendarViolation;
 use crate::{Error, Result};
 
@@ -55,9 +56,11 @@ pub enum ValidationLevel {
 /// 6. every `BEGIN:x` has a matching `END:x` (case-insensitive names);
 /// 7. every `VEVENT`/`VTODO` component carries a `UID` property.
 ///
-/// Parsing is a line-based scan on the unfolded raw text (split on CRLF/LF);
-/// property and component names are matched case-insensitively per
-/// RFC 5545. No full iCalendar parsing is performed.
+/// Parsing is a line-based scan on the unfolded raw text: a leading UTF-8
+/// BOM is stripped and RFC 5545 §3.1 continuation lines (lines starting
+/// with a single space or tab) are joined before the scan, which splits on
+/// CRLF/LF. Property and component names are matched case-insensitively
+/// per RFC 5545. No full iCalendar parsing is performed.
 ///
 /// # Errors
 ///
@@ -101,11 +104,15 @@ pub(crate) fn validate_icalendar_level(data: &[u8], level: ValidationLevel) -> R
         violation: ICalendarViolation::NotUtf8,
     })?;
 
-    // Empty lines carry no information; trimming each line makes the scan
-    // CRLF/LF tolerant (`str::lines` already strips a trailing `\r`).
-    let lines: Vec<&str> = text
-        .lines()
-        .map(str::trim)
+    // Unfold RFC 5545 §3.1 continuation lines (and strip a UTF-8 BOM) so a
+    // folded `VERSION`/`PRODID`/`UID` or a BOM before `BEGIN:VCALENDAR` is
+    // seen as its logical line. Empty lines carry no information; trimming
+    // each line keeps the scan CRLF/LF tolerant (`str::lines` already
+    // strips a trailing `\r`).
+    let unfolded = unfold_ical_lines(text);
+    let lines: Vec<&str> = unfolded
+        .iter()
+        .map(|l| l.trim())
         .filter(|l| !l.is_empty())
         .collect();
 
@@ -199,7 +206,10 @@ pub(crate) fn validate_icalendar_level(data: &[u8], level: ValidationLevel) -> R
             violation: ICalendarViolation::MissingProdId,
         });
     }
-    Ok(version)
+    // The check above guarantees the declared value is exactly `2.0` (no
+    // ASCII letters to case-fold); return the literal so the result does not
+    // borrow from the locally-unfolded lines.
+    Ok("2.0")
 }
 
 /// Case-insensitive `strip_prefix`.

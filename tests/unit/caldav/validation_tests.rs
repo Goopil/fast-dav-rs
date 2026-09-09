@@ -131,6 +131,53 @@ fn non_property_lines_without_colon_are_ignored() {
 }
 
 #[test]
+fn accepts_folded_prodid() {
+    // RFC 5545 §3.1 folding must not hide PRODID from the scan: a folded
+    // property name and a folded value are one logical line.
+    let folded_name = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPROD\r\n ID:-//X//Y\r\nEND:VCALENDAR\r\n";
+    assert!(fast_dav_rs::caldav::validate_icalendar(folded_name).is_ok());
+    let folded_value =
+        b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//X//Y\r\n Z//EN\r\nEND:VCALENDAR\r\n";
+    assert!(fast_dav_rs::caldav::validate_icalendar(folded_value).is_ok());
+}
+
+#[test]
+fn accepts_folded_uid_in_vevent() {
+    let body = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\n\
+        BEGIN:VEVENT\r\nUI\r\n D:1@example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    assert!(fast_dav_rs::caldav::validate_icalendar(body).is_ok());
+}
+
+#[test]
+fn folded_continuation_starting_with_begin_does_not_break_component_stack() {
+    // The physical line ` BEGIN:bar` continues the SUMMARY value; it must
+    // not be treated as a component delimiter.
+    let body = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VEVENT\r\nUID:1\r\nSUMMARY:foo\r\n BEGIN:bar\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    assert!(fast_dav_rs::caldav::validate_icalendar(body).is_ok());
+}
+
+#[test]
+fn accepts_utf8_bom_prefixed_body() {
+    let body =
+        b"\xEF\xBB\xBFBEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nEND:VCALENDAR\r\n";
+    assert!(fast_dav_rs::caldav::validate_icalendar(body).is_ok());
+}
+
+#[test]
+fn folded_missing_end_still_rejected() {
+    let body = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\n\
+        BEGIN:VEVENT\r\nUID:1\r\nEND:VEVENT";
+    assert_eq!(violation_of(body), ICalendarViolation::MissingEnd);
+}
+
+#[test]
+fn folded_unsupported_version_still_rejected() {
+    // `VERSION:3.` + continuation ` 0` unfolds to `3.0` — still rejected.
+    let body = b"BEGIN:VCALENDAR\r\nVERSION:3.\r\n 0\r\nPRODID:-//t//EN\r\nEND:VCALENDAR\r\n";
+    assert_eq!(violation_of(body), ICalendarViolation::UnsupportedVersion);
+}
+
+#[test]
 fn violation_display_covers_every_violation() {
     // Each violation-producing body, with the variant it must yield.
     let cases: &[(&[u8], ICalendarViolation)] = &[

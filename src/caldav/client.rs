@@ -11,6 +11,7 @@ use crate::caldav::types::{
     ManagedAttachment, SyncItem, SyncResponse, TimeRange,
 };
 use crate::caldav::validation::{ValidationLevel, validate_icalendar_level};
+use crate::common::unfold_ical_lines;
 use crate::impl_dav_client_delegates;
 use crate::webdav::client::WebDavClient;
 use crate::webdav::types::map_sync_rows;
@@ -777,9 +778,9 @@ impl CalDavClient {
     /// The server reports the busy periods it knows about for `start`..`end`
     /// (iCalendar UTC date-times, e.g. `20240101T000000Z`). Periods are
     /// extracted from the `FREEBUSY` properties of the returned `VFREEBUSY`
-    /// component; periods in `start/duration` form and periods with an
-    /// unrecognized `FBTYPE` are skipped (free/busy line folding is not
-    /// unfolded). The REPORT is sent with `Depth: 1` as mandated by
+    /// component; folded lines are unfolded per RFC 5545 §3.1, and periods
+    /// in `start/duration` form and periods with an unrecognized `FBTYPE`
+    /// are skipped. The REPORT is sent with `Depth: 1` as mandated by
     /// RFC 4791 §9.7.
     ///
     /// Both response shapes are handled: the RFC 4791 §7.10.2 multistatus with
@@ -1045,20 +1046,23 @@ fn validate_expand(context: &str, expand: Option<&TimeRange>) -> Result<()> {
 /// Extract `FreeBusyPeriod`s from the `FREEBUSY` properties of a `VFREEBUSY`
 /// component (minimal line-based parser — no full iCalendar parser).
 ///
-/// A `FREEBUSY` line looks like
-/// `FREEBUSY;FBTYPE=BUSY-UNAVAILABLE:start/end,start/end`. A missing `FBTYPE`
+/// The text is unfolded first (RFC 5545 §3.1 continuation lines joined, a
+/// leading UTF-8 BOM stripped — see [`unfold_ical_lines`]). A `FREEBUSY`
+/// line looks like `FREEBUSY;FBTYPE=BUSY-UNAVAILABLE:start/end,start/end`;
+/// the name/params/value split happens at the first `:` outside double
+/// quotes, so a quoted parameter value may contain `:`. A missing `FBTYPE`
 /// defaults to `Busy`; an unrecognized `FBTYPE` value skips the line's
 /// periods. Periods in `start/duration` form are skipped.
 fn parse_free_busy_periods(calendar_data: &str) -> Vec<FreeBusyPeriod> {
     let mut out = Vec::new();
-    for line in calendar_data.lines() {
+    for line in unfold_ical_lines(calendar_data) {
         let Some(rest) = line.trim().strip_prefix("FREEBUSY") else {
             continue;
         };
         if !rest.starts_with(':') && !rest.starts_with(';') {
             continue;
         }
-        let Some((params, value)) = rest.split_once(':') else {
+        let Some((params, value)) = split_params_value(rest) else {
             continue;
         };
         let fb_type = fbtype_from_params(params);
@@ -1085,6 +1089,21 @@ fn parse_free_busy_periods(calendar_data: &str) -> Vec<FreeBusyPeriod> {
         }
     }
     out
+}
+
+/// Split the remainder of a content line (`;params:value`) into
+/// `(params, value)` at the first `:` outside double quotes (RFC 5545 §3.1:
+/// a quoted `param-value` may contain `:`).
+fn split_params_value(rest: &str) -> Option<(&str, &str)> {
+    let mut quoted = false;
+    for (i, ch) in rest.char_indices() {
+        match ch {
+            '"' => quoted = !quoted,
+            ':' if !quoted => return Some((&rest[..i], &rest[i + 1..])),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Map the `FBTYPE` parameter of a `FREEBUSY` property (RFC 4791 §9.7.3).

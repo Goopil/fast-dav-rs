@@ -1,10 +1,13 @@
 pub mod compression;
 pub mod http;
 
+mod ical;
+
 pub use compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
     decompress_stream, detect_encoding, detect_encodings,
 };
+pub(crate) use ical::unfold_ical_lines;
 
 // Internal, cfg-gated tracing macros (single definition site): each expands to
 // the matching `tracing` call when the `tracing` feature is enabled and to
