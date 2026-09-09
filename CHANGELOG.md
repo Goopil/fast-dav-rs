@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-09-09
+
+### Fixed
+Results of the adversarial review of 2026-09-08 (26 findings; PRs #217–#222).
+
+- **Published crate now compiles** (#217): the `Cargo.toml` `include` list omitted `docs/`,
+  which `src/lib.rs` pulls in via `include_str!`, so `cargo publish`/`cargo package` failed for
+  the released crate. The five shipped guides are packaged again; CI also gained a
+  `cargo package --locked` gate and the coverage workflow now runs with `--all-features`.
+- **Sync fallback no longer deletes local data on transient errors** (#218): when the RFC 6578
+  sync-token REPORT falls back to a PROPFIND enumeration, an item whose fetch hits a transient
+  error (5xx, timeout, …) is reported through `items_with_errors` instead of being classified
+  as `deleted`. A non-continuable truncation returns a typed error instead of presenting a
+  partial delta as complete; a bare `403` during capability probing propagates instead of
+  pinning `Unsupported` forever (only `405` pins); per-item non-success statuses in
+  `multiget_data` surface as error `BatchItem`s; and concurrent `SyncSession::incremental()`
+  calls are single-flighted around the capability probe and token state.
+- **Transport hardening** (#219): credentials are only sent to the configured origin, not to
+  caller-supplied absolute URLs; OAuth2 `token_endpoint` must be `https://`; zero timeouts are
+  rejected at build time; `Lock-Token`, `Destination`, and `If-Schedule-Tag-Match` are stripped
+  on cross-origin redirects; OAuth token errors echo only a truncated token prefix;
+  `Location` fragment-only redirects keep the query; HTTP-date day validity is enforced; the
+  `danger_accept_invalid_certs` warning is emitted in release builds too.
+- **iCalendar parsing accepts RFC 5545 folded content** (#220): client-side validation unfolds
+  long lines and accepts a UTF-8 BOM, so RFC-valid bodies no longer fail `PUT` under the
+  default `Structural` level; the FREEBUSY parser unfolds folded lines and splits quoted
+  parameters correctly. Shared logic lives in `common::ical`.
+- **XML robustness** (#221): multistatus elements are matched after namespace resolution —
+  recognized local names are only honored in `DAV:`, CalDAV, and CardDAV namespaces (plus
+  Apple's iCal namespace for `calendar-color`/`addressbook-color`), so a colliding
+  foreign-namespace element parses as `Other`; unknown XML entities decode as literal text
+  instead of failing the whole response; streaming item text and decompression are bounded with
+  incremental limit checks; XML builder namespace/element parameters are escaped; the ASCII
+  case-insensitive element matching is documented and locked in by tests.
+- **Multiget href equivalence** (#222): hrefs are compared on normalized forms (absolute URIs
+  reduced to their path, percent-escapes decoded), so servers echoing absolute or
+  percent-encoded hrefs no longer mark everything `missing`.
+- **`put_if_schedule_tag` aligned with `put`** (#222): the scheduling PUT runs the same
+  client-side iCalendar gate and sends the body's declared `version` as a `Content-Type`
+  parameter; the schedule-tag docs match the actual pre-I/O `InvalidInput` behavior.
+- **Documentation** (#222): the absence of client-side vCard validation on CardDAV writes and
+  the duplicated-write risk of `retry_all(true)` are now documented in the README,
+  `docs/advanced-configuration.md`, and the affected rustdoc.
+
 ## [0.15.0] - 2026-09-08
 
 ### Added
