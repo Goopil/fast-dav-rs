@@ -956,6 +956,37 @@ async fn addressbook_multiget_many_reports_missing_hrefs() {
 }
 
 #[tokio::test]
+async fn addressbook_multiget_many_accepts_absolute_echoed_hrefs() {
+    // Servers legitimately echo absolute URIs when the request used relative
+    // hrefs; equivalent URIs must not be reported as missing.
+    let hrefs = vec!["/contacts/a.vcf".to_string(), "/contacts/b.vcf".to_string()];
+    let (head, body) = addressbook_multiget_report_response(
+        &[
+            "https://dav.example.test/contacts/a.vcf",
+            "https://dav.example.test/contacts/b.vcf",
+        ],
+        true,
+    );
+    let base = crate::common::http_helpers::serve_once(head, body).await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let items = client
+        .addressbook_multiget_many("contacts/", &hrefs, true, 2, 2)
+        .await
+        .unwrap();
+
+    assert!(
+        items.iter().all(|b| b.missing_hrefs.is_empty()),
+        "absolute echoes of relative hrefs must not be reported missing, got: {:?}",
+        items
+            .iter()
+            .flat_map(|b| b.missing_hrefs.iter())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
 async fn addressbook_multiget_many_rejects_zero_batch_size_before_io() {
     let base = crate::common::http_helpers::unreachable_base().await;
     let client = CardDavClient::new(&base, None, None).unwrap();
