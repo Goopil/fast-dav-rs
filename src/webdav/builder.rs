@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use zeroize::Zeroize;
 
+use crate::common::dav_warn;
 use crate::common::http::{HyperClient, MaybeProxied};
 use crate::webdav::auth::TokenProvider;
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
@@ -795,6 +796,12 @@ fn build_rustls_config(
         #[cfg(debug_assertions)]
         eprintln!(
             "fast-dav-rs: WARNING — danger_accept_invalid_certs is enabled, \
+             TLS certificate verification is disabled"
+        );
+        // Unconditional (release builds included); zero-cost when the
+        // optional `tracing` feature is off.
+        dav_warn!(
+            "fast-dav-rs: danger_accept_invalid_certs is enabled; \
              TLS certificate verification is disabled"
         );
 

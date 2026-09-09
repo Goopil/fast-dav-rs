@@ -29,8 +29,18 @@ macro_rules! dav_trace {
     ($($arg:tt)*) => {};
 }
 
+#[cfg(feature = "tracing")]
+macro_rules! dav_warn {
+    ($($arg:tt)*) => { ::tracing::warn!($($arg)*) };
+}
+#[cfg(not(feature = "tracing"))]
+macro_rules! dav_warn {
+    ($($arg:tt)*) => {};
+}
+
 pub(crate) use dav_debug;
 pub(crate) use dav_trace;
+pub(crate) use dav_warn;
 
 /// Replace userinfo credentials in a URL string with `***`.
 ///
