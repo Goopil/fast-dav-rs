@@ -53,7 +53,9 @@ above into a per-collection, in-memory state machine — the DAVx⁵ approach:
 The session is in-memory only: **you** persist `sync_token` between runs
 (store it next to your application data) and restore it with
 `with_sync_token`. Clones share the token and the probe cache, like client
-clones share the connection pool.
+clones share the connection pool, and concurrent `initial()`/`incremental()`
+calls on clones are serialized (single-flight): one probe and one report at
+a time, with the session state transitions kept consistent.
 
 ```rust
 use fast_dav_rs::{CalDavClient, Result, SyncSession};

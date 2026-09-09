@@ -146,7 +146,9 @@ struct SessionState {
 /// token, and (internally) the previous href→etag state used for the
 /// transparent full-list fallback and the added/modified classification.
 /// Clones share the token and probe cache, like [`WebDavClient`] clones share
-/// the connection pool.
+/// the connection pool. Concurrent `initial()`/`incremental()` calls on
+/// clones are serialized (single-flight per session): one probe and one
+/// report at a time, with the session state transitions kept consistent.
 ///
 /// The session itself persists nothing: store
 /// [`SyncSnapshot::sync_token`] / [`SyncDelta::sync_token`] in your own
@@ -221,6 +223,11 @@ pub struct SyncSession {
     /// `Some` for CalDAV/CardDAV sessions: data is fetched alongside etags.
     data: Option<SyncDataSpec>,
     state: Arc<Mutex<SessionState>>,
+    /// Single-flight across clones: `initial()`/`incremental()` hold this
+    /// for their whole body so concurrent calls on shared state run one at
+    /// a time — one capability probe, and the token/prev read-modify-write
+    /// cannot interleave across an await.
+    sync_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl SyncSession {
@@ -235,6 +242,7 @@ impl SyncSession {
             collection: collection.into(),
             data: None,
             state: Arc::new(Mutex::new(SessionState::default())),
+            sync_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -280,6 +288,8 @@ impl SyncSession {
     /// [`incremental`](Self::incremental), a bare `403` propagates without
     /// downgrading the session; only a `405` pins the fallback.
     pub async fn initial(&self) -> Result<SyncSnapshot> {
+        // Single-flight across clones (see `sync_lock`).
+        let _single_flight = self.sync_lock.lock().await;
         if self.capability().await != SyncCapability::Unsupported {
             match self.sync_snapshot().await {
                 Ok(snapshot) => return Ok(snapshot),
@@ -317,6 +327,8 @@ impl SyncSession {
     /// not implemented) pins the capability to `Unsupported` for the
     /// session's lifetime and switches to the full-list fallback.
     pub async fn incremental(&self) -> Result<SyncDelta> {
+        // Single-flight across clones (see `sync_lock`).
+        let _single_flight = self.sync_lock.lock().await;
         if self.capability().await != SyncCapability::Unsupported {
             match self.sync_collection_delta().await {
                 Ok(delta) => return Ok(delta),

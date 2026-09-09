@@ -981,6 +981,42 @@ async fn sync_session_unknown_capability_still_attempts_sync_collection() {
 }
 
 #[tokio::test]
+async fn sync_session_concurrent_incrementals_serialize_into_one_probe() {
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(SYNC_SUPPORTED_PROPFIND),
+        multistatus_response(INITIAL_BODY),
+        multistatus_response(EMPTY_DELTA_BODY),
+    ])
+    .await;
+    let session = make_client(&base).sync_session("cal/");
+    let a = session.clone();
+    let b = session.clone();
+
+    let (ra, rb) = tokio::join!(a.incremental(), b.incremental());
+    let (da, db) = (ra.unwrap(), rb.unwrap());
+    // Whichever clone ran first saw the full state as added; the second
+    // saw an empty delta against the fresh token.
+    let (first, second) = if da.added.len() == 2 {
+        (da, db)
+    } else {
+        (db, da)
+    };
+    assert_eq!(first.added.len(), 2, "the first sync is a full snapshot");
+    assert!(
+        second.added.is_empty() && second.modified.is_empty() && second.deleted.is_empty(),
+        "the second sync must be a clean delta against the fresh token"
+    );
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 3, "one probe + two sync-collection reports");
+    let probes = reqs
+        .iter()
+        .filter(|r| String::from_utf8_lossy(r).contains("supported-report-set"))
+        .count();
+    assert_eq!(probes, 1, "the capability probe must run exactly once");
+}
+
+#[tokio::test]
 async fn sync_session_clones_share_token_and_probe_state() {
     let (base, _captured) = serve_sequence(vec![
         multistatus_response(SYNC_SUPPORTED_PROPFIND),
