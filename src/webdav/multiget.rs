@@ -29,8 +29,9 @@ use crate::{Error, Operation, Result};
 /// - A parsed chunk produces one `BatchItem` per mapped object, in server
 ///   order, each carrying the chunk's `pub_path`, `hrefs`, and
 ///   `missing_hrefs` — the requested hrefs the server did not echo with a
-///   `<D:response>` (exact href string comparison). For compliant servers
-///   `missing_hrefs` is empty.
+///   `<D:response>` (comparison on normalized hrefs: absolute and relative
+///   forms of the same path, and differing percent-escapes, are
+///   equivalent). For compliant servers `missing_hrefs` is empty.
 ///
 /// `map` turns the chunk's parsed multistatus entries into the caller's
 /// objects (one `BatchItem` per returned object, mirroring the CalDAV
@@ -90,14 +91,18 @@ where
                 match parse_multistatus_bytes(&body) {
                     Ok(parsed) => {
                         let items = parsed.items;
-                        // Exact href string comparison: a compliant server
-                        // echoes every requested href (RFC 4791 §9.6.1,
-                        // RFC 6352 §8.7); anything not echoed is reported.
-                        let returned: Vec<&str> =
-                            items.iter().map(|item| item.href.as_str()).collect();
+                        // Equivalence comparison on normalized hrefs: a
+                        // compliant server echoes every requested href
+                        // (RFC 4791 §9.6.1, RFC 6352 §8.7), but may do so
+                        // with an absolute URI or different percent-escapes;
+                        // anything not echoed is reported.
+                        let returned: std::collections::HashSet<String> = items
+                            .iter()
+                            .map(|item| normalize_href(&item.href))
+                            .collect();
                         let missing: Vec<String> = requested
                             .iter()
-                            .filter(|href| !returned.contains(&href.as_str()))
+                            .filter(|href| !returned.contains(&normalize_href(href)))
                             .cloned()
                             .collect();
                         for object in map(items) {
@@ -126,4 +131,45 @@ where
         }
     }
     Ok(out)
+}
+
+/// Normalize a WebDAV href for equivalence comparison: absolute URI
+/// references are reduced to their path component and percent-escapes are
+/// decoded, so `/cal/a.ics`, `https://host/cal/a.ics` and
+/// `https://host/cal/%61.ics` compare equal.
+fn normalize_href(href: &str) -> String {
+    let path = match href.find("://") {
+        Some(idx) => {
+            let rest = &href[idx + 3..];
+            match rest.find('/') {
+                Some(slash) => &rest[slash..],
+                None => "/",
+            }
+        }
+        None => href,
+    };
+    percent_decode(path)
+}
+
+/// Percent-decode, leaving invalid or partial escapes byte-identical.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = &bytes[i + 1..i + 3];
+            if let Some(decoded) = std::str::from_utf8(hex)
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+            {
+                out.push(decoded);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

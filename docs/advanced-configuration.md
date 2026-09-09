@@ -227,7 +227,10 @@ to `429`, `503`, and `504` responses: a `429` honors the server's `Retry-After` 
 an exponential backoff (base 2, initial ~250 ms, doubling per attempt, capped at ~8 s) with
 ±25 % jitter. Only idempotent methods (`GET`, `HEAD`, `OPTIONS`, `PROPFIND`, `REPORT`) are
 retried by default; `retry_all(true)` extends retrying to every method (`PUT`, `POST`,
-`DELETE`, `MKCOL`, `COPY`, `MOVE`, `LOCK`, …). When retries are exhausted, the **last
+`DELETE`, `MKCOL`, `COPY`, `MOVE`, `LOCK`, …). **Beware:** re-sending a non-idempotent write
+whose first attempt actually reached the origin duplicates its effect (e.g. a `PUT` behind a
+gateway answering `504` after applying the write is sent a second time) — only enable it
+against origins where a duplicated write is acceptable. When retries are exhausted, the **last
 response is returned as-is** — callers see the real status through the existing error
 handling. The retry budget counts every HTTP attempt across the whole redirect chain
 (total attempts = `1 + max_retries`), and each attempt — retries included — runs under the

@@ -118,6 +118,11 @@ impl CardDavClient {
     /// `text/vcard; charset=utf-8; version=3.0` — and bodies without a
     /// well-formed `VERSION` fall back to [`VCARD_CONTENT_TYPE`] (4.0).
     ///
+    /// Unlike CalDAV writes ([`ValidationLevel`](crate::caldav::ValidationLevel)),
+    /// **no client-side vCard validation is applied**: bodies are sent
+    /// verbatim after the `VERSION` scan, so malformed vCards surface only
+    /// as server-side errors.
+    ///
     /// # Provider quirks: read back non-ASCII writes
     ///
     /// On at least one real-world deployment ("Provider A"), vCard writes
