@@ -323,6 +323,18 @@ pub enum ElementName {
     Privilege,
 }
 
+/// Map a raw XML element name (`prefix:local` or `local`) to an
+/// [`ElementName`].
+///
+/// Matching is performed on the local name with any prefix stripped, and is
+/// ASCII-case-insensitive: `<D:HREF>`, `<d:Href>` and `<href>` all map to
+/// [`ElementName::Href`]. This documented tolerance accepts servers that
+/// emit non-canonical element-name casing in multistatus bodies.
+///
+/// Namespace resolution happens in the multistatus parser: a recognized
+/// local name is only honored in the DAV:, CalDAV and CardDAV namespaces
+/// (plus Apple's iCal namespace for the two color elements); colliding
+/// foreign-namespace elements are rewritten to [`ElementName::Other`].
 pub fn element_from_bytes(raw: &[u8]) -> ElementName {
     let local = local_name(raw);
 

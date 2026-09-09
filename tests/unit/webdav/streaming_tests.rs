@@ -416,3 +416,23 @@ END:VCALENDAR
             .contains("BEGIN:VCALENDAR")
     );
 }
+
+/// Element matching is ASCII-case-insensitive by design (documented
+/// tolerance for non-canonical server element-name casing).
+#[test]
+fn uppercase_element_names_are_matched() {
+    let xml = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:RESPONSE>
+    <D:HREF>/cal/a.ics</D:HREF>
+    <D:PROPSTAT>
+      <D:PROP><D:GETETAG>"1"</D:GETETAG></D:PROP>
+      <D:STATUS>HTTP/1.1 200 OK</D:STATUS>
+    </D:PROPSTAT>
+  </D:RESPONSE>
+</D:multistatus>"#;
+    let result = parse_multistatus_bytes(xml).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].href, "/cal/a.ics");
+    assert_eq!(result.items[0].etag.as_deref(), Some("1"));
+}
