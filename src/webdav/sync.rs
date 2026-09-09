@@ -7,7 +7,7 @@
 //! 2. when `sync-collection` is supported: `initial()` is a sync-collection
 //!    with an empty token, `incremental()` carries the stored token;
 //! 3. when it is not (probe-negative, or the server rejects the report with
-//!    `403`/`405`): transparent fallback to a `PROPFIND Depth: 1` etag list
+//!    `405`): transparent fallback to a `PROPFIND Depth: 1` etag list
 //!    diffed against the cached previous state, with content fetched via
 //!    batched multiget REPORTs;
 //! 4. a stale token (`410 Gone`, or `403` + the `valid-sync-token`
@@ -15,11 +15,16 @@
 //!    flagged via [`SyncDelta::resynced`];
 //! 5. conflicts: the server wins (no client-side merge logic).
 //!
+//! Members the server answers with a per-item error status (4xx/5xx inside
+//! the 207) are "unknown" for that pass: they are never classified as
+//! added/modified nor reported deleted — their previous session-state entry
+//! is kept so a later pass re-classifies them.
+//!
 //! The session is in-memory only: the **caller** persists
 //! [`SyncSnapshot::sync_token`] / [`SyncDelta::sync_token`] between runs and
 //! hands it back via [`SyncSession::with_sync_token`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -72,6 +77,11 @@ pub struct SyncSnapshot {
 /// token was stale): per RFC 6578 §3.4 it MUST NOT report deletions that
 /// predate the stale token, so `deleted` is empty and `added` holds the
 /// complete current state — rebuild caches instead of applying incrementally.
+///
+/// Members the server answered with a per-item error status (4xx/5xx inside
+/// the 207 — a transient failure, not a deletion) appear in **neither**
+/// `added`, `modified`, nor `deleted`: they keep their previous session-state
+/// entry and are re-classified on a later pass.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SyncDelta {
@@ -136,7 +146,9 @@ struct SessionState {
 /// token, and (internally) the previous href→etag state used for the
 /// transparent full-list fallback and the added/modified classification.
 /// Clones share the token and probe cache, like [`WebDavClient`] clones share
-/// the connection pool.
+/// the connection pool. Concurrent `initial()`/`incremental()` calls on
+/// clones are serialized (single-flight per session): one probe and one
+/// report at a time, with the session state transitions kept consistent.
 ///
 /// The session itself persists nothing: store
 /// [`SyncSnapshot::sync_token`] / [`SyncDelta::sync_token`] in your own
@@ -147,10 +159,13 @@ struct SessionState {
 ///
 /// 1. probe `supported-report-set` once per session;
 /// 2. `sync-collection` REPORTs while the server supports them (507
-///    result-set truncation is continued transparently);
-/// 3. on an unsupported server — or one that rejects the report with `403`/
+///    result-set truncation is continued with the page token; a truncation
+///    that cannot be continued fails with [`Error::SyncIncomplete`]);
+/// 3. on an unsupported server — or one that rejects the report with
 ///    `405` — fall back transparently to `PROPFIND Depth: 1` + etag diff,
 ///    fetching content for changed members via batched multiget REPORTs;
+///    a bare `403` (e.g. a transient ACL denial) propagates instead of
+///    downgrading, so the next call re-attempts `sync-collection`;
 /// 4. a stale token (`410 Gone`, `403` + `valid-sync-token`) resets to a
 ///    full initial sync flagged `resynced`;
 /// 5. conflicts: the server wins.
@@ -208,6 +223,11 @@ pub struct SyncSession {
     /// `Some` for CalDAV/CardDAV sessions: data is fetched alongside etags.
     data: Option<SyncDataSpec>,
     state: Arc<Mutex<SessionState>>,
+    /// Single-flight across clones: `initial()`/`incremental()` hold this
+    /// for their whole body so concurrent calls on shared state run one at
+    /// a time — one capability probe, and the token/prev read-modify-write
+    /// cannot interleave across an await.
+    sync_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl SyncSession {
@@ -222,6 +242,7 @@ impl SyncSession {
             collection: collection.into(),
             data: None,
             state: Arc::new(Mutex::new(SessionState::default())),
+            sync_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -263,8 +284,12 @@ impl SyncSession {
     ///
     /// # Errors
     ///
-    /// Propagates the underlying report/PROPFIND error.
+    /// Propagates the underlying report/PROPFIND error. Like
+    /// [`incremental`](Self::incremental), a bare `403` propagates without
+    /// downgrading the session; only a `405` pins the fallback.
     pub async fn initial(&self) -> Result<SyncSnapshot> {
+        // Single-flight across clones (see `sync_lock`).
+        let _single_flight = self.sync_lock.lock().await;
         if self.capability().await != SyncCapability::Unsupported {
             match self.sync_snapshot().await {
                 Ok(snapshot) => return Ok(snapshot),
@@ -289,12 +314,21 @@ impl SyncSession {
     /// session has not seen, `modified` = known hrefs with a changed etag,
     /// `deleted` = previously known hrefs missing from the server answer.
     /// A restored session that only carries a persisted token (no cached
-    /// state) classifies every server-reported change as `added`.
+    /// state) classifies every server-reported change as `added`. Members
+    /// answered with a per-item error status are "unknown" for the pass:
+    /// never reported (in particular never deleted) and re-classified on a
+    /// later pass.
     ///
     /// # Errors
     ///
-    /// Propagates the underlying report/PROPFIND error.
+    /// Propagates the underlying report/PROPFIND error. A bare `403` from
+    /// the sync-collection report propagates without changing the session:
+    /// the next call re-attempts `sync-collection`. Only a `405` (REPORT
+    /// not implemented) pins the capability to `Unsupported` for the
+    /// session's lifetime and switches to the full-list fallback.
     pub async fn incremental(&self) -> Result<SyncDelta> {
+        // Single-flight across clones (see `sync_lock`).
+        let _single_flight = self.sync_lock.lock().await;
         if self.capability().await != SyncCapability::Unsupported {
             match self.sync_collection_delta().await {
                 Ok(delta) => return Ok(delta),
@@ -319,14 +353,23 @@ impl SyncSession {
         cap
     }
 
-    /// A `403`/`405` from the sync-collection report means the server does
-    /// not honor the report (despite the probe, or after a retry): pin the
-    /// capability to `Unsupported` and take the full-list path.
+    /// A `405` from the sync-collection report means the server does not
+    /// implement the REPORT method at all — a deterministic rejection — so
+    /// pin the capability to `Unsupported` and take the full-list path.
+    ///
+    /// A bare `403` is deliberately *not* a downgrade signal: it is
+    /// frequently transient (an ACL flap, a temporary denial), and pinning
+    /// `Unsupported` on it would silently route every future sync through
+    /// the slow full-list path. The error propagates instead and the next
+    /// call re-attempts `sync-collection`. A `403` carrying the
+    /// `valid-sync-token` precondition never reaches this method as a bare
+    /// status: `WebDavClient::sync_collection_resilient_report` consumes it
+    /// as a stale-token signal and retries internally.
     fn downgrade_on_rejected_report(&self, err: &Error) -> bool {
         let rejected = matches!(
             err,
             Error::UnexpectedStatus {
-                status: StatusCode::FORBIDDEN | StatusCode::METHOD_NOT_ALLOWED,
+                status: StatusCode::METHOD_NOT_ALLOWED,
                 ..
             }
         );
@@ -358,7 +401,9 @@ impl SyncSession {
     /// Incremental delta via `sync-collection` with the stored token.
     /// Result-set truncation (RFC 6578 §3.6, a 507 status inside the
     /// multistatus) is continued with the returned token until a page
-    /// arrives without truncation (or stops handing out new tokens).
+    /// arrives without truncation; a truncation that cannot be continued
+    /// (no token, or a repeated token) fails with [`Error::SyncIncomplete`]
+    /// and leaves the session state unchanged.
     async fn sync_collection_delta(&self) -> Result<SyncDelta> {
         let start = self.state.lock().token.clone();
         let (rows, token, resynced) = self.sync_pages(start.clone()).await?;
@@ -414,10 +459,13 @@ impl SyncSession {
                 final_token = page_token.clone();
             }
             match (truncated, page_token) {
-                // Continue with the page token; a server that repeats the
-                // same (or no) token cannot be continued — stop instead of
-                // looping forever.
+                // Continue with the page token.
                 (true, Some(next)) if Some(&next) != token.as_ref() => token = Some(next),
+                // Truncation that cannot be continued (no token, or the
+                // same token repeated): the rows so far are a partial
+                // result (RFC 6578 §3.6) — fail instead of presenting
+                // them as a complete delta.
+                (true, _) => return Err(Error::SyncIncomplete { token }),
                 _ => return Ok((dedup_rows(rows), final_token, resynced)),
             }
         }
@@ -426,7 +474,7 @@ impl SyncSession {
     /// Initial snapshot via the full-list fallback: `PROPFIND Depth: 1`
     /// etag list, content fetched via batched multiget REPORTs.
     async fn propfind_snapshot(&self) -> Result<SyncSnapshot> {
-        let current = self.propfind_state().await?;
+        let (current, _unknown) = self.propfind_state().await?;
         let mut items: Vec<SyncEntry> = current
             .iter()
             .map(|(href, etag)| SyncEntry {
@@ -438,7 +486,7 @@ impl SyncSession {
         items.sort_by(|a, b| a.href.cmp(&b.href));
         if let Some(spec) = self.data {
             let hrefs: Vec<String> = items.iter().map(|e| e.href.clone()).collect();
-            let data = self.multiget_data(&hrefs, spec).await?;
+            let (data, _skipped) = self.multiget_data(&hrefs, spec).await?;
             for item in &mut items {
                 item.data = data.get(&item.href).cloned();
             }
@@ -458,9 +506,11 @@ impl SyncSession {
     /// Depth: 1` etag list against the cached previous state, then fetch
     /// content for added/modified members via batched multiget REPORTs.
     async fn propfind_delta(&self) -> Result<SyncDelta> {
-        let current = self.propfind_state().await?;
+        let (current, unknown) = self.propfind_state().await?;
         let prev = self.state.lock().prev.clone();
-        let (mut added, mut modified, deleted) = diff_maps(&prev, &current);
+        let mut diff = diff_maps(&prev, &current, &unknown);
+        let (mut added, mut modified) = (diff.added, diff.modified);
+        let deleted = diff.deleted;
         if let Some(spec) = self.data {
             let hrefs: Vec<String> = added
                 .iter()
@@ -468,15 +518,30 @@ impl SyncSession {
                 .map(|entry| entry.href.clone())
                 .collect();
             if !hrefs.is_empty() {
-                let data = self.multiget_data(&hrefs, spec).await?;
+                let (data, skipped) = self.multiget_data(&hrefs, spec).await?;
                 for entry in added.iter_mut().chain(modified.iter_mut()) {
                     entry.data = data.get(&entry.href).cloned();
+                }
+                // Members the multiget rejected are unknown this pass too:
+                // drop them from the delta and restore their previous
+                // state-map entry so a later pass re-classifies them.
+                for href in skipped {
+                    added.retain(|entry| entry.href != href);
+                    modified.retain(|entry| entry.href != href);
+                    match prev.as_ref().and_then(|map| map.get(&href)) {
+                        Some(old) => {
+                            diff.next.insert(href, old.clone());
+                        }
+                        None => {
+                            diff.next.remove(&href);
+                        }
+                    }
                 }
             }
         }
         let token = {
             let mut state = self.state.lock();
-            state.prev = Some(current);
+            state.prev = Some(diff.next);
             state.token.clone()
         };
         Ok(SyncDelta {
@@ -489,8 +554,12 @@ impl SyncSession {
     }
 
     /// Full etag list of the collection (`PROPFIND Depth: 1`), excluding the
-    /// collection entry itself and error-status members.
-    async fn propfind_state(&self) -> Result<HashMap<String, Option<String>>> {
+    /// collection entry itself. Members answered with an error status
+    /// (4xx/5xx inside the 207) are returned separately as "unknown this
+    /// pass": they must not take part in the diff — a transient per-member
+    /// failure would otherwise surface as a deletion of previously synced
+    /// data.
+    async fn propfind_state(&self) -> Result<(HashMap<String, Option<String>>, HashSet<String>)> {
         const PROPFIND_ETAG_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <D:propfind xmlns:D="DAV:">
   <D:prop>
@@ -508,22 +577,33 @@ impl SyncSession {
             });
         }
         let parsed = parse_multistatus_bytes(resp.body())?;
-        Ok(parsed
-            .items
-            .into_iter()
-            .filter(|item| !item.is_collection && !has_error_status(item.status.as_deref()))
-            .map(|item| (item.href, item.etag))
-            .collect())
+        let mut current = HashMap::new();
+        let mut unknown = HashSet::new();
+        for item in parsed.items {
+            if item.is_collection {
+                continue;
+            }
+            if has_error_status(item.status.as_deref()) {
+                unknown.insert(item.href);
+            } else {
+                current.insert(item.href, item.etag);
+            }
+        }
+        Ok((current, unknown))
     }
 
     /// Fetch resource bodies for `hrefs` via batched multiget REPORTs
     /// (chunked, concurrency-bounded). Any failed chunk fails the call so
     /// the session state stays unchanged and the caller can retry cleanly.
+    /// Members echoed with an error status (4xx/5xx inside the 207)
+    /// contribute no data and are returned in the skipped set so the
+    /// caller can exclude them from the delta this pass (they keep their
+    /// session-state entry for a later pass).
     async fn multiget_data(
         &self,
         hrefs: &[String],
         spec: SyncDataSpec,
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<(HashMap<String, String>, HashSet<String>)> {
         let requests: Vec<(String, Arc<Bytes>)> = hrefs
             .chunks(MULTIGET_BATCH_SIZE)
             .filter_map(|chunk| {
@@ -539,7 +619,7 @@ impl SyncSession {
             })
             .collect();
         if requests.is_empty() {
-            return Ok(HashMap::new());
+            return Ok((HashMap::new(), HashSet::new()));
         }
 
         let batches = self
@@ -547,6 +627,7 @@ impl SyncSession {
             .report_many_bodies(requests, MULTIGET_CONCURRENCY)
             .await;
         let mut out = HashMap::new();
+        let mut skipped = HashSet::new();
         for batch in batches {
             let resp = batch.result?;
             if !resp.status().is_success() {
@@ -557,6 +638,10 @@ impl SyncSession {
             }
             let parsed = parse_multistatus_bytes(resp.body())?;
             for item in parsed.items {
+                if has_error_status(item.status.as_deref()) {
+                    skipped.insert(item.href);
+                    continue;
+                }
                 if let Some(data) = item.calendar_data.or(item.address_data) {
                     if !item.href.is_empty() {
                         out.insert(item.href, data);
@@ -564,7 +649,7 @@ impl SyncSession {
                 }
             }
         }
-        Ok(out)
+        Ok((out, skipped))
     }
 }
 
@@ -673,13 +758,18 @@ fn diff_rows(
 
 /// Classify a full etag list against the previous state (fallback path):
 /// added = hrefs not seen before, modified = changed etags, deleted =
-/// hrefs gone from the list. Output is sorted by href for determinism.
+/// hrefs gone from the list. `unknown` holds the hrefs the server answered
+/// with an error status this pass: they are neither classified nor reported
+/// deleted, and their previous state-map entry is kept untouched so a later
+/// pass re-classifies them. Output is sorted by href for determinism.
 fn diff_maps(
     prev: &Option<HashMap<String, Option<String>>>,
     current: &HashMap<String, Option<String>>,
-) -> (Vec<SyncEntry>, Vec<SyncEntry>, Vec<String>) {
+    unknown: &HashSet<String>,
+) -> RowDiff {
     let empty = HashMap::new();
     let prev = prev.as_ref().unwrap_or(&empty);
+    let mut next = prev.clone();
     let mut added = Vec::new();
     let mut modified = Vec::new();
     let mut deleted = Vec::new();
@@ -695,15 +785,23 @@ fn diff_maps(
             Some(old) if old != etag => modified.push(entry),
             Some(_) => {}
         }
+        next.insert(href.clone(), etag.clone());
     }
     for href in prev.keys() {
-        if !current.contains_key(href) {
-            deleted.push(href.clone());
+        if current.contains_key(href) || unknown.contains(href) {
+            continue;
         }
+        next.remove(href);
+        deleted.push(href.clone());
     }
 
     added.sort_by(|a, b| a.href.cmp(&b.href));
     modified.sort_by(|a, b| a.href.cmp(&b.href));
     deleted.sort();
-    (added, modified, deleted)
+    RowDiff {
+        added,
+        modified,
+        deleted,
+        next,
+    }
 }

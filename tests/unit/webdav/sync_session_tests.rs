@@ -3,6 +3,7 @@
 //! paths of the DAVx⁵ algorithm.
 
 use fast_dav_rs::{CalDavClient, RequestCompressionMode, WebDavClient};
+use hyper::StatusCode;
 
 use crate::common::http_helpers::{response_head, serve_sequence};
 
@@ -122,6 +123,56 @@ const LIST_AC: &str = r#"<?xml version="1.0"?>
     <D:href>/cal/c.ics</D:href>
     <D:propstat>
       <D:prop><D:getetag>"etag-c1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+/// Full listing where b answers with a transient 500: b is "unknown this
+/// pass" — it must be neither deleted nor re-added by the fallback diff.
+const LIST_B_ERROR: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:propstat>
+      <D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:status>HTTP/1.1 500 Internal Server Error</D:status>
+  </D:response>
+</D:multistatus>"#;
+
+/// Full listing where b is back with a changed etag (a unchanged).
+const LIST_AB2: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:propstat>
+      <D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-b2"</D:getetag></D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
   </D:response>
@@ -293,25 +344,114 @@ async fn sync_session_unsupported_server_falls_back_to_propfind_diff() {
 }
 
 #[tokio::test]
-async fn sync_session_403_during_sync_downgrades_to_fallback() {
-    // The probe confirms support, but the incremental report is rejected
-    // with a plain 403 (e.g. report-not-supported): the session must
-    // permanently downgrade to the full-list path.
+async fn sync_session_fallback_error_status_member_is_neither_deleted_nor_added() {
+    // A member answered with a transient 500 inside the PROPFIND 207 is
+    // "unknown this pass": it must not be reported deleted (data-loss bug),
+    // nor re-added, and it stays in the session state for re-classification.
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(PLAIN_PROPFIND),
+        report_not_supported_403(),
+        multistatus_response(LIST_AB),
+        multistatus_response(LIST_B_ERROR),
+        multistatus_response(LIST_AB2),
+    ])
+    .await;
+    let session = make_client(&base).sync_session("cal/");
+
+    session.initial().await.unwrap();
+
+    let delta = session.incremental().await.unwrap();
+    assert!(
+        delta.added.is_empty() && delta.modified.is_empty() && delta.deleted.is_empty(),
+        "a 500 member must be unknown this pass, not deleted: {delta:?}"
+    );
+
+    // The member keeps its previous state-map entry: when the server
+    // reports it again with a new etag it is re-classified as modified
+    // (not added), and it is still not deleted.
+    let next = session.incremental().await.unwrap();
+    assert_eq!(
+        next.modified
+            .iter()
+            .map(|e| e.href.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/cal/b.ics"]
+    );
+    assert!(next.added.is_empty() && next.deleted.is_empty());
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 5, "probe x2 + three PROPFINDs");
+}
+
+#[tokio::test]
+async fn sync_session_bare_403_propagates_without_pinning_capability() {
+    // A bare 403 (no valid-sync-token precondition) is often transient
+    // (ACL flap): it must propagate as an error WITHOUT pinning the
+    // capability to Unsupported — the next call re-attempts the
+    // sync-collection report instead of silently degrading to PROPFIND.
     let (base, captured) = serve_sequence(vec![
         multistatus_response(SYNC_SUPPORTED_PROPFIND),
         multistatus_response(INITIAL_BODY),
         report_not_supported_403(),
+        multistatus_response(DELTA_BODY),
+    ])
+    .await;
+    let session = make_client(&base).sync_session("cal/");
+
+    session.initial().await.unwrap();
+
+    let err = session
+        .incremental()
+        .await
+        .expect_err("a bare 403 must propagate");
+    assert!(
+        matches!(
+            err,
+            fast_dav_rs::Error::UnexpectedStatus {
+                status: StatusCode::FORBIDDEN,
+                ..
+            }
+        ),
+        "the 403 must surface unchanged: {err}"
+    );
+
+    // Capability not pinned: the retry is a sync-collection REPORT (which
+    // now succeeds against the healthy mock), not the PROPFIND fallback.
+    let delta = session.incremental().await.unwrap();
+    assert_eq!(delta.added.len(), 1);
+    assert_eq!(delta.added[0].href, "/cal/c.ics");
+    assert_eq!(delta.deleted, vec!["/cal/a.ics".to_string()]);
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 4, "probe + initial + 403 + retry report");
+    let retry = String::from_utf8_lossy(&reqs[3]);
+    assert!(
+        retry.contains("<D:sync-collection")
+            && retry.contains("<D:sync-token>token-2</D:sync-token>"),
+        "the retry must re-attempt sync-collection, not the fallback: {retry}"
+    );
+}
+
+#[tokio::test]
+async fn sync_session_405_report_downgrades_to_fallback() {
+    // A 405 means REPORT is not implemented at all — a deterministic
+    // rejection: the session pins Unsupported and takes the full-list path
+    // for its lifetime.
+    const NOT_ALLOWED_405: &str =
+        "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(SYNC_SUPPORTED_PROPFIND),
+        multistatus_response(INITIAL_BODY),
+        (NOT_ALLOWED_405.to_string(), Vec::new()),
         multistatus_response(LIST_AC),
         multistatus_response(LIST_AC),
     ])
     .await;
     let session = make_client(&base).sync_session("cal/");
 
-    let snapshot = session.initial().await.unwrap();
-    assert_eq!(snapshot.sync_token.as_deref(), Some("token-2"));
+    session.initial().await.unwrap();
 
     let delta = session.incremental().await.unwrap();
-    assert!(!delta.resynced);
     assert_eq!(
         delta
             .added
@@ -327,7 +467,7 @@ async fn sync_session_403_during_sync_downgrades_to_fallback() {
     assert!(next.added.is_empty() && next.modified.is_empty() && next.deleted.is_empty());
 
     let reqs = captured.lock().unwrap();
-    assert_eq!(reqs.len(), 5, "probe + initial + 403 + two PROPFINDs");
+    assert_eq!(reqs.len(), 5, "probe + initial + 405 + two PROPFINDs");
     let second_propfind = String::from_utf8_lossy(&reqs[4]);
     assert!(
         second_propfind.starts_with("PROPFIND"),
@@ -416,6 +556,153 @@ async fn sync_session_caldav_fallback_fetches_content_via_multiget() {
         multiget1.contains("/cal/a.ics") && multiget1.contains("/cal/b.ics"),
         "the multiget must request the snapshot hrefs: {multiget1}"
     );
+}
+
+#[tokio::test]
+async fn sync_session_caldav_fallback_multiget_rejected_member_is_excluded_this_pass() {
+    // Full listing: a changed (etag-a2), b unchanged, c added.
+    const LIST_ABC2: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:propstat>
+      <D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a2"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-b1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/c.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-c1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    const MULTIGET_AB: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-a1"</D:getetag>
+        <C:calendar-data>BEGIN:VCALENDAR...a1</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/b.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-b1"</D:getetag>
+        <C:calendar-data>BEGIN:VCALENDAR...b1</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    // The multiget echoes a with a 404 (deleted between the listing and the
+    // content fetch) and serves c normally.
+    const MULTIGET_C_A404: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/c.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-c1"</D:getetag>
+        <C:calendar-data>BEGIN:VCALENDAR...c1</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:status>HTTP/1.1 404 Not Found</D:status>
+  </D:response>
+</D:multistatus>"#;
+
+    const MULTIGET_A_OK: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/cal/a.ics</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:getetag>"etag-a2"</D:getetag>
+        <C:calendar-data>BEGIN:VCALENDAR...a2</C:calendar-data>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#;
+
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(PLAIN_PROPFIND),
+        report_not_supported_403(),
+        multistatus_response(LIST_AB),
+        multistatus_response(MULTIGET_AB),
+        multistatus_response(LIST_ABC2),
+        multistatus_response(MULTIGET_C_A404),
+        multistatus_response(LIST_ABC2),
+        multistatus_response(MULTIGET_A_OK),
+    ])
+    .await;
+    let session = make_caldav_client(&base).sync_session("cal/");
+
+    session.initial().await.unwrap();
+
+    // a changed and c is new; the multiget answers a with 404: a must be
+    // excluded from the delta this pass (not reported modified with a
+    // silent data=None), c delivered normally, nothing deleted.
+    let delta = session.incremental().await.unwrap();
+    assert_eq!(
+        delta
+            .added
+            .iter()
+            .map(|e| e.href.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/cal/c.ics"]
+    );
+    assert_eq!(delta.added[0].data.as_deref(), Some("BEGIN:VCALENDAR...c1"));
+    assert!(
+        delta.modified.is_empty(),
+        "a multiget-404 member must not be reported modified: {delta:?}"
+    );
+    assert!(delta.deleted.is_empty());
+
+    // a keeps its previous state entry: the next pass re-classifies it as
+    // modified and delivers it once the multiget answers.
+    let next = session.incremental().await.unwrap();
+    assert!(next.added.is_empty() && next.deleted.is_empty());
+    assert_eq!(
+        next.modified
+            .iter()
+            .map(|e| e.href.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/cal/a.ics"]
+    );
+    assert_eq!(
+        next.modified[0].data.as_deref(),
+        Some("BEGIN:VCALENDAR...a2")
+    );
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 8, "probe x2 + 2x (PROPFIND + multiget)");
 }
 
 #[tokio::test]
@@ -566,7 +853,7 @@ async fn sync_session_continues_past_507_truncation() {
 }
 
 #[tokio::test]
-async fn sync_session_stops_when_truncation_repeats_the_same_token() {
+async fn sync_session_fails_when_truncation_repeats_the_same_token() {
     const TRUNCATED_PAGE: &str = r#"<?xml version="1.0"?>
 <D:multistatus xmlns:D="DAV:">
   <D:response>
@@ -591,19 +878,77 @@ async fn sync_session_stops_when_truncation_repeats_the_same_token() {
     .await;
     let session = make_client(&base).sync_session("cal/");
 
-    let delta = session.incremental().await.unwrap();
-    assert_eq!(
-        delta
-            .added
-            .iter()
-            .map(|e| e.href.as_str())
-            .collect::<Vec<_>>(),
-        vec!["/cal/c.ics"]
+    let err = session
+        .incremental()
+        .await
+        .expect_err("a non-continuable truncation must fail, not surface partial rows");
+    assert!(
+        matches!(
+            err,
+            fast_dav_rs::Error::SyncIncomplete {
+                token: Some(ref t),
+                ..
+            } if t == "token-same"
+        ),
+        "expected SyncIncomplete carrying the request token: {err}"
     );
+    assert_eq!(session.sync_token(), None, "state must stay unchanged");
     assert_eq!(
         captured.lock().unwrap().len(),
         3,
         "a repeated page token must stop the continuation loop"
+    );
+}
+
+#[tokio::test]
+async fn sync_session_fails_when_truncation_carries_no_token() {
+    const TRUNCATED_NO_TOKEN: &str = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/cal/c.ics</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-c1"</D:getetag></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/cal/</D:href>
+    <D:status>HTTP/1.1 507 Insufficient Storage</D:status>
+  </D:response>
+</D:multistatus>"#;
+
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(SYNC_SUPPORTED_PROPFIND),
+        multistatus_response(INITIAL_BODY),
+        multistatus_response(TRUNCATED_NO_TOKEN),
+    ])
+    .await;
+    let session = make_client(&base).sync_session("cal/");
+    session.initial().await.unwrap();
+
+    let err = session
+        .incremental()
+        .await
+        .expect_err("a truncation without a token must fail, not surface partial rows");
+    assert!(
+        matches!(
+            err,
+            fast_dav_rs::Error::SyncIncomplete {
+                token: Some(ref t),
+                ..
+            } if t == "token-2"
+        ),
+        "expected SyncIncomplete carrying the request token: {err}"
+    );
+    assert_eq!(
+        session.sync_token().as_deref(),
+        Some("token-2"),
+        "state must stay unchanged"
+    );
+    assert_eq!(
+        captured.lock().unwrap().len(),
+        3,
+        "no continuation is attempted without a token"
     );
 }
 
@@ -633,6 +978,42 @@ async fn sync_session_unknown_capability_still_attempts_sync_collection() {
         String::from_utf8_lossy(&reqs[2]).contains("<D:sync-collection"),
         "the initial sync must be a sync-collection REPORT after the probe confirmed support"
     );
+}
+
+#[tokio::test]
+async fn sync_session_concurrent_incrementals_serialize_into_one_probe() {
+    let (base, captured) = serve_sequence(vec![
+        multistatus_response(SYNC_SUPPORTED_PROPFIND),
+        multistatus_response(INITIAL_BODY),
+        multistatus_response(EMPTY_DELTA_BODY),
+    ])
+    .await;
+    let session = make_client(&base).sync_session("cal/");
+    let a = session.clone();
+    let b = session.clone();
+
+    let (ra, rb) = tokio::join!(a.incremental(), b.incremental());
+    let (da, db) = (ra.unwrap(), rb.unwrap());
+    // Whichever clone ran first saw the full state as added; the second
+    // saw an empty delta against the fresh token.
+    let (first, second) = if da.added.len() == 2 {
+        (da, db)
+    } else {
+        (db, da)
+    };
+    assert_eq!(first.added.len(), 2, "the first sync is a full snapshot");
+    assert!(
+        second.added.is_empty() && second.modified.is_empty() && second.deleted.is_empty(),
+        "the second sync must be a clean delta against the fresh token"
+    );
+
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 3, "one probe + two sync-collection reports");
+    let probes = reqs
+        .iter()
+        .filter(|r| String::from_utf8_lossy(r).contains("supported-report-set"))
+        .count();
+    assert_eq!(probes, 1, "the capability probe must run exactly once");
 }
 
 #[tokio::test]

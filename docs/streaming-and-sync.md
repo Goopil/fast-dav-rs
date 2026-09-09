@@ -34,11 +34,16 @@ above into a per-collection, in-memory state machine — the DAVx⁵ approach:
 2. while the server supports RFC 6578 `sync-collection`, `initial()` returns
    the full state snapshot and `incremental()` returns a typed delta
    (`added` / `modified` / `deleted`) carrying the token to persist; 507
-   result-set truncation is continued transparently;
-3. on an unsupported server (or one that rejects the report with `403`/`405`)
-   it falls back transparently to a `PROPFIND Depth: 1` etag diff, fetching
+   result-set truncation is continued with the page token, and a truncation
+   that cannot be continued (no new token, or a repeated token) fails with
+   `Error::SyncIncomplete` instead of surfacing a partial delta;
+3. on an unsupported server (or one that rejects the report with `405`) it
+   falls back transparently to a `PROPFIND Depth: 1` etag diff, fetching
    content for changed members via batched `calendar-multiget` /
-   `addressbook-multiget` REPORTs (CalDAV/CardDAV sessions);
+   `addressbook-multiget` REPORTs (CalDAV/CardDAV sessions); a bare `403`
+   propagates as an error instead of downgrading (a transient ACL flap must
+   not silently pin the session to the slow path — the next call re-attempts
+   `sync-collection`);
 4. a stale token — `410 Gone`, or `403` + `valid-sync-token` as observed on
    Radicale — resets the session transparently to a full initial sync,
    flagged `resynced == true` (rebuild caches; per RFC 6578 §3.4 the delta
@@ -48,7 +53,9 @@ above into a per-collection, in-memory state machine — the DAVx⁵ approach:
 The session is in-memory only: **you** persist `sync_token` between runs
 (store it next to your application data) and restore it with
 `with_sync_token`. Clones share the token and the probe cache, like client
-clones share the connection pool.
+clones share the connection pool, and concurrent `initial()`/`incremental()`
+calls on clones are serialized (single-flight): one probe and one report at
+a time, with the session state transitions kept consistent.
 
 ```rust
 use fast_dav_rs::{CalDavClient, Result, SyncSession};
