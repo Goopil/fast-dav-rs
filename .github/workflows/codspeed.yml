@@ -1,9 +1,5 @@
 name: CodSpeed
 
-permissions:
-  contents: read
-  id-token: write
-
 on:
   push:
     branches:
@@ -22,6 +18,11 @@ jobs:
   benchmarks:
     name: Benchmarks (CodSpeed)
     runs-on: ubuntu-latest
+    # Scoped to the job per the CodSpeed OIDC guidance (least privilege):
+    # https://codspeed.io/docs/integrations/ci/github-actions/configuration#oidc-recommended
+    permissions:
+      contents: read # required for actions/checkout
+      id-token: write # required for OIDC authentication with CodSpeed
 
     steps:
       - name: Checkout sources
