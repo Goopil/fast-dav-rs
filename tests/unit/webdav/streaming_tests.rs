@@ -458,8 +458,7 @@ async fn events_stream_items_in_order_with_leading_sync_token() {
         .await
         .unwrap();
 
-    let stream = multistatus_events(resp.into_body(), &[]);
-    futures::pin_mut!(stream);
+    let mut stream = multistatus_events(resp.into_body(), &[]);
     let mut events = Vec::new();
     while let Some(event) = stream.next().await {
         events.push(event.unwrap());
@@ -499,8 +498,7 @@ async fn events_stream_sync_token_emitted_when_trailing() {
         .await
         .unwrap();
 
-    let stream = multistatus_events(resp.into_body(), &[]);
-    futures::pin_mut!(stream);
+    let mut stream = multistatus_events(resp.into_body(), &[]);
     let mut events = Vec::new();
     while let Some(event) = stream.next().await {
         events.push(event.unwrap());
@@ -540,11 +538,10 @@ async fn propfind_items_stream_yields_items_in_order() {
         .build()
         .unwrap();
 
-    let stream = client
+    let mut stream = client
         .propfind_items_stream("/cal/", Depth::One, PROPFIND_BODY)
         .await
         .unwrap();
-    futures::pin_mut!(stream);
     let mut hrefs = Vec::new();
     while let Some(event) = stream.next().await {
         match event.unwrap() {
@@ -570,7 +567,7 @@ async fn report_items_stream_with_timeout_yields_items_and_trailing_token() {
         .build()
         .unwrap();
 
-    let stream = client
+    let mut stream = client
         .report_items_stream_with_timeout(
             "/cal/",
             Depth::One,
@@ -579,7 +576,6 @@ async fn report_items_stream_with_timeout_yields_items_and_trailing_token() {
         )
         .await
         .unwrap();
-    futures::pin_mut!(stream);
     let mut events = Vec::new();
     while let Some(event) = stream.next().await {
         events.push(event.unwrap());
@@ -653,11 +649,10 @@ async fn propfind_items_stream_decodes_gzip_on_the_fly() {
         .build()
         .unwrap();
 
-    let stream = client
+    let mut stream = client
         .propfind_items_stream("/cal/", Depth::One, PROPFIND_BODY)
         .await
         .unwrap();
-    futures::pin_mut!(stream);
     let mut hrefs = Vec::new();
     while let Some(event) = stream.next().await {
         match event.unwrap() {
@@ -687,11 +682,10 @@ async fn propfind_items_stream_drop_before_eof_aborts_download() {
         .build()
         .unwrap();
 
-    let stream = client
+    let mut stream = client
         .propfind_items_stream("/cal/", Depth::One, PROPFIND_BODY)
         .await
         .unwrap();
-    futures::pin_mut!(stream);
     let first = stream.next().await.unwrap().unwrap();
     match first {
         DavStreamEvent::Item(item) => assert_eq!(item.href, "/cal/a.ics"),
@@ -725,8 +719,7 @@ async fn events_stream_yields_error_on_truncated_body() {
         .await
         .unwrap();
 
-    let stream = multistatus_events(resp.into_body(), &[]);
-    futures::pin_mut!(stream);
+    let mut stream = multistatus_events(resp.into_body(), &[]);
     let err = stream.next().await.unwrap().unwrap_err();
     assert!(
         matches!(err, Error::Xml(_)),
@@ -756,7 +749,7 @@ async fn propfind_items_stream_with_timeout_reports_idle_timeout() {
         .build()
         .unwrap();
 
-    let stream = client
+    let mut stream = client
         .propfind_items_stream_with_timeout(
             "/cal/",
             Depth::One,
@@ -765,7 +758,6 @@ async fn propfind_items_stream_with_timeout_reports_idle_timeout() {
         )
         .await
         .unwrap();
-    futures::pin_mut!(stream);
     let first = stream.next().await.unwrap().unwrap();
     assert!(
         matches!(first, DavStreamEvent::Item(ref i) if i.href == "/cal/a.ics"),

@@ -18,8 +18,8 @@ pub use client::{
 };
 pub use discovery::{discover_caldav, discover_carddav};
 pub use streaming::{
-    DavStreamEvent, STREAM_READ_IDLE_TIMEOUT, multistatus_events, multistatus_events_with_timeout,
-    parse_error_body, parse_lock_discovery_bytes,
+    DavStreamEvent, ItemStream, STREAM_READ_IDLE_TIMEOUT, multistatus_events,
+    multistatus_events_with_timeout, parse_error_body, parse_lock_discovery_bytes,
 };
 pub use sync::{SyncDelta, SyncEntry, SyncSession, SyncSnapshot};
 pub use types::{

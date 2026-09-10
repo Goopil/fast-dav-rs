@@ -297,19 +297,23 @@ impl CardDavClient {
         addressbook_path: &str,
         filter_xml: &str,
         include_data: bool,
-    ) -> Result<impl futures::Stream<Item = Result<AddressObject>> + Send> {
+    ) -> Result<crate::webdav::streaming::ItemStream<AddressObject>> {
         let xml = build_addressbook_query_body(filter_xml, include_data);
         let events = self
             .webdav
             .report_items_stream(addressbook_path, Depth::One, &xml)
             .await?;
-        Ok(events.filter_map(|event| async move {
-            match event {
-                Ok(crate::webdav::DavStreamEvent::Item(item)) => Some(Ok(map_address_object(item))),
-                Ok(_) => None,
-                Err(e) => Some(Err(e)),
-            }
-        }))
+        Ok(crate::webdav::streaming::ItemStream::new(
+            events.filter_map(|event| async move {
+                match event {
+                    Ok(crate::webdav::DavStreamEvent::Item(item)) => {
+                        Some(Ok(map_address_object(item)))
+                    }
+                    Ok(_) => None,
+                    Err(e) => Some(Err(e)),
+                }
+            }),
+        ))
     }
 
     /// Execute a CardDAV `addressbook-query` with a structured

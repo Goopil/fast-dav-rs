@@ -1301,11 +1301,10 @@ async fn addressbook_query_stream_yields_objects_in_order() {
     let client = CardDavClient::new(&base, None, None).unwrap();
     client.set_request_compression_mode(RequestCompressionMode::Disabled);
 
-    let stream = client
+    let mut stream = client
         .addressbook_query_stream("books/", "<CARDDAV:filter/>", true)
         .await
         .unwrap();
-    futures::pin_mut!(stream);
     let mut objects = Vec::new();
     while let Some(obj) = stream.next().await {
         objects.push(obj.unwrap());

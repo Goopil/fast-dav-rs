@@ -510,7 +510,7 @@ impl CalDavClient {
         end: Option<&str>,
         include_data: bool,
         expand: Option<TimeRange>,
-    ) -> Result<impl futures::Stream<Item = Result<CalendarObject>> + Send> {
+    ) -> Result<crate::webdav::streaming::ItemStream<CalendarObject>> {
         Self::validate_timerange_query(component, start, end, expand.as_ref())?;
 
         let xml = build_calendar_query_body(component, start, end, include_data, expand.as_ref());
@@ -518,15 +518,17 @@ impl CalDavClient {
             .webdav
             .report_items_stream(calendar_path, Depth::One, &xml)
             .await?;
-        Ok(events.filter_map(|event| async move {
-            match event {
-                Ok(crate::webdav::DavStreamEvent::Item(item)) => {
-                    Some(Ok(map_calendar_object(item)))
+        Ok(crate::webdav::streaming::ItemStream::new(
+            events.filter_map(|event| async move {
+                match event {
+                    Ok(crate::webdav::DavStreamEvent::Item(item)) => {
+                        Some(Ok(map_calendar_object(item)))
+                    }
+                    Ok(_) => None,
+                    Err(e) => Some(Err(e)),
                 }
-                Ok(_) => None,
-                Err(e) => Some(Err(e)),
-            }
-        }))
+            }),
+        ))
     }
 
     /// Execute a CalDAV `calendar-query` with a [`CalendarQueryFilter`].

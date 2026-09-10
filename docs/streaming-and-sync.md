@@ -45,10 +45,9 @@ async fn main() -> Result<()> {
     let client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
 
     // Each CalendarObject arrives as soon as its <D:response> is parsed.
-    let stream = client
+    let mut stream = client
         .calendar_query_stream("calendars/alice/work/", "VEVENT", None, None, true, None)
         .await?;
-    futures::pin_mut!(stream);
     while let Some(object) = stream.next().await {
         let object = object?;
         if let Some(data) = &object.calendar_data {

@@ -1882,11 +1882,10 @@ async fn calendar_query_stream_yields_objects_in_order() {
     let client = CalDavClient::new(&base, None, None).unwrap();
     client.set_request_compression_mode(RequestCompressionMode::Disabled);
 
-    let stream = client
+    let mut stream = client
         .calendar_query_stream("cal/", "VEVENT", None, None, true, None)
         .await
         .unwrap();
-    futures::pin_mut!(stream);
     let mut objects = Vec::new();
     while let Some(obj) = stream.next().await {
         objects.push(obj.unwrap());

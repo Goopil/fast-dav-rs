@@ -246,6 +246,7 @@ use hyper::body::Incoming;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Decoder, Reader, XmlVersion};
 use std::io::{BufRead, Cursor};
+use std::pin::Pin;
 use tokio::io::AsyncBufRead;
 
 /// Default **idle** timeout for streaming multistatus reads.
@@ -622,6 +623,43 @@ pub enum DavStreamEvent {
     /// wherever the server places the element (commonly first or last child
     /// of `<D:multistatus>`).
     SyncToken(String),
+}
+
+/// Concrete stream returned by the item-by-item APIs.
+///
+/// Implements [`futures::Stream`] and is `Unpin`, so it can be driven
+/// directly — no pinning ceremony:
+///
+/// ```ignore
+/// let mut stream = client.calendar_query_stream(..).await?;
+/// while let Some(object) = stream.next().await { … }
+/// ```
+pub struct ItemStream<T> {
+    inner: Pin<Box<dyn futures::Stream<Item = Result<T>> + Send>>,
+}
+
+impl<T> std::fmt::Debug for ItemStream<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ItemStream").finish_non_exhaustive()
+    }
+}
+
+impl<T> futures::Stream for ItemStream<T> {
+    type Item = Result<T>;
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
+impl<T> ItemStream<T> {
+    pub(crate) fn new(inner: impl futures::Stream<Item = Result<T>> + Send + 'static) -> Self {
+        Self {
+            inner: Box::pin(inner),
+        }
+    }
 }
 
 /// Result of parsing a multistatus response, including top-level sync-token if present
@@ -1047,7 +1085,6 @@ impl<C: ItemConsumer> MultistatusParser<C> {
 ///
 /// # async fn example(body: Incoming) -> fast_dav_rs::Result<()> {
 /// let mut stream = multistatus_events(body, &[]);
-/// futures::pin_mut!(stream);
 /// while let Some(event) = stream.next().await {
 ///     match event? {
 ///         DavStreamEvent::Item(item) => println!("item: {}", item.href),
@@ -1061,7 +1098,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
 pub fn multistatus_events(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
-) -> impl futures::Stream<Item = Result<DavStreamEvent>> + Send + use<> {
+) -> ItemStream<DavStreamEvent> {
     multistatus_events_with_timeout(resp_body, encodings, STREAM_READ_IDLE_TIMEOUT)
 }
 
@@ -1076,7 +1113,7 @@ pub fn multistatus_events_with_timeout(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
     idle_timeout: Duration,
-) -> impl futures::Stream<Item = Result<DavStreamEvent>> + Send + use<> {
+) -> ItemStream<DavStreamEvent> {
     struct State {
         xml: Reader<Box<dyn AsyncBufRead + Unpin + Send>>,
         buf: Vec<u8>,
@@ -1093,7 +1130,7 @@ pub fn multistatus_events_with_timeout(
         done: false,
     };
 
-    futures::stream::unfold(state, |mut state| async move {
+    ItemStream::new(futures::stream::unfold(state, |mut state| async move {
         loop {
             if let Some(event) = state.parser.sink.events.pop_front() {
                 return Some((Ok(event), state));
@@ -1151,7 +1188,7 @@ pub fn multistatus_events_with_timeout(
                 }
             }
         }
-    })
+    }))
 }
 
 /// Parse a WebDAV `207 Multi-Status` XML body in **streaming mode**, with optional
