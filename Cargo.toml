@@ -45,9 +45,11 @@ futures = "0.3"
 anyhow = "1"
 # Parsing stays caller-side (see examples/sync_loop.rs); parser-only, no chrono-tz.
 icalendar = { version = "0.17", default-features = false, features = ["parser"] }
-# Benchmarks (PERFORMANCE.md §5): criterion drives the benches, the extra
-# hyper `server` feature powers the in-process DAV fixture (no network).
-criterion = { version = "0.7", features = ["async_tokio"] }
+# Benchmarks (PERFORMANCE.md §5): criterion drives the benches through the
+# CodSpeed compatibility layer (drop-in, still runs as plain criterion locally),
+# and the extra hyper `server` feature powers the in-process DAV fixture (no
+# network).
+criterion = { version = "5.0.1", features = ["async_tokio"], package = "codspeed-criterion-compat" }
 hyper = { version = "1", features = ["server"] }
 
 [[test]]
@@ -72,6 +74,10 @@ path = "tests/e2e/provider_a/mod.rs"
 
 [[bench]]
 name = "performance"
+harness = false
+
+[[bench]]
+name = "hot_paths"
 harness = false
 
 [features]

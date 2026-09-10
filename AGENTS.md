@@ -48,6 +48,14 @@ cargo llvm-cov nextest --test unit_tests --all-features --no-fail-fast --lcov --
 # Run the criterion benchmarks (PERFORMANCE.md §5 scenarios)
 cargo bench --bench performance
 
+# Run the CPU-bound hot-path benchmarks (parsing, body building, validation)
+cargo bench --bench hot_paths
+
+# Run both suites the way CI does, under CodSpeed's CPU simulation instrument
+# (requires cargo-codspeed + the codspeed CLI)
+cargo codspeed build --measurement-mode simulation
+codspeed run --mode simulation -- cargo codspeed run
+
 # Run the fuzz targets locally (nightly + cargo-fuzz required; see fuzz/)
 cargo +nightly fuzz run <target> -- -max_total_time=60
 ```
