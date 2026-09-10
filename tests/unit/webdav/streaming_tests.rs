@@ -12,7 +12,7 @@ use hyper::{HeaderMap, Method};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::common::http_helpers::{response_head, serve_once};
+use crate::common::http_helpers::{response_head, serve_once, serve_stalled};
 
 /// XML containing a self-closing element (Empty event), CDATA text and a sync token.
 const RICH_MULTISTATUS: &str = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -628,5 +628,156 @@ async fn propfind_items_stream_rejects_error_status_eagerly() {
             }
         ),
         "expected UnexpectedStatus(Propfind), got: {err:?}"
+    );
+}
+
+/// A gzip-encoded response is decompressed **on the fly**: the items stream
+/// without ever aggregating the compressed or decompressed body.
+#[tokio::test]
+async fn propfind_items_stream_decodes_gzip_on_the_fly() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop><D:getetag>"a"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+  <D:response><D:href>/cal/b.ics</D:href><D:propstat><D:prop><D:getetag>"b"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#;
+    let compressed = compress_payload(xml.as_bytes().to_vec().into(), ContentEncoding::Gzip)
+        .await
+        .unwrap();
+    let base = serve_once(
+        response_head("Content-Encoding: gzip\r\n", compressed.len()),
+        compressed.to_vec(),
+    )
+    .await;
+    let client = WebDavClient::builder(&base)
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+
+    let stream = client
+        .propfind_items_stream("/cal/", Depth::One, PROPFIND_BODY)
+        .await
+        .unwrap();
+    futures::pin_mut!(stream);
+    let mut hrefs = Vec::new();
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            DavStreamEvent::Item(item) => hrefs.push(item.href),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+    assert_eq!(hrefs, ["/cal/a.ics", "/cal/b.ics"]);
+}
+
+/// A response that never completes (stalled connection) still yields the
+/// items already parsed; dropping the stream aborts the download instead of
+/// waiting for the rest of the body.
+#[tokio::test]
+async fn propfind_items_stream_drop_before_eof_aborts_download() {
+    let partial = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop><D:getetag>"a"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+  <D:response><D:href>/cal/b.ics</D:href><D:propstat><D:prop><D:getetag>"b"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK"#;
+    let head = format!(
+        "HTTP/1.1 207 Multi-Status\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        partial.len() + 4096
+    );
+    let base = serve_stalled(head, partial).await;
+    let client = WebDavClient::builder(&base)
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+
+    let stream = client
+        .propfind_items_stream("/cal/", Depth::One, PROPFIND_BODY)
+        .await
+        .unwrap();
+    futures::pin_mut!(stream);
+    let first = stream.next().await.unwrap().unwrap();
+    match first {
+        DavStreamEvent::Item(item) => assert_eq!(item.href, "/cal/a.ics"),
+        other => panic!("unexpected event: {other:?}"),
+    }
+    // No further polling: dropping the stream (scope end) aborts the
+    // download instead of waiting for the remaining bytes — the test would
+    // otherwise hang on the stalled connection.
+}
+
+/// A truncated body (connection closed before `Content-Length` bytes) yields
+/// exactly one transport error and then ends the stream.
+#[tokio::test]
+async fn events_stream_yields_error_on_truncated_body() {
+    let full = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop><D:getetag>"a"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#;
+    let truncated = &full[..full.len() / 2];
+    let base = serve_once(
+        format!(
+            "HTTP/1.1 207 Multi-Status\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            full.len()
+        ),
+        truncated.to_vec(),
+    )
+    .await;
+    let client = WebDavClient::new(&base, None, None).unwrap();
+    let resp = client
+        .send_stream(Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+
+    let stream = multistatus_events(resp.into_body(), &[]);
+    futures::pin_mut!(stream);
+    let err = stream.next().await.unwrap().unwrap_err();
+    assert!(
+        matches!(err, Error::Xml(_)),
+        "expected a transport/XML error, got: {err:?}"
+    );
+    assert!(
+        stream.next().await.is_none(),
+        "stream must end after the error"
+    );
+}
+
+/// An idle gap longer than the configured timeout yields a
+/// [`Error::Timeout`] once and ends the stream.
+#[tokio::test]
+async fn propfind_items_stream_with_timeout_reports_idle_timeout() {
+    let partial = br#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop><D:getetag>"a"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+  <D:response><D:href>/cal/b.ics</D:href><D:propstat><D:prop><D:getetag>"b"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK"#;
+    let head = format!(
+        "HTTP/1.1 207 Multi-Status\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        partial.len() + 4096
+    );
+    let base = serve_stalled(head, partial).await;
+    let client = WebDavClient::builder(&base)
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+
+    let stream = client
+        .propfind_items_stream_with_timeout(
+            "/cal/",
+            Depth::One,
+            PROPFIND_BODY,
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+    futures::pin_mut!(stream);
+    let first = stream.next().await.unwrap().unwrap();
+    assert!(
+        matches!(first, DavStreamEvent::Item(ref i) if i.href == "/cal/a.ics"),
+        "first event must be the complete item, got: {first:?}"
+    );
+    let err = stream.next().await.unwrap().unwrap_err();
+    assert!(
+        matches!(err, Error::Timeout { .. }),
+        "expected idle timeout, got: {err:?}"
+    );
+    assert!(
+        stream.next().await.is_none(),
+        "stream must end after the timeout"
     );
 }
