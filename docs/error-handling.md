@@ -253,5 +253,5 @@ have been **removed**. Use the canonical paths:
 
 ```rust
 use fast_dav_rs::caldav::client::CalDavClient;
-use fast_dav_rs::caldav::streaming::parse_multistatus_stream;
+use fast_dav_rs::caldav::SyncSession;
 ```

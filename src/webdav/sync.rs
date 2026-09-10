@@ -34,8 +34,10 @@ use parking_lot::Mutex;
 use crate::webdav::client::WebDavClient;
 use crate::webdav::streaming::parse_multistatus_bytes;
 use crate::webdav::types::SyncRow;
-use crate::webdav::types::{DavItem, Depth, SyncCapability, http_status_code, map_sync_rows};
-use crate::webdav::xml::build_multiget_body;
+use crate::webdav::types::{
+    DavItem, Depth, SyncCapability, SyncLevel, http_status_code, map_sync_rows,
+};
+use crate::webdav::xml::{build_multiget_body, build_sync_collection_body};
 use crate::{Error, Operation, Result};
 
 /// Hrefs per multiget REPORT in the fallback content fetch (matches the
@@ -442,14 +444,17 @@ impl SyncSession {
         loop {
             let (headers, items, top_token, was_resync) = self
                 .client
-                .sync_collection_resilient(
-                    &self.collection,
-                    token.as_deref(),
-                    None,
-                    self.data.is_some(),
-                    self.data.map_or("DAV:", |spec| spec.namespace),
-                    self.data.map_or("", |spec| spec.data_element),
-                )
+                .sync_collection_resilient_report(&self.collection, token.as_deref(), |tok| {
+                    build_sync_collection_body(
+                        tok,
+                        None,
+                        self.data.is_some(),
+                        self.data.map_or("DAV:", |spec| spec.namespace),
+                        self.data.map_or("", |spec| spec.data_element),
+                        None,
+                        SyncLevel::One,
+                    )
+                })
                 .await?;
             resynced |= was_resync;
             let (page_token, page_rows, truncated) =
