@@ -37,9 +37,10 @@ jobs:
         run: cargo codspeed build -m simulation -m memory
 
       # B2 is excluded: wall-time semantics that the simulation instrument
-      # distorts (see docs/audit/PERFORMANCE.md §5).
+      # distorts (see docs/audit/PERFORMANCE.md §5). The remaining filters
+      # select every B1/B3/B4 case plus all hot_paths groups.
       - name: Run and report benchmarks
         uses: CodSpeedHQ/action@v5
         with:
           mode: simulation,memory
-          run: cargo codspeed run "B1_sync_collection|B3_multistatus_parse|B4_fresh_client_auto"
+          run: cargo codspeed run "B1_sync_collection|B3_multistatus_parse|B4_fresh_client_auto|multistatus_parse|small_parsers|request_bodies|icalendar_validation|item_mapping|request_compression"

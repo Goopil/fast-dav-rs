@@ -48,6 +48,9 @@ cargo llvm-cov nextest --test unit_tests --all-features --no-fail-fast --lcov --
 # Run the criterion benchmarks (PERFORMANCE.md §5 scenarios)
 cargo bench --bench performance
 
+# Run the CPU-bound hot-path benchmarks (parsing, body building, validation)
+cargo bench --bench hot_paths
+
 # Benchmarks are CI-gated by CodSpeed (.github/workflows/codspeed.yml,
 # simulation + memory instruments; B2 is local-only — wall-time semantics)
 # cargo bench --bench performance B4
