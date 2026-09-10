@@ -48,4 +48,14 @@ jobs:
         run: cargo publish --locked --dry-run
 
       - name: Publish crate
-        run: cargo publish --locked
+        # crates.io rate-limits uploads (HTTP 429); retry a few times with a
+        # backoff instead of failing the release.
+        run: |
+          for attempt in 1 2 3; do
+            if cargo publish --locked; then
+              exit 0
+            fi
+            echo "publish attempt $attempt/3 failed, retrying in 60s..."
+            sleep 60
+          done
+          exit 1
