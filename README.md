@@ -80,6 +80,7 @@ features, and major releases introduce breaking changes when needed.
 - CardDAV addressbook discovery, queries, and contact CRUD.
 - HTTP/2 with connection pooling and automatic response decompression.
 - Streaming XML parsing for multistatus responses.
+- Item-by-item streams with constant memory: `propfind_items_stream`/`report_items_stream` (WebDAV), `calendar_query_stream` (CalDAV), and `addressbook_query_stream` (CardDAV) yield each parsed entry as it arrives, decompress on the fly, and abort the download when dropped.
 - ETag helpers and conditional methods for safe updates.
 - Typed current-user privileges (`current_user_privileges`, RFC 3744 §5.4).
 

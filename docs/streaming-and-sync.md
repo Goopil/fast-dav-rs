@@ -25,6 +25,46 @@
   items, so they are only available as `fast_dav_rs::caldav::{SyncItem, SyncResponse, …}` and
   `fast_dav_rs::carddav::{SyncItem, SyncResponse, …}` — never at the crate root.
 
+### Item-by-item streams (no aggregation)
+
+The `*_items_stream` methods parse the multistatus **incrementally** over the response
+body — each complete `<D:response>` is yielded as soon as it parses, so memory stays
+bounded by the current item regardless of collection size (the XML is also decompressed
+on the fly, br/gzip/zstd). At the `WebDavClient` level, `propfind_items_stream` and
+`report_items_stream` (plus `*_with_timeout` variants) yield `DavStreamEvent` items and
+the `<D:sync-token>` in document order; a non-success status is rejected eagerly by the
+call itself as `Error::UnexpectedStatus`. **Dropping the stream aborts the download**
+and frees (rather than re-pools) the connection.
+
+```rust,no_run
+use fast_dav_rs::{CalDavClient, Result};
+use futures::StreamExt;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
+
+    // Each CalendarObject arrives as soon as its <D:response> is parsed.
+    let stream = client
+        .calendar_query_stream("calendars/alice/work/", "VEVENT", None, None, true, None)
+        .await?;
+    futures::pin_mut!(stream);
+    while let Some(object) = stream.next().await {
+        let object = object?;
+        if let Some(data) = &object.calendar_data {
+            println!("{} -> {} bytes", object.href, data.len());
+        }
+    }
+
+    Ok(())
+}
+```
+
+`CardDavClient::addressbook_query_stream` works the same way for vCards, and the raw
+event engine behind them is available as
+`fast_dav_rs::webdav::streaming::multistatus_events` (an idle-read timeout variant,
+`multistatus_events_with_timeout`, is there too).
+
 ### SyncSession (stateful sync with transparent fallback)
 
 `SyncSession` (new in this release, issue #160) packages the sync algorithm
