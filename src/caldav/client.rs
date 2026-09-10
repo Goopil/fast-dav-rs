@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use futures::StreamExt;
 use hyper::{HeaderMap, Method, Response, StatusCode, header};
 use percent_encoding::utf8_percent_encode;
 
@@ -453,17 +454,7 @@ impl CalDavClient {
         include_data: bool,
         expand: Option<TimeRange>,
     ) -> Result<Vec<CalendarObject>> {
-        validate_component_name(component, "invalid calendar-query component")?;
-        if let Some(s) = start {
-            validate_utc_datetime(s, "invalid calendar-query start")?;
-        }
-        if let Some(e) = end {
-            validate_utc_datetime(e, "invalid calendar-query end")?;
-        }
-        validate_expand("invalid calendar-query", expand.as_ref())?;
-        if let (Some(s), Some(e)) = (start, end) {
-            validate_time_range_order("invalid calendar-query time-range", s, e)?;
-        }
+        Self::validate_timerange_query(component, start, end, expand.as_ref())?;
 
         let xml = build_calendar_query_body(component, start, end, include_data, expand.as_ref());
 
@@ -476,6 +467,68 @@ impl CalDavClient {
         }
         let body = resp.into_body();
         Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
+    }
+
+    /// Shared validation behind [`calendar_query_timerange`](Self::calendar_query_timerange)
+    /// and [`calendar_query_stream`](Self::calendar_query_stream).
+    fn validate_timerange_query(
+        component: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        expand: Option<&TimeRange>,
+    ) -> Result<()> {
+        validate_component_name(component, "invalid calendar-query component")?;
+        if let Some(s) = start {
+            validate_utc_datetime(s, "invalid calendar-query start")?;
+        }
+        if let Some(e) = end {
+            validate_utc_datetime(e, "invalid calendar-query end")?;
+        }
+        validate_expand("invalid calendar-query", expand)?;
+        if let (Some(s), Some(e)) = (start, end) {
+            validate_time_range_order("invalid calendar-query time-range", s, e)?;
+        }
+        Ok(())
+    }
+
+    /// [`calendar_query_timerange`](Self::calendar_query_timerange) yielding
+    /// each parsed [`CalendarObject`] as a [`futures::Stream`] item instead
+    /// of aggregating the whole multistatus in memory.
+    ///
+    /// Same request, same validation (performed **before any network I/O**);
+    /// the response body is decompressed and parsed incrementally, so memory
+    /// stays bounded by the current item regardless of collection size.
+    /// A non-success status is rejected eagerly by the call itself as
+    /// [`Error::UnexpectedStatus`] (with [`Operation::ReportCalendarQuery`]).
+    /// **Dropping the returned stream aborts the download** and frees (rather
+    /// than re-pools) the connection.
+    pub async fn calendar_query_stream(
+        &self,
+        calendar_path: &str,
+        component: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        include_data: bool,
+        expand: Option<TimeRange>,
+    ) -> Result<crate::webdav::streaming::ItemStream<CalendarObject>> {
+        Self::validate_timerange_query(component, start, end, expand.as_ref())?;
+
+        let xml = build_calendar_query_body(component, start, end, include_data, expand.as_ref());
+        let events = self
+            .webdav
+            .report_items_stream(calendar_path, Depth::One, &xml)
+            .await?;
+        Ok(crate::webdav::streaming::ItemStream::new(
+            events.filter_map(|event| async move {
+                match event {
+                    Ok(crate::webdav::DavStreamEvent::Item(item)) => {
+                        Some(Ok(map_calendar_object(item)))
+                    }
+                    Ok(_) => None,
+                    Err(e) => Some(Err(e)),
+                }
+            }),
+        ))
     }
 
     /// Execute a CalDAV `calendar-query` with a [`CalendarQueryFilter`].
@@ -1261,16 +1314,17 @@ pub fn map_calendar_list(mut items: Vec<DavItem>) -> Vec<CalendarInfo> {
 }
 
 pub fn map_calendar_objects(items: Vec<DavItem>) -> Vec<CalendarObject> {
-    let mut out = Vec::with_capacity(items.len());
-    for mut item in items {
-        out.push(CalendarObject {
-            href: item.href,
-            etag: item.etag,
-            calendar_data: item.calendar_data.take(),
-            status: item.status,
-        });
+    items.into_iter().map(map_calendar_object).collect()
+}
+
+/// Map a single raw multistatus `<D:response>` item into a [`CalendarObject`].
+pub fn map_calendar_object(mut item: DavItem) -> CalendarObject {
+    CalendarObject {
+        href: item.href,
+        etag: item.etag,
+        calendar_data: item.calendar_data.take(),
+        status: item.status,
     }
-    out
 }
 
 /// Map raw multistatus items into a CalDAV [`SyncResponse`] (RFC 6578).

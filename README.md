@@ -80,6 +80,7 @@ features, and major releases introduce breaking changes when needed.
 - CardDAV addressbook discovery, queries, and contact CRUD.
 - HTTP/2 with connection pooling and automatic response decompression.
 - Streaming XML parsing for multistatus responses.
+- Item-by-item streams with constant memory: `propfind_items_stream`/`report_items_stream` (WebDAV), `calendar_query_stream` (CalDAV), and `addressbook_query_stream` (CardDAV) yield each parsed entry as it arrives, decompress on the fly, and abort the download when dropped.
 - ETag helpers and conditional methods for safe updates.
 - Typed current-user privileges (`current_user_privileges`, RFC 3744 §5.4).
 
@@ -572,6 +573,7 @@ cargo run --example <name>
 | `nextcloud_client` | Nextcloud (:8083) | Bearer-token builder vs Basic auth, VTODO creation and `calendar-query` fetch |
 | `radicale_client` | Radicale (:8081) | Compliance/SyncSession probes on a no-LOCK provider, graceful `LOCK` → `405` handling |
 | `streaming_large_collections` | Radicale (:8081) | `propfind_stream` + `parse_multistatus_stream_visit` with constant memory |
+| `streaming_items` | Radicale (:8081) | `calendar_query_stream` yielding parsed `CalendarObject`s item by item |
 | `locking_concurrent_edits` | SabreDAV (:8080) | Full `lock`/`refresh_lock`/`unlock` lifecycle, `423` for token-less writes, graceful `405` on Radicale |
 | `multiget_batched` | Radicale (:8081) | `calendar_multiget_many` chunked REPORTs with per-chunk failure reporting |
 | `typed_error_handling` | none (offline) | Matching on `Error` variants with the `#[non_exhaustive]` wildcard arm |

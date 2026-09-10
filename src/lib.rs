@@ -26,12 +26,12 @@ pub use caldav::{
     BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, InboxItem,
     ManagedAttachment, MediaType, ScheduleEndpoints, SchedulingResponse, ValidationLevel,
     build_calendar_multiget_body, build_calendar_query_body, map_calendar_list,
-    map_calendar_objects, validate_icalendar,
+    map_calendar_object, map_calendar_objects, validate_icalendar,
 };
 pub use carddav::builder::CardDavClientBuilder;
 pub use carddav::{
     AddressBookInfo, AddressObject, CardDavClient, CardDavFilter, Collation, MatchType,
-    ParamFilter, TextMatch,
+    ParamFilter, TextMatch, map_address_object, map_address_objects,
 };
 pub use common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, detect_encoding,
@@ -39,9 +39,9 @@ pub use common::compression::{
 };
 pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
-    DavCapabilities, DavCompliance, HyperClient, LockInfo, LockScope, OAuth2RefreshProvider,
-    Prefer, Privilege, PropStat, RequestCompressionMode, SyncCapability, SyncDelta, SyncEntry,
-    SyncLevel, SyncSession, SyncSnapshot, TokenProvider, WebDavClient, WebDavError,
-    discover_caldav, discover_carddav, etag_from_headers, normalize_etag, normalize_sync_token,
-    preference_applied_from_headers,
+    DavCapabilities, DavCompliance, DavStreamEvent, HyperClient, ItemStream, LockInfo, LockScope,
+    OAuth2RefreshProvider, Prefer, Privilege, PropStat, RequestCompressionMode, SyncCapability,
+    SyncDelta, SyncEntry, SyncLevel, SyncSession, SyncSnapshot, TokenProvider, WebDavClient,
+    WebDavError, discover_caldav, discover_carddav, etag_from_headers, normalize_etag,
+    normalize_sync_token, preference_applied_from_headers,
 };
