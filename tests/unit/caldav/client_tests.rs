@@ -2,6 +2,7 @@ use fast_dav_rs::caldav::{
     CalendarQueryFilter, FreeBusyType, ParamFilter, PropFilter, TextMatch, TimeRange,
 };
 use fast_dav_rs::{CalDavClient, Depth, Error, RequestCompressionMode, SyncLevel};
+use futures::StreamExt;
 use hyper::http::HeaderMap;
 
 #[tokio::test]
@@ -1858,4 +1859,59 @@ async fn calendar_query_rejects_param_filter_exclusivity_before_io() {
             if msg.contains("param-filter") && msg.contains("§9.7.3")),
         "param-filter is-not-defined + text-match must be rejected, got: {err:?}"
     );
+}
+
+#[tokio::test]
+async fn calendar_query_stream_yields_objects_in_order() {
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop>
+<D:getetag>"a"</D:getetag><C:calendar-data>BEGIN:VCALENDAR</C:calendar-data>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/cal/b.ics</D:href><D:propstat><D:prop>
+<D:getetag>"b"</D:getetag><C:calendar-data>BEGIN:VCALENDAR</C:calendar-data>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let (base, _captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let stream = client
+        .calendar_query_stream("cal/", "VEVENT", None, None, true, None)
+        .await
+        .unwrap();
+    futures::pin_mut!(stream);
+    let mut objects = Vec::new();
+    while let Some(obj) = stream.next().await {
+        objects.push(obj.unwrap());
+    }
+    assert_eq!(objects.len(), 2, "two items expected: {objects:?}");
+    assert_eq!(objects[0].href, "/cal/a.ics");
+    assert_eq!(objects[0].etag.as_deref(), Some("a"));
+    assert_eq!(objects[0].calendar_data.as_deref(), Some("BEGIN:VCALENDAR"));
+    assert_eq!(objects[1].href, "/cal/b.ics");
+}
+
+#[tokio::test]
+async fn calendar_query_stream_rejects_invalid_component_before_io() {
+    let client =
+        CalDavClient::new("https://example.com/dav/", None, None).expect("Failed to create client");
+
+    let err = match client
+        .calendar_query_stream("calendar/", "", None, None, false, None)
+        .await
+    {
+        Err(err) => err,
+        Ok(_) => panic!("empty component must be rejected before any request"),
+    };
+    assert!(matches!(
+        err,
+        Error::InvalidComponentName { ref name, bad_char: None, .. } if name.is_empty()
+    ));
 }

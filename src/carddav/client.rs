@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use futures::StreamExt;
 use hyper::{HeaderMap, Method, Response, StatusCode, header};
 
 use crate::BatchItem;
@@ -279,6 +280,36 @@ impl CardDavClient {
         }
         let body = resp.into_body();
         Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
+    }
+
+    /// [`addressbook_query`](Self::addressbook_query) yielding each parsed
+    /// [`AddressObject`] as a [`futures::Stream`] item instead of aggregating
+    /// the whole multistatus in memory.
+    ///
+    /// Same request; the response body is decompressed and parsed
+    /// incrementally, so memory stays bounded by the current item regardless
+    /// of collection size. A non-success status is rejected eagerly by the
+    /// call itself as [`Error::UnexpectedStatus`] (with
+    /// [`Operation::ReportAddressbookQuery`]). **Dropping the returned stream
+    /// aborts the download** and frees (rather than re-pools) the connection.
+    pub async fn addressbook_query_stream(
+        &self,
+        addressbook_path: &str,
+        filter_xml: &str,
+        include_data: bool,
+    ) -> Result<impl futures::Stream<Item = Result<AddressObject>> + Send> {
+        let xml = build_addressbook_query_body(filter_xml, include_data);
+        let events = self
+            .webdav
+            .report_items_stream(addressbook_path, Depth::One, &xml)
+            .await?;
+        Ok(events.filter_map(|event| async move {
+            match event {
+                Ok(crate::webdav::DavStreamEvent::Item(item)) => Some(Ok(map_address_object(item))),
+                Ok(_) => None,
+                Err(e) => Some(Err(e)),
+            }
+        }))
     }
 
     /// Execute a CardDAV `addressbook-query` with a structured
@@ -821,16 +852,17 @@ pub fn map_addressbook_list(mut items: Vec<DavItem>) -> Vec<AddressBookInfo> {
 }
 
 pub fn map_address_objects(items: Vec<DavItem>) -> Vec<AddressObject> {
-    let mut out = Vec::with_capacity(items.len());
-    for mut item in items {
-        out.push(AddressObject {
-            href: item.href,
-            etag: item.etag,
-            address_data: item.address_data.take(),
-            status: item.status,
-        });
+    items.into_iter().map(map_address_object).collect()
+}
+
+/// Map a single raw multistatus `<D:response>` item into an [`AddressObject`].
+pub fn map_address_object(mut item: DavItem) -> AddressObject {
+    AddressObject {
+        href: item.href,
+        etag: item.etag,
+        address_data: item.address_data.take(),
+        status: item.status,
     }
-    out
 }
 
 /// Map raw multistatus items into a CardDAV [`SyncResponse`] (RFC 6578).

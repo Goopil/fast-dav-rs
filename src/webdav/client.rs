@@ -2386,7 +2386,8 @@ impl WebDavClient {
         xml_body: &str,
         limit: Option<Duration>,
         operation: Operation,
-    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send + use<>>
+    {
         let mut h = HeaderMap::new();
         h.insert("Depth", header::HeaderValue::from_str(depth.as_str())?);
         h.insert(
@@ -2441,7 +2442,8 @@ impl WebDavClient {
         path: &str,
         depth: Depth,
         xml_body: &str,
-    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send + use<>>
+    {
         self.items_stream(
             Method::from_bytes(b"PROPFIND")?,
             path,
@@ -2462,7 +2464,8 @@ impl WebDavClient {
         depth: Depth,
         xml_body: &str,
         timeout: Duration,
-    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send + use<>>
+    {
         self.items_stream(
             Method::from_bytes(b"PROPFIND")?,
             path,
@@ -2493,7 +2496,8 @@ impl WebDavClient {
         path: &str,
         depth: Depth,
         xml_body: &str,
-    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send + use<>>
+    {
         self.items_stream(
             Method::from_bytes(b"REPORT")?,
             path,
@@ -2514,7 +2518,8 @@ impl WebDavClient {
         depth: Depth,
         xml_body: &str,
         timeout: Duration,
-    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send + use<>>
+    {
         self.items_stream(
             Method::from_bytes(b"REPORT")?,
             path,

@@ -10,7 +10,8 @@ pub use crate::webdav::sync::{SyncDelta, SyncEntry, SyncSession, SyncSnapshot};
 pub use builder::CalDavClientBuilder;
 pub use client::{
     CalDavClient, ICAL_CONTENT_TYPE, build_calendar_multiget_body, build_calendar_query_body,
-    build_sync_collection_body, map_calendar_list, map_calendar_objects, map_sync_response,
+    build_sync_collection_body, map_calendar_list, map_calendar_object, map_calendar_objects,
+    map_sync_response,
 };
 pub use scheduling::{InboxItem, ScheduleEndpoints, SchedulingResponse};
 pub use streaming::{

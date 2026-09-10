@@ -2,6 +2,7 @@ use fast_dav_rs::CardDavClient;
 use fast_dav_rs::RequestCompressionMode;
 use fast_dav_rs::SyncLevel;
 use fast_dav_rs::carddav::Depth;
+use futures::StreamExt;
 use hyper::http::HeaderMap;
 
 #[test]
@@ -1277,4 +1278,41 @@ async fn addressbook_query_filter_sends_structured_filter_report() {
         req.contains("param-filter name=\"TYPE\""),
         "expected the nested param-filter on the wire: {req}"
     );
+}
+
+#[tokio::test]
+async fn addressbook_query_stream_yields_objects_in_order() {
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:CARDDAV="urn:ietf:params:xml:ns:carddav">
+<D:response><D:href>/books/a.vcf</D:href><D:propstat><D:prop>
+<D:getetag>"a"</D:getetag><CARDDAV:address-data>BEGIN:VCARD</CARDDAV:address-data>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/books/b.vcf</D:href><D:propstat><D:prop>
+<D:getetag>"b"</D:getetag><CARDDAV:address-data>BEGIN:VCARD</CARDDAV:address-data>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let (base, _captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let stream = client
+        .addressbook_query_stream("books/", "<CARDDAV:filter/>", true)
+        .await
+        .unwrap();
+    futures::pin_mut!(stream);
+    let mut objects = Vec::new();
+    while let Some(obj) = stream.next().await {
+        objects.push(obj.unwrap());
+    }
+    assert_eq!(objects.len(), 2, "two items expected: {objects:?}");
+    assert_eq!(objects[0].href, "/books/a.vcf");
+    assert_eq!(objects[0].etag.as_deref(), Some("a"));
+    assert_eq!(objects[0].address_data.as_deref(), Some("BEGIN:VCARD"));
+    assert_eq!(objects[1].href, "/books/b.vcf");
 }
