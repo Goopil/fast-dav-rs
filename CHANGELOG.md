@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-09-10
+
+### Added
+
+Item-by-item multistatus streaming (#223): the incremental XML engine becomes the
+primitive, with new APIs only (existing aggregate methods unchanged).
+
+- **Event engine** — `multistatus_events` / `multistatus_events_with_timeout`
+  (`webdav::streaming`): parse and decompress the multistatus **on the fly** over the
+  response body, yielding `DavStreamEvent::Item`/`DavStreamEvent::SyncToken` in document
+  order (`ItemStream<T>`, an `Unpin` concrete stream driven with plain `stream.next()`);
+  idle-read timeout knob, one error yield then stream end, and **abort on drop** (the
+  download is cut and the connection freed rather than re-pooled).
+- **Client-level streams** — `WebDavClient::propfind_items_stream` /
+  `report_items_stream` (+ `_with_timeout` variants): non-success statuses are rejected
+  eagerly by the call itself as `Error::UnexpectedStatus` (new generic `Operation::Propfind`
+  / `Operation::Report`), request/response compression is negotiated on the fly, and each
+  complete `<D:response>` arrives as soon as it parses.
+- **Domain streams** — `CalDavClient::calendar_query_stream` and
+  `CardDavClient::addressbook_query_stream` yield parsed `CalendarObject`/`AddressObject`
+  with the same bounded-memory and abort-on-drop semantics; timerange-query validation is
+  shared between the aggregated and streaming paths.
+- **Per-item mappers** — `map_calendar_object` / `map_address_object` extracted from the
+  aggregate mappers and re-exported (crate root + domain modules).
+- **Robustness coverage** — on-the-fly gzip decoding, drop-abort before EOF, truncated
+  body yields a single transport error, idle-timeout reporting; new `streaming_items`
+  runnable example and an "Item-by-item streams" section in the streaming guide.
+
 ## [0.16.0] - 2026-09-09
 
 ### Fixed
