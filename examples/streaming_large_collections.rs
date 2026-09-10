@@ -1,7 +1,7 @@
-//! Streaming a large collection PROPFIND with constant memory: `propfind_stream`
-//! hands you the raw (possibly compressed) body; `parse_multistatus_stream_visit`
-//! invokes your callback per item as bytes arrive, so an arbitrarily large
-//! collection never needs to fit in memory.
+//! Streaming a large collection PROPFIND with constant memory:
+//! `propfind_items_stream` yields one item at a time as a [`futures::Stream`],
+//! so an arbitrarily large collection never needs to fit in memory — and
+//! compression decoding plus status checking are handled for you.
 //!
 //! Target fixture: **Radicale** (`radicale-test/`, Basic auth `test`/`test`).
 //!
@@ -14,8 +14,8 @@
 mod common;
 
 use bytes::Bytes;
-use fast_dav_rs::caldav::parse_multistatus_stream_visit;
-use fast_dav_rs::{Depth, detect_encoding};
+use fast_dav_rs::webdav::{DavStreamEvent, Depth};
+use futures::StreamExt;
 
 use common::radicale_client;
 
@@ -49,24 +49,25 @@ async fn main() -> fast_dav_rs::Result<()> {
     }
     println!("seeded {EVENT_COUNT} events");
 
-    // Stream a Depth:1 PROPFIND. The response body is not aggregated: the
-    // parser consumes it incrementally and hands you one item at a time.
+    // Stream a Depth:1 PROPFIND. The response body is not aggregated: each
+    // complete <D:response> is yielded as soon as it parses, with the
+    // negotiated decompression applied on the fly.
     let propfind = r#"<D:propfind xmlns:D="DAV:"><D:prop><D:getetag/></D:prop></D:propfind>"#;
-    let response = client
-        .propfind_stream(COLLECTION, Depth::One, propfind)
+    let mut items = client
+        .propfind_items_stream(COLLECTION, Depth::One, propfind)
         .await?;
 
-    let encoding = detect_encoding(response.headers());
     let mut seen = 0usize;
-    parse_multistatus_stream_visit(response.into_body(), &[encoding], |item| {
-        if item.is_collection {
-            return Ok(()); // the Depth:1 answer starts with the collection itself
+    while let Some(event) = items.next().await {
+        // The generic PROPFIND answer carries no sync token: items only.
+        if let DavStreamEvent::Item(item) = event? {
+            if item.is_collection {
+                continue; // the Depth:1 answer starts with the collection itself
+            }
+            seen += 1;
+            println!("{:>3}. {} (etag {:?})", seen, item.href, item.etag);
         }
-        seen += 1;
-        println!("{:>3}. {} (etag {:?})", seen, item.href, item.etag);
-        Ok(())
-    })
-    .await?;
+    }
 
     println!("streamed {seen} items without buffering the whole response");
     client.delete(COLLECTION).await?;

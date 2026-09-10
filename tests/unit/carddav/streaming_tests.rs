@@ -1,3 +1,7 @@
+//! Covers the deprecated raw-stream/resilient surface on purpose: those APIs
+//! must keep working (and stay covered) until they are removed at 1.0.
+#![allow(deprecated)]
+
 use bytes::Bytes;
 use fast_dav_rs::carddav::streaming::*;
 use fast_dav_rs::{Error, Result};

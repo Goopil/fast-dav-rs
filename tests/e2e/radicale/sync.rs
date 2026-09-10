@@ -76,6 +76,7 @@ async fn test_sync_collection_unknown_token_records_observed_behavior() {
     // Client-level contract: `sync_collection_resilient` treats the observed
     // stale-token signal (403 + valid-sync-token, or 410) as "resync" and
     // transparently re-issues an initial sync (the DAVx⁵ rule).
+    #[allow(deprecated)]
     let (_, items, token, resynced) = raw
         .sync_collection_resilient(
             &calendar_path,

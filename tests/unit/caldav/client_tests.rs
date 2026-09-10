@@ -1178,7 +1178,9 @@ const INITIAL_SYNC_BODY: &str = r#"<?xml version="1.0"?>
   <D:sync-token>http://example.com/sync/2</D:sync-token>
 </D:multistatus>"#;
 
+// Covers the deprecated surface on purpose: it must keep working until removal.
 #[tokio::test]
+#[allow(deprecated)]
 async fn sync_collection_resilient_recovers_from_gone() {
     let ok_head = crate::common::http_helpers::response_head("", INITIAL_SYNC_BODY.len());
     let (base, captured) = crate::common::http_helpers::serve_sequence(vec![

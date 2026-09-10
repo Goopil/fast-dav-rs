@@ -27,6 +27,9 @@ use codspeed_criterion_compat::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
 use fast_dav_rs::RequestCompressionMode;
+// B3 intentionally benches the deprecated raw-stream escape hatches (see its
+// doc comment): keep their cost tracked until removal.
+#[allow(deprecated)]
 use fast_dav_rs::webdav::streaming::{parse_multistatus_stream, parse_multistatus_stream_visit};
 use fast_dav_rs::webdav::{Depth, SyncLevel, WebDavClient};
 use http_body_util::{BodyExt, Full};
@@ -273,6 +276,11 @@ fn bench_b2_first_request_auto(c: &mut Criterion) {
 
 /// B3 — aggregated parse vs `parse_multistatus_stream_visit` throughput on a
 /// ~50 MB multistatus (5,000 items × ~10 KB of `calendar-data`).
+///
+/// B3 intentionally exercises the deprecated raw-stream escape hatches so
+/// their cost stays tracked until removal; the numbers remain comparable with
+/// the baselines recorded in PERFORMANCE.md §5.
+#[allow(deprecated)]
 fn bench_b3_multistatus_parse(c: &mut Criterion) {
     let rt = runtime();
 

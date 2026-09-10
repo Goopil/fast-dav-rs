@@ -14,6 +14,8 @@ pub use client::{
     build_addressbook_query_filter_uid, build_sync_collection_body, map_address_object,
     map_address_objects, map_addressbook_list, map_sync_response,
 };
+// Deprecation propagated from the source items; see `streaming.rs`.
+#[allow(deprecated)]
 pub use streaming::{
     parse_multistatus_bytes, parse_multistatus_bytes_visit, parse_multistatus_stream,
     parse_multistatus_stream_visit, parse_multistatus_stream_visit_with_timeout,
