@@ -17,7 +17,10 @@ pub use client::{
     preference_applied_from_headers,
 };
 pub use discovery::{discover_caldav, discover_carddav};
-pub use streaming::{parse_error_body, parse_lock_discovery_bytes};
+pub use streaming::{
+    DavStreamEvent, STREAM_READ_IDLE_TIMEOUT, multistatus_events, multistatus_events_with_timeout,
+    parse_error_body, parse_lock_discovery_bytes,
+};
 pub use sync::{SyncDelta, SyncEntry, SyncSession, SyncSnapshot};
 pub use types::{
     BatchItem, DavCapabilities, DavCompliance, DavItem, DavItemCommon, Depth, LockInfo, LockScope,

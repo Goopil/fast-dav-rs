@@ -4,7 +4,9 @@ use fast_dav_rs::webdav::streaming::{
     DavStreamEvent, decode_text, multistatus_events, parse_multistatus_bytes,
     parse_multistatus_stream_visit, parse_multistatus_stream_visit_with_timeout,
 };
-use fast_dav_rs::{ContentEncoding, Depth, RequestCompressionMode, WebDavClient, compress_payload};
+use fast_dav_rs::{
+    ContentEncoding, Depth, Operation, RequestCompressionMode, WebDavClient, compress_payload,
+};
 use futures::StreamExt;
 use hyper::{HeaderMap, Method};
 use std::sync::Arc;
@@ -514,5 +516,117 @@ async fn events_stream_sync_token_emitted_when_trailing() {
         matches!(&events[1], DavStreamEvent::SyncToken(t) if t == "https://example.com/sync/7"),
         "trailing sync token must be last, got: {:?}",
         events[1]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Client-level item streams (WebDavClient)
+// ---------------------------------------------------------------------------
+
+const PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:getetag/></D:prop></D:propfind>"#;
+
+/// `propfind_items_stream` streams each `<D:response>` as soon as it is
+/// complete, in document order, without aggregating the body.
+#[tokio::test]
+async fn propfind_items_stream_yields_items_in_order() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop><D:getetag>"a"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+  <D:response><D:href>/cal/b.ics</D:href><D:propstat><D:prop><D:getetag>"b"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#;
+    let base = serve_once(response_head("", xml.len()), xml.as_bytes().to_vec()).await;
+    let client = WebDavClient::builder(&base)
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+
+    let stream = client
+        .propfind_items_stream("/cal/", Depth::One, PROPFIND_BODY)
+        .await
+        .unwrap();
+    futures::pin_mut!(stream);
+    let mut hrefs = Vec::new();
+    while let Some(event) = stream.next().await {
+        match event.unwrap() {
+            DavStreamEvent::Item(item) => hrefs.push(item.href),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+    assert_eq!(hrefs, ["/cal/a.ics", "/cal/b.ics"]);
+}
+
+/// `report_items_stream_with_timeout` streams REPORT results under a custom
+/// idle timeout; a trailing sync token arrives as its own event.
+#[tokio::test]
+async fn report_items_stream_with_timeout_yields_items_and_trailing_token() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop><D:getetag>"a"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+  <D:sync-token>https://example.com/sync/7</D:sync-token>
+</D:multistatus>"#;
+    let base = serve_once(response_head("", xml.len()), xml.as_bytes().to_vec()).await;
+    let client = WebDavClient::builder(&base)
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+
+    let stream = client
+        .report_items_stream_with_timeout(
+            "/cal/",
+            Depth::One,
+            PROPFIND_BODY,
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
+    futures::pin_mut!(stream);
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event.unwrap());
+    }
+    assert_eq!(events.len(), 2, "item + token expected: {events:?}");
+    assert!(
+        matches!(&events[0], DavStreamEvent::Item(i) if i.href == "/cal/a.ics"),
+        "item must come first, got: {:?}",
+        events[0]
+    );
+    assert!(
+        matches!(&events[1], DavStreamEvent::SyncToken(t) if t == "https://example.com/sync/7"),
+        "trailing sync token must be last, got: {:?}",
+        events[1]
+    );
+}
+
+/// A non-success status is rejected eagerly by the call itself — before any
+/// stream item is produced — as [`Error::UnexpectedStatus`].
+#[tokio::test]
+async fn propfind_items_stream_rejects_error_status_eagerly() {
+    let base = serve_once(
+        "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 0\r\n\r\n"
+            .to_owned(),
+        Vec::new(),
+    )
+    .await;
+    let client = WebDavClient::builder(&base)
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .unwrap();
+
+    let err = match client
+        .propfind_items_stream("/cal/", Depth::One, PROPFIND_BODY)
+        .await
+    {
+        Err(err) => err,
+        Ok(_) => panic!("expected non-success status to be rejected eagerly"),
+    };
+    assert!(
+        matches!(
+            err,
+            Error::UnexpectedStatus {
+                operation: Operation::Propfind,
+                ..
+            }
+        ),
+        "expected UnexpectedStatus(Propfind), got: {err:?}"
     );
 }

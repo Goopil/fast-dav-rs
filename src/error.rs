@@ -496,6 +496,10 @@ pub enum Operation {
     /// `PROPPATCH` to set/remove a calendar's `calendar-timezone`
     /// (RFC 4791 §5.2.2).
     ProppatchCalendarTimezone,
+    /// `PROPFIND` whose multistatus is streamed item by item.
+    Propfind,
+    /// `REPORT` whose multistatus is streamed item by item.
+    Report,
 }
 
 impl std::fmt::Display for Operation {
@@ -521,6 +525,8 @@ impl std::fmt::Display for Operation {
             Self::ScheduleInbox => "PROPFIND schedule inbox",
             Self::PostManagedAttachment => "POST managed attachment",
             Self::PropfindCurrentUserPrivilegeSet => "PROPFIND current-user-privilege-set",
+            Self::Propfind => "PROPFIND",
+            Self::Report => "REPORT",
             Self::ProppatchCalendarTimezone => "PROPPATCH calendar-timezone",
         };
         f.write_str(s)

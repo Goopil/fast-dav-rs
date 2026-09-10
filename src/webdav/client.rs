@@ -2373,6 +2373,158 @@ impl WebDavClient {
         )
         .await
     }
+
+    /// Shared pipeline behind [`propfind_items_stream`](Self::propfind_items_stream)
+    /// and [`report_items_stream`](Self::report_items_stream) (and their
+    /// `_with_timeout` variants): stream the response, reject a non-success
+    /// status eagerly, and parse the multistatus incrementally.
+    async fn items_stream(
+        &self,
+        method: Method,
+        path: &str,
+        depth: Depth,
+        xml_body: &str,
+        limit: Option<Duration>,
+        operation: Operation,
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+        let mut h = HeaderMap::new();
+        h.insert("Depth", header::HeaderValue::from_str(depth.as_str())?);
+        h.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/xml; charset=utf-8"),
+        );
+        let resp = self
+            .send_stream(
+                method,
+                path,
+                h,
+                Some(Bytes::from(xml_body.to_owned())),
+                limit,
+            )
+            .await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation,
+                status: resp.status(),
+            });
+        }
+        let encodings = detect_encodings(resp.headers());
+        let idle = limit.unwrap_or(crate::webdav::streaming::STREAM_READ_IDLE_TIMEOUT);
+        Ok(crate::webdav::streaming::multistatus_events_with_timeout(
+            resp.into_body(),
+            &encodings,
+            idle,
+        ))
+    }
+
+    /// `PROPFIND` whose multistatus is yielded **item by item** as a
+    /// [`futures::Stream`], instead of being aggregated in memory.
+    ///
+    /// The request is identical to [`propfind`](Self::propfind)/[`propfind_stream`](Self::propfind_stream);
+    /// the difference is that each complete `<D:response>` (and the
+    /// `<D:sync-token>`, when present) is produced as soon as it parses, so
+    /// memory stays bounded by the current item regardless of collection
+    /// size. A non-success status is rejected eagerly by the call itself as
+    /// [`Error::UnexpectedStatus`] (with [`Operation::Propfind`]); the XML
+    /// decompression negotiated for this request (br/gzip/zstd) is applied
+    /// on the fly.
+    ///
+    /// **Dropping the returned stream aborts the download** and frees (rather
+    /// than re-pools) the connection.
+    ///
+    /// Reads are bounded by the default idle timeout
+    /// ([`STREAM_READ_IDLE_TIMEOUT`](crate::webdav::streaming::STREAM_READ_IDLE_TIMEOUT));
+    /// use [`propfind_items_stream_with_timeout`](Self::propfind_items_stream_with_timeout)
+    /// to customize it.
+    pub async fn propfind_items_stream(
+        &self,
+        path: &str,
+        depth: Depth,
+        xml_body: &str,
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+        self.items_stream(
+            Method::from_bytes(b"PROPFIND")?,
+            path,
+            depth,
+            xml_body,
+            None,
+            Operation::Propfind,
+        )
+        .await
+    }
+
+    /// [`propfind_items_stream`](Self::propfind_items_stream) with a custom
+    /// timeout: `timeout` bounds both the wait for the response head and each
+    /// idle gap between body reads.
+    pub async fn propfind_items_stream_with_timeout(
+        &self,
+        path: &str,
+        depth: Depth,
+        xml_body: &str,
+        timeout: Duration,
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+        self.items_stream(
+            Method::from_bytes(b"PROPFIND")?,
+            path,
+            depth,
+            xml_body,
+            Some(timeout),
+            Operation::Propfind,
+        )
+        .await
+    }
+
+    /// `REPORT` whose multistatus is yielded **item by item** as a
+    /// [`futures::Stream`], instead of being aggregated in memory.
+    ///
+    /// The request is identical to [`report`](Self::report)/[`report_stream`](Self::report_stream);
+    /// each complete `<D:response>` (and the `<D:sync-token>`, when present)
+    /// is produced as soon as it parses. A non-success status is rejected
+    /// eagerly by the call itself as [`Error::UnexpectedStatus`] (with
+    /// [`Operation::Report`]). **Dropping the returned stream aborts the
+    /// download** and frees (rather than re-pools) the connection.
+    ///
+    /// Reads are bounded by the default idle timeout
+    /// ([`STREAM_READ_IDLE_TIMEOUT`](crate::webdav::streaming::STREAM_READ_IDLE_TIMEOUT));
+    /// use [`report_items_stream_with_timeout`](Self::report_items_stream_with_timeout)
+    /// to customize it.
+    pub async fn report_items_stream(
+        &self,
+        path: &str,
+        depth: Depth,
+        xml_body: &str,
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+        self.items_stream(
+            Method::from_bytes(b"REPORT")?,
+            path,
+            depth,
+            xml_body,
+            None,
+            Operation::Report,
+        )
+        .await
+    }
+
+    /// [`report_items_stream`](Self::report_items_stream) with a custom
+    /// timeout: `timeout` bounds both the wait for the response head and each
+    /// idle gap between body reads.
+    pub async fn report_items_stream_with_timeout(
+        &self,
+        path: &str,
+        depth: Depth,
+        xml_body: &str,
+        timeout: Duration,
+    ) -> Result<impl futures::Stream<Item = Result<crate::webdav::DavStreamEvent>> + Send> {
+        self.items_stream(
+            Method::from_bytes(b"REPORT")?,
+            path,
+            depth,
+            xml_body,
+            Some(timeout),
+            Operation::Report,
+        )
+        .await
+    }
 }
 
 /// Generates the shared delegate methods for the thin CalDAV/CardDAV client

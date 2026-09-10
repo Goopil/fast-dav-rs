@@ -1061,7 +1061,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
 pub fn multistatus_events(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
-) -> impl futures::Stream<Item = Result<DavStreamEvent>> + Send {
+) -> impl futures::Stream<Item = Result<DavStreamEvent>> + Send + use<> {
     multistatus_events_with_timeout(resp_body, encodings, STREAM_READ_IDLE_TIMEOUT)
 }
 
@@ -1076,7 +1076,7 @@ pub fn multistatus_events_with_timeout(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
     idle_timeout: Duration,
-) -> impl futures::Stream<Item = Result<DavStreamEvent>> + Send {
+) -> impl futures::Stream<Item = Result<DavStreamEvent>> + Send + use<> {
     struct State {
         xml: Reader<Box<dyn AsyncBufRead + Unpin + Send>>,
         buf: Vec<u8>,
