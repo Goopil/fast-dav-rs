@@ -1,12 +1,16 @@
-//! Criterion benchmarks implementing the three scenarios specified in
+//! Criterion benchmarks implementing the scenarios specified in
 //! `docs/audit/PERFORMANCE.md` §5:
 //!
 //! - **B1** — `sync_collection` over 1k/10k synthetic items, `include_data`
 //!   on/off (4 cases).
 //! - **B2** — first-request latency in `Auto` compression mode with 32
 //!   concurrent callers (plus a `Disabled` baseline isolating the probe cost).
+//!   Local-only: wall-time semantics that the CodSpeed simulation instrument
+//!   distorts.
 //! - **B3** — aggregated parse vs `parse_multistatus_stream_visit` throughput
 //!   on a ~50 MB multistatus.
+//! - **B4** — fresh client per iteration (serverless pattern): connection
+//!   setup + per-instance compression probe in `Auto` vs `Disabled`.
 //!
 //! The fixture is an **in-process** hyper HTTP/1.1 server bound to an
 //! ephemeral `127.0.0.1` port — no network, no Docker. Synthetic multistatus
@@ -19,7 +23,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use codspeed_criterion_compat::{
+    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
 use fast_dav_rs::RequestCompressionMode;
 use fast_dav_rs::webdav::streaming::{parse_multistatus_stream, parse_multistatus_stream_visit};
 use fast_dav_rs::webdav::{Depth, SyncLevel, WebDavClient};
@@ -325,10 +331,50 @@ fn bench_b3_multistatus_parse(c: &mut Criterion) {
     group.finish();
 }
 
+/// B4 — fresh client per iteration (serverless pattern, PERFORMANCE.md §2.3):
+/// the measured cost includes connection setup plus, in `Auto` mode, the
+/// compression probe paid once per client instance. `disabled` is the
+/// subtraction baseline isolating the probe cost from connection setup.
+fn bench_b4_fresh_client_auto(c: &mut Criterion) {
+    let rt = runtime();
+
+    let payload = build_sync_payload(25, true, 2);
+    let payload_len = payload.len();
+    let routes = HashMap::from([("/fresh/", payload)]);
+    let base = start_fixture(&rt, routes);
+
+    let mut group = c.benchmark_group("B4_fresh_client_auto");
+    group.sample_size(30);
+    for (label, mode) in [
+        ("auto", RequestCompressionMode::Auto),
+        ("disabled", RequestCompressionMode::Disabled),
+    ] {
+        group.bench_function(BenchmarkId::from_parameter(label), |b| {
+            b.to_async(&rt).iter(|| {
+                let base = base.clone();
+                async move {
+                    let client = WebDavClient::builder(base.as_str())
+                        .request_compression(mode)
+                        .build()
+                        .expect("client");
+                    let resp = client
+                        .report("fresh/", Depth::Zero, SYNC_REQUEST_BODY)
+                        .await
+                        .expect("report");
+                    assert_eq!(resp.body().len(), payload_len);
+                    black_box(resp.body().len())
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_b1_sync_collection,
     bench_b2_first_request_auto,
-    bench_b3_multistatus_parse
+    bench_b3_multistatus_parse,
+    bench_b4_fresh_client_auto
 );
 criterion_main!(benches);

@@ -1,0 +1,44 @@
+name: CodSpeed
+
+permissions:
+  contents: read
+  id-token: write
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmarks:
+    name: Benchmarks (CodSpeed)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain and cargo-codspeed
+        uses: moonrepo/setup-rust@v1
+        with:
+          bins: cargo-codspeed
+
+      - name: Build benchmarks (simulation + memory instruments)
+        run: cargo codspeed build -m simulation -m memory
+
+      # B2 is excluded: wall-time semantics that the simulation instrument
+      # distorts (see docs/audit/PERFORMANCE.md §5).
+      - name: Run and report benchmarks
+        uses: CodSpeedHQ/action@v5
+        with:
+          mode: simulation,memory
+          run: cargo codspeed run "B1_sync_collection|B3_multistatus_parse|B4_fresh_client_auto"
