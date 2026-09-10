@@ -241,10 +241,12 @@ impl CommonParser {
 use crate::common::compression::MAX_DECOMPRESSED_SIZE;
 use crate::common::compression::{body_stream_reader, stack_decoders};
 use crate::webdav::types::{DavItem, MediaType, Privilege};
+use futures::StreamExt;
 use hyper::body::Incoming;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Decoder, Reader, XmlVersion};
 use std::io::{BufRead, Cursor};
+use tokio::io::AsyncBufRead;
 
 /// Default **idle** timeout for streaming multistatus reads.
 ///
@@ -583,6 +585,19 @@ impl ItemConsumer for Vec<DavItem> {
     }
 }
 
+/// Sink queueing parsed items as [`DavStreamEvent`]s for the streaming engine.
+#[derive(Default)]
+struct EventQueue {
+    events: std::collections::VecDeque<DavStreamEvent>,
+}
+
+impl ItemConsumer for EventQueue {
+    fn consume(&mut self, item: DavItem) -> Result<()> {
+        self.events.push_back(DavStreamEvent::Item(item));
+        Ok(())
+    }
+}
+
 impl<F> ItemConsumer for F
 where
     F: FnMut(DavItem) -> Result<()>,
@@ -590,6 +605,23 @@ where
     fn consume(&mut self, item: DavItem) -> Result<()> {
         (self)(item)
     }
+}
+
+/// One incrementally parsed piece of a multistatus response, yielded by
+/// [`multistatus_events`] as soon as it is complete.
+#[derive(Debug)]
+#[non_exhaustive]
+// Events are consumed one at a time, so the inline size difference between
+// variants costs nothing; boxing `Item` would add a heap allocation per
+// entry in the hot streaming path.
+#[allow(clippy::large_enum_variant)]
+pub enum DavStreamEvent {
+    /// A complete `<D:response>` entry.
+    Item(DavItem),
+    /// The multistatus `<D:sync-token>` content (RFC 6578). Emitted once,
+    /// wherever the server places the element (commonly first or last child
+    /// of `<D:multistatus>`).
+    SyncToken(String),
 }
 
 /// Result of parsing a multistatus response, including top-level sync-token if present
@@ -991,61 +1023,144 @@ impl<C: ItemConsumer> MultistatusParser<C> {
     }
 }
 
-async fn parse_multistatus_stream_with<C>(
+/// Yield every parsed piece of a multistatus body as it completes, as a
+/// [`futures::Stream`].
+///
+/// The XML is read and decompressed **incrementally** from `resp_body`
+/// (br/gzip/zstd negotiated by the caller's request), so memory stays bounded
+/// by the current item plus the reader buffers regardless of collection size.
+/// Each complete `<D:response>` becomes a [`DavStreamEvent::Item`]; the
+/// `<D:sync-token>` (when present) becomes a [`DavStreamEvent::SyncToken`]
+/// emitted in document order. Errors (transport, timeout, XML) yield one
+/// [`Result::Err`] and end the stream.
+///
+/// Reads are bounded by the default idle timeout ([`STREAM_READ_IDLE_TIMEOUT`]);
+/// use [`multistatus_events_with_timeout`] to customize it. **Dropping the
+/// stream aborts the download**: the underlying response body is dropped
+/// before completion, which also frees (rather than re-pools) the connection.
+///
+/// # Example
+/// ```no_run
+/// use fast_dav_rs::webdav::streaming::{DavStreamEvent, multistatus_events};
+/// use futures::StreamExt;
+/// use hyper::body::Incoming;
+///
+/// # async fn example(body: Incoming) -> fast_dav_rs::Result<()> {
+/// let mut stream = multistatus_events(body, &[]);
+/// futures::pin_mut!(stream);
+/// while let Some(event) = stream.next().await {
+///     match event? {
+///         DavStreamEvent::Item(item) => println!("item: {}", item.href),
+///         DavStreamEvent::SyncToken(token) => println!("token: {token}"),
+///         other => println!("other: {other:?}"),
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn multistatus_events(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
-    sink: C,
-    idle_timeout: Duration,
-) -> Result<ParseResult<C>>
-where
-    C: ItemConsumer + Send,
-{
-    let reader = stack_decoders(body_stream_reader(resp_body), encodings);
-
-    let mut xml = Reader::from_reader(reader);
-    xml.config_mut().trim_text(false);
-
-    let mut buf = Vec::with_capacity(8 * 1024);
-    let mut parser = MultistatusParser::new(sink);
-
-    while !dispatch_event(
-        &mut parser,
-        xml.decoder(),
-        tokio::time::timeout(idle_timeout, xml.read_event_into_async(&mut buf))
-            .await
-            .map_err(|_| Error::Timeout {
-                limit: idle_timeout,
-            })?,
-    )? {
-        buf.clear();
-    }
-
-    parser.finish()
+) -> impl futures::Stream<Item = Result<DavStreamEvent>> + Send {
+    multistatus_events_with_timeout(resp_body, encodings, STREAM_READ_IDLE_TIMEOUT)
 }
 
-fn parse_multistatus_bytes_with<R, C>(reader: R, sink: C) -> Result<ParseResult<C>>
-where
-    R: BufRead,
-    C: ItemConsumer,
-{
-    let mut xml = Reader::from_reader(reader);
-    xml.config_mut().trim_text(false);
-
-    let mut buf = Vec::with_capacity(8 * 1024);
-    let mut parser = MultistatusParser::new(sink);
-
-    while !dispatch_event(&mut parser, xml.decoder(), xml.read_event_into(&mut buf))? {
-        buf.clear();
+/// Variant of [`multistatus_events`] with a caller-provided **idle** timeout.
+///
+/// `idle_timeout` is the maximum time allowed between two reads making progress
+/// (i.e. waiting for the next XML event to arrive from the network). It is **not**
+/// a cap on the total stream duration, so huge-but-flowing responses are unaffected.
+/// When the timeout elapses, the stream yields a [`Error::Timeout`](crate::Error)
+/// and ends.
+pub fn multistatus_events_with_timeout(
+    resp_body: Incoming,
+    encodings: &[ContentEncoding],
+    idle_timeout: Duration,
+) -> impl futures::Stream<Item = Result<DavStreamEvent>> + Send {
+    struct State {
+        xml: Reader<Box<dyn AsyncBufRead + Unpin + Send>>,
+        buf: Vec<u8>,
+        parser: MultistatusParser<EventQueue>,
+        idle_timeout: Duration,
+        done: bool,
     }
 
-    parser.finish()
+    let state = State {
+        xml: Reader::from_reader(stack_decoders(body_stream_reader(resp_body), encodings)),
+        buf: Vec::with_capacity(8 * 1024),
+        parser: MultistatusParser::new(EventQueue::default()),
+        idle_timeout,
+        done: false,
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(event) = state.parser.sink.events.pop_front() {
+                return Some((Ok(event), state));
+            }
+            if state.done {
+                return None;
+            }
+            match tokio::time::timeout(
+                state.idle_timeout,
+                state.xml.read_event_into_async(&mut state.buf),
+            )
+            .await
+            {
+                Err(_) => {
+                    state.done = true;
+                    return Some((
+                        Err(Error::Timeout {
+                            limit: state.idle_timeout,
+                        }),
+                        state,
+                    ));
+                }
+                Ok(Err(error)) => {
+                    state.done = true;
+                    return Some((Err(Error::from_quick_xml(error)), state));
+                }
+                Ok(Ok(event)) => {
+                    let is_eof =
+                        match dispatch_event(&mut state.parser, state.xml.decoder(), Ok(event)) {
+                            Ok(done) => done,
+                            Err(error) => {
+                                state.done = true;
+                                return Some((Err(error), state));
+                            }
+                        };
+                    state.buf.clear();
+                    if let Some(token) = state.parser.sync_token.take() {
+                        state
+                            .parser
+                            .sink
+                            .events
+                            .push_back(DavStreamEvent::SyncToken(token));
+                    }
+                    if is_eof {
+                        state.done = true;
+                        if let Some(unclosed) = state.parser.stack.last() {
+                            return Some((
+                                Err(Error::XmlStructure(format!(
+                                    "unexpected end of input with unclosed element {unclosed:?}"
+                                ))),
+                                state,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    })
 }
 
 /// Parse a WebDAV `207 Multi-Status` XML body in **streaming mode**, with optional
 /// decompression (br, gzip, zstd).
 ///
 /// This function avoids loading the entire response into memory, making it suitable
-/// for very large CalDAV/WebDAV collections.
+/// for very large CalDAV/WebDAV collections. It collects
+/// [`multistatus_events`] into a [`Vec`]; for true item-by-item consumption,
+/// use [`multistatus_events`] directly.
 ///
 /// Reads are bounded by the default idle timeout ([`STREAM_READ_IDLE_TIMEOUT`]); use
 /// [`parse_multistatus_stream_with_timeout`] to customize it.
@@ -1067,7 +1182,17 @@ pub async fn parse_multistatus_stream_with_timeout(
     encodings: &[ContentEncoding],
     idle_timeout: Duration,
 ) -> Result<ParseResult<Vec<DavItem>>> {
-    parse_multistatus_stream_with(resp_body, encodings, Vec::<DavItem>::new(), idle_timeout).await
+    let mut items = Vec::new();
+    let mut sync_token = None;
+    let stream = multistatus_events_with_timeout(resp_body, encodings, idle_timeout);
+    futures::pin_mut!(stream);
+    while let Some(event) = stream.next().await {
+        match event? {
+            DavStreamEvent::Item(item) => items.push(item),
+            DavStreamEvent::SyncToken(token) => sync_token = Some(token),
+        }
+    }
+    Ok(ParseResult { items, sync_token })
 }
 
 /// Stream parse a WebDAV `207 Multi-Status` response and invoke a callback for each item.
@@ -1101,13 +1226,39 @@ pub async fn parse_multistatus_stream_visit_with_timeout<F>(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
     idle_timeout: Duration,
-    on_item: F,
+    mut on_item: F,
 ) -> Result<Option<String>>
 where
     F: FnMut(DavItem) -> Result<()> + Send,
 {
-    let result = parse_multistatus_stream_with(resp_body, encodings, on_item, idle_timeout).await?;
-    Ok(result.sync_token)
+    let mut sync_token = None;
+    let stream = multistatus_events_with_timeout(resp_body, encodings, idle_timeout);
+    futures::pin_mut!(stream);
+    while let Some(event) = stream.next().await {
+        match event? {
+            DavStreamEvent::Item(item) => on_item(item)?,
+            DavStreamEvent::SyncToken(token) => sync_token = Some(token),
+        }
+    }
+    Ok(sync_token)
+}
+
+fn parse_multistatus_bytes_with<R, C>(reader: R, sink: C) -> Result<ParseResult<C>>
+where
+    R: BufRead,
+    C: ItemConsumer,
+{
+    let mut xml = Reader::from_reader(reader);
+    xml.config_mut().trim_text(false);
+
+    let mut buf = Vec::with_capacity(8 * 1024);
+    let mut parser = MultistatusParser::new(sink);
+
+    while !dispatch_event(&mut parser, xml.decoder(), xml.read_event_into(&mut buf))? {
+        buf.clear();
+    }
+
+    parser.finish()
 }
 
 /// Parse a WebDAV `207 Multi-Status` XML body from an already aggregated buffer.

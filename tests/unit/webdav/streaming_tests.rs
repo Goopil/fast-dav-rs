@@ -1,10 +1,11 @@
 use bytes::Bytes;
 use fast_dav_rs::Error;
 use fast_dav_rs::webdav::streaming::{
-    decode_text, parse_multistatus_bytes, parse_multistatus_stream_visit,
-    parse_multistatus_stream_visit_with_timeout,
+    DavStreamEvent, decode_text, multistatus_events, parse_multistatus_bytes,
+    parse_multistatus_stream_visit, parse_multistatus_stream_visit_with_timeout,
 };
 use fast_dav_rs::{ContentEncoding, Depth, RequestCompressionMode, WebDavClient, compress_payload};
+use futures::StreamExt;
 use hyper::{HeaderMap, Method};
 use std::sync::Arc;
 use std::time::Duration;
@@ -435,4 +436,83 @@ fn uppercase_element_names_are_matched() {
     assert_eq!(result.items.len(), 1);
     assert_eq!(result.items[0].href, "/cal/a.ics");
     assert_eq!(result.items[0].etag.as_deref(), Some("1"));
+}
+
+/// The streaming event engine yields the sync token and each completed
+/// `<D:response>` as separate events, in document order (RFC 6578 servers
+/// commonly emit the sync token first).
+#[tokio::test]
+async fn events_stream_items_in_order_with_leading_sync_token() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:sync-token>https://example.com/sync/42</D:sync-token>
+  <D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop><D:getetag>"a"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+  <D:response><D:href>/cal/b.ics</D:href><D:propstat><D:prop><D:getetag>"b"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#;
+    let base = serve_once(response_head("", xml.len()), xml.as_bytes().to_vec()).await;
+    let client = WebDavClient::new(&base, None, None).unwrap();
+    let resp = client
+        .send_stream(Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+
+    let stream = multistatus_events(resp.into_body(), &[]);
+    futures::pin_mut!(stream);
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event.unwrap());
+    }
+
+    assert_eq!(events.len(), 3, "token + 2 items expected: {events:?}");
+    assert!(
+        matches!(&events[0], DavStreamEvent::SyncToken(t) if t == "https://example.com/sync/42"),
+        "sync token must come first, got: {:?}",
+        events[0]
+    );
+    assert!(
+        matches!(&events[1], DavStreamEvent::Item(i) if i.href == "/cal/a.ics" && i.etag.as_deref() == Some("a")),
+        "first item must be a.ics, got: {:?}",
+        events[1]
+    );
+    assert!(
+        matches!(&events[2], DavStreamEvent::Item(i) if i.href == "/cal/b.ics"),
+        "second item must be b.ics, got: {:?}",
+        events[2]
+    );
+}
+
+/// A trailing sync token (RFC 6578 §3.6 example layout) is emitted as its own
+/// event, after the items.
+#[tokio::test]
+async fn events_stream_sync_token_emitted_when_trailing() {
+    let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop><D:getetag>"a"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+  <D:sync-token>https://example.com/sync/7</D:sync-token>
+</D:multistatus>"#;
+    let base = serve_once(response_head("", xml.len()), xml.as_bytes().to_vec()).await;
+    let client = WebDavClient::new(&base, None, None).unwrap();
+    let resp = client
+        .send_stream(Method::GET, "", HeaderMap::new(), None, None)
+        .await
+        .unwrap();
+
+    let stream = multistatus_events(resp.into_body(), &[]);
+    futures::pin_mut!(stream);
+    let mut events = Vec::new();
+    while let Some(event) = stream.next().await {
+        events.push(event.unwrap());
+    }
+
+    assert_eq!(events.len(), 2, "item + token expected: {events:?}");
+    assert!(
+        matches!(&events[0], DavStreamEvent::Item(i) if i.href == "/cal/a.ics"),
+        "item must come first, got: {:?}",
+        events[0]
+    );
+    assert!(
+        matches!(&events[1], DavStreamEvent::SyncToken(t) if t == "https://example.com/sync/7"),
+        "trailing sync token must be last, got: {:?}",
+        events[1]
+    );
 }
