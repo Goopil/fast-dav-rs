@@ -48,6 +48,10 @@ cargo llvm-cov nextest --test unit_tests --all-features --no-fail-fast --lcov --
 # Run the criterion benchmarks (PERFORMANCE.md §5 scenarios)
 cargo bench --bench performance
 
+# Benchmarks are CI-gated by CodSpeed (.github/workflows/codspeed.yml,
+# simulation + memory instruments; B2 is local-only — wall-time semantics)
+# cargo bench --bench performance B4
+
 # Run the fuzz targets locally (nightly + cargo-fuzz required; see fuzz/)
 cargo +nightly fuzz run <target> -- -max_total_time=60
 ```
@@ -70,6 +74,7 @@ The project uses GitHub Actions with these key steps:
 4. `cargo build --examples --all-features --locked` - Build examples
 5. `cargo test --doc --all-features --locked` - Run doc tests
 6. `cargo semver-checks` - Gate public API against the latest published release (`Semver Checks` workflow)
+7. CodSpeed benchmarks - `simulation` + `memory` instruments on PRs and `main` (`CodSpeed` workflow); B2 stays local-only (wall-time semantics)
 
 ### SonarCloud Quality Gates
 All PRs are analyzed by SonarCloud. The following gates **must always pass** on every PR:

@@ -33,19 +33,21 @@
 
 ## 5. Recommended benchmarks
 
-The repo has **zero benchmarks**. Before/after any Phase 2 work (`REMEDIATION_PLAN.md`), add three `criterion`-style scenarios (or simple `Instant` harnesses in `benches/`):
+Implemented in `benches/performance.rs` with `criterion`; **B1, B3 and B4 are
+CI-gated by CodSpeed** (`.github/workflows/codspeed.yml`, `simulation` + `memory`
+instruments, <1% variance). **B2 stays local-only**: it measures wall-time
+semantics (probe head-of-line blocking, §2.1) that the simulation instrument
+distorts. The local numbers below are order-of-magnitude references, not
+absolute truth.
 
 1. `sync_collection` over 1k/10k synthetic items, `include_data` on/off — assert memory ceiling after AUDIT-003/016 fixes.
 2. First-request latency in `Auto` mode, 32 concurrent callers — assert probe HOL elimination.
 3. Aggregated vs `_visit` parse throughput on a 50 MB multistatus — document the real delta to justify the "use `_visit` for large syncs" guidance.
+4. Fresh client per iteration (serverless pattern, §2.3) — connection setup + per-instance probe cost, `Auto` vs `Disabled`.
 
 ### Baselines (2026-09)
 
-Implemented in `benches/performance.rs` (`cargo bench --bench performance`). **Local
-run**, not a CI regression gate: numbers are order-of-magnitude references for
-before/after comparisons, not absolute truth.
-
-- Hardware: Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.96, `bench` profile.
+Local reference run, Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.96, `bench` profile.
 - Fixture: in-process hyper HTTP/1.1 server on an ephemeral `127.0.0.1` port,
   serving canned 207 multistatus payloads; synthetic XML is generated outside
   the measured closures; no sleeps, server responds immediately.
