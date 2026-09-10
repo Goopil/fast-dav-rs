@@ -1317,3 +1317,53 @@ async fn addressbook_query_stream_yields_objects_in_order() {
     assert_eq!(objects[0].address_data.as_deref(), Some("BEGIN:VCARD"));
     assert_eq!(objects[1].href, "/books/b.vcf");
 }
+
+#[tokio::test]
+async fn items_stream_delegates_yield_events_in_order() {
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:CARDDAV="urn:ietf:params:xml:ns:carddav">
+<D:response><D:href>/books/a.vcf</D:href><D:propstat><D:prop>
+<D:getetag>"a"</D:getetag><CARDDAV:address-data>BEGIN:VCARD</CARDDAV:address-data>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/books/b.vcf</D:href><D:propstat><D:prop>
+<D:getetag>"b"</D:getetag><CARDDAV:address-data>BEGIN:VCARD</CARDDAV:address-data>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let base = crate::common::http_helpers::serve_always(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let mut stream = client
+        .propfind_items_stream("books/", Depth::One, r#"<D:propfind xmlns:D="DAV:"/>"#)
+        .await
+        .unwrap();
+    let mut hrefs = Vec::new();
+    while let Some(event) = stream.next().await {
+        if let fast_dav_rs::DavStreamEvent::Item(item) = event.unwrap() {
+            hrefs.push(item.href);
+        }
+    }
+    assert_eq!(hrefs, ["/books/a.vcf", "/books/b.vcf"]);
+
+    let mut stream = client
+        .report_items_stream(
+            "books/",
+            Depth::One,
+            r#"<CARDDAV:addressbook-query xmlns:D="DAV:"/>"#,
+        )
+        .await
+        .unwrap();
+    let mut hrefs = Vec::new();
+    while let Some(event) = stream.next().await {
+        if let fast_dav_rs::DavStreamEvent::Item(item) = event.unwrap() {
+            hrefs.push(item.href);
+        }
+    }
+    assert_eq!(hrefs, ["/books/a.vcf", "/books/b.vcf"]);
+}
