@@ -76,6 +76,10 @@ path = "tests/e2e/provider_a/mod.rs"
 name = "performance"
 harness = false
 
+[[bench]]
+name = "hot_paths"
+harness = false
+
 [features]
 default = []
 tracing = ["dep:tracing"]

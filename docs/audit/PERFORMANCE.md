@@ -81,3 +81,26 @@ Reading the numbers:
   aggregated (~18% faster end-to-end), and it never materializes the full item
   list (§1): the aggregated path still buffers every item + data string at
   once. This justifies the "use `_visit` for large syncs" guidance.
+
+### CI regression gate (CodSpeed)
+
+Bench suites run on every push and pull request through
+[CodSpeed](https://app.codspeed.io/Goopil/fast-dav-rs) (`.github/workflows/codspeed.yml`)
+under two instruments: `simulation` (simulated CPU work — instructions, cache and
+memory behaviour, not wall clock — comparable across CI machines) and `memory`
+(peak heap allocations, one run each). B2 is excluded (see §5).
+
+- `benches/performance.rs` — the B1/B3/B4 client-level scenarios above. They
+  drive real sockets through the in-process fixture, so part of their cost is
+  system time the simulator does not model; treat large swings, not
+  single-digit percents, as signal.
+- `benches/hot_paths.rs` — pure CPU building blocks with no I/O: multistatus
+  parsing (aggregated vs `_visit`, etags-only vs `calendar-data`), lock/error/
+  `DAV:` header parsing, request-body generation (multiget over 1k hrefs,
+  calendar-query, XML escaping), iCalendar validation, item mapping and
+  request-payload compression (gzip/zstd/br). This is the low-variance suite —
+  it is where a parser or builder regression shows up first.
+
+Both suites keep running as plain criterion locally (`cargo bench --bench
+performance`, `cargo bench --bench hot_paths`): the `codspeed-criterion-compat`
+layer only takes over under `cargo codspeed`.
