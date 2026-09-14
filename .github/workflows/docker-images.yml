@@ -1,0 +1,136 @@
+name: Docker Images
+
+# Builds and pushes the prebuilt CI images to GHCR:
+#   - ci-base: pinned toolchains + CI tools + pre-compiled dependency tree
+#     (warm target) consumed by ci.yml / coverage.yml / semver-checks.yml
+#   - sabredav-app, sabredav-nginx: SabreDAV fixture images pulled by e2e-tests.yml
+#   - nextcloud-preinstalled: Nextcloud fixture with the first-boot install baked in
+# Rebuild triggers: relevant paths on main, weekly toolchain/fixture refresh,
+# or manual dispatch (also used to validate image changes on a branch).
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "docker/**"
+      - "sabredav-test/**"
+      - "nextcloud-test/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/docker-images.yml"
+  schedule:
+    - cron: "0 4 * * 1" # weekly: refresh toolchain + fixture base images
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-images
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  PREFIX: ghcr.io/goopil/fast-dav-rs
+
+jobs:
+  ci-base:
+    name: Build ci-base (toolchain + warm target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ci-base
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/ci/ci-base.Dockerfile
+          push: true
+          tags: ${{ env.PREFIX }}/ci-base:latest
+          cache-from: type=gha,scope=ci-base
+          cache-to: type=gha,scope=ci-base,mode=max
+
+  sabredav-app:
+    name: Build sabredav-app
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push sabredav-app
+        uses: docker/build-push-action@v7
+        with:
+          context: sabredav-test
+          file: sabredav-test/Dockerfile
+          push: true
+          tags: ${{ env.PREFIX }}/sabredav-app:latest
+          cache-from: type=gha,scope=sabredav-app
+          cache-to: type=gha,scope=sabredav-app,mode=max
+
+  sabredav-nginx:
+    name: Build sabredav-nginx
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push sabredav-nginx
+        uses: docker/build-push-action@v7
+        with:
+          context: sabredav-test/nginx
+          file: sabredav-test/nginx/Dockerfile
+          push: true
+          tags: ${{ env.PREFIX }}/sabredav-nginx:latest
+          cache-from: type=gha,scope=sabredav-nginx
+          cache-to: type=gha,scope=sabredav-nginx,mode=max
+
+  nextcloud-preinstalled:
+    name: Build nextcloud-preinstalled
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push nextcloud-preinstalled
+        uses: docker/build-push-action@v7
+        with:
+          context: nextcloud-test
+          file: nextcloud-test/Dockerfile
+          push: true
+          tags: ${{ env.PREFIX }}/nextcloud-preinstalled:latest
+          cache-from: type=gha,scope=nextcloud-preinstalled
+          cache-to: type=gha,scope=nextcloud-preinstalled,mode=max
