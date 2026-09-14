@@ -66,8 +66,20 @@ cargo +nightly fuzz run <target> -- -max_total_time=60
 - `./sabredav-test/reset-db.sh` - Resets E2E test database
 - `./radicale-test/setup.sh` - Starts + seeds the Radicale fixture (http://localhost:8081)
 - `./radicale-test/reset.sh` - Resets the Radicale fixture (tmpfs wipe + re-seed)
-- `./nextcloud-test/setup.sh` - Starts + provisions the Nextcloud fixture (http://localhost:8083; first boot is slow)
+- `./nextcloud-test/setup.sh` - Starts + provisions the Nextcloud fixture (http://localhost:8083)
 - `./nextcloud-test/reset.sh` - Full Nextcloud fixture wipe + reinstall
+
+### Prebuilt CI images (Docker Images workflow)
+`.github/workflows/docker-images.yml` builds and pushes to GHCR (`ghcr.io/goopil/fast-dav-rs/*`, tag `latest`):
+- `ci-base` — pinned toolchains (stable + 1.85 MSRV), CI tools (nextest, llvm-cov, cargo-codspeed) and a pre-compiled dependency tree (`/opt/warm-target`); consumed by the `CI`, `Coverage & Analysis` and `Semver Checks` workflows via `container:` (jobs copy the warm target out, so only the crate itself recompiles)
+- `sabredav-app`, `sabredav-nginx` — SabreDAV fixture images pulled by the `Tests` workflow
+- `nextcloud-preinstalled` — Nextcloud fixture with the first-boot install baked in (fast startup)
+
+Rebuild triggers: relevant paths on `main` (`docker/**`, `sabredav-test/**`, `nextcloud-test/**`, `Cargo.toml`, `Cargo.lock`), weekly cron, or manually:
+```bash
+gh workflow run docker-images.yml --ref <branch>
+```
+When touching CI speed or the fixtures, run this workflow on the branch first so e2e jobs pull fresh images.
 
 ### CI Configuration
 The project uses GitHub Actions with these key steps:
@@ -76,8 +88,9 @@ The project uses GitHub Actions with these key steps:
 3. `cargo nextest run --all-features --locked --test unit_tests` - Run unit tests
 4. `cargo build --examples --all-features --locked` - Build examples
 5. `cargo test --doc --all-features --locked` - Run doc tests
-6. `cargo semver-checks` - Gate public API against the latest published release (`Semver Checks` workflow)
-7. CodSpeed benchmarks - `simulation` + `memory` instruments on PRs and `main` (`CodSpeed` workflow); B2 stays local-only (wall-time semantics)
+6. `cargo package --locked --no-deps` - Packaging checks (compile verification lives in the publish workflow)
+7. `cargo semver-checks` - Gate public API against the latest published release (`Semver Checks` workflow)
+8. CodSpeed benchmarks - `simulation` + `memory` instruments on PRs and `main` (`CodSpeed` workflow); B2 stays local-only (wall-time semantics)
 
 ### SonarCloud Quality Gates
 All PRs are analyzed by SonarCloud. The following gates **must always pass** on every PR:
