@@ -36,7 +36,7 @@ jobs:
     - name: Wait for services to be ready
       run: |
         echo "Waiting for services to start..."
-        for i in $(seq 1 24); do
+        for _ in $(seq 1 24); do
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ || true)
           case "$STATUS" in
             200|401|207)
