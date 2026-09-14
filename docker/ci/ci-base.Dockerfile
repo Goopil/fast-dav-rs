@@ -10,8 +10,10 @@ FROM rust:1-bookworm
 
 ENV CARGO_INCREMENTAL=0
 
-# Stable components + pinned MSRV toolchain (msrv job selects via RUSTUP_TOOLCHAIN)
-RUN rustup component add llvm-tools-preview \
+# Stable components (the rust image ships a minimal profile: clippy and
+# rustfmt must be added explicitly) + pinned MSRV toolchain (msrv job
+# selects via RUSTUP_TOOLCHAIN)
+RUN rustup component add llvm-tools-preview clippy rustfmt \
  && rustup toolchain install 1.85.0 --profile minimal
 
 # CI tools (versions float with weekly image rebuild; --locked for reproducibility)
