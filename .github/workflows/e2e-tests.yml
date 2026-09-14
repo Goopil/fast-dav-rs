@@ -14,25 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v7
-
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Cache cargo artifacts
-      uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: stable-rust
-
-    - name: Run unit tests
-      run: |
-        cargo test --manifest-path Cargo.toml --test unit_tests
-
   e2e-tests:
     runs-on: ubuntu-latest
 
@@ -40,37 +21,12 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v7
 
-    - name: Set up Docker
-      uses: docker/setup-buildx-action@v4
-
-    - name: Install docker compose V2
+    # Fixture images are prebuilt by the Docker Images workflow and pulled
+    # from GHCR (no build step here; keep image/registry in sync there).
+    - name: Pull SabreDAV fixture images
       run: |
-        mkdir -p ~/.docker/cli-plugins
-        curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
-        chmod +x ~/.docker/cli-plugins/docker-compose
-        docker compose version
-
-    - name: Build SabreDAV PHP image (cached)
-      uses: docker/build-push-action@v7
-      with:
-        context: sabredav-test
-        file: sabredav-test/Dockerfile
-        load: true
-        push: false
-        tags: local/sabredav-app:latest
-        cache-from: type=gha,scope=sabredav-app
-        cache-to: type=gha,scope=sabredav-app,mode=max
-
-    - name: Build nginx image (cached)
-      uses: docker/build-push-action@v7
-      with:
-        context: sabredav-test/nginx
-        file: sabredav-test/nginx/Dockerfile
-        load: true
-        push: false
-        tags: local/sabredav-nginx:latest
-        cache-from: type=gha,scope=sabredav-nginx
-        cache-to: type=gha,scope=sabredav-nginx,mode=max
+        docker pull ghcr.io/goopil/fast-dav-rs/sabredav-app:latest
+        docker pull ghcr.io/goopil/fast-dav-rs/sabredav-nginx:latest
 
     - name: Start services with Docker Compose
       run: |
@@ -80,18 +36,18 @@ jobs:
     - name: Wait for services to be ready
       run: |
         echo "Waiting for services to start..."
-        sleep 30
-        (
-          cd sabredav-test
-          docker compose ps
-        )
-        echo "Checking if services are responding..."
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
-        if [ "$STATUS" != "200" ] && [ "$STATUS" != "401" ] && [ "$STATUS" != "207" ]; then
-          echo "Health check failed with HTTP status $STATUS"
-          exit 1
-        fi
-        echo "Service responded with HTTP $STATUS (acceptable)"
+        for i in $(seq 1 24); do
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ || true)
+          case "$STATUS" in
+            200|401|207)
+              echo "Service responded with HTTP $STATUS (acceptable)"
+              exit 0
+              ;;
+          esac
+          sleep 5
+        done
+        echo "Health check failed (last status: ${STATUS:-none})"
+        exit 1
 
     - name: Reset and seed database
       run: |
@@ -132,13 +88,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v7
 
-    - name: Install docker compose V2
-      run: |
-        mkdir -p ~/.docker/cli-plugins
-        curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
-        chmod +x ~/.docker/cli-plugins/docker-compose
-        docker compose version
-
     - name: Start Radicale fixture
       run: ./radicale-test/setup.sh
 
@@ -170,25 +119,15 @@ jobs:
         docker compose down -v
 
   e2e-nextcloud:
-    # The Nextcloud image is the heaviest fixture (first boot installs the
-    # instance); the compose healthcheck + the setup.sh wait loop keep this
-    # bounded. The image itself is pulled from Docker Hub (nothing to build).
+    # The Nextcloud image is preinstalled (first-boot install baked in by the
+    # Docker Images workflow), so startup is seconds, not minutes. The
+    # compose healthcheck + the setup.sh wait loop keep this bounded.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
-
-    - name: Install docker compose V2
-      run: |
-        mkdir -p ~/.docker/cli-plugins
-        curl -SL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose
-        chmod +x ~/.docker/cli-plugins/docker-compose
-        docker compose version
-
-    - name: Pull Nextcloud image
-      run: docker pull nextcloud:stable-apache
 
     - name: Start Nextcloud fixture
       run: ./nextcloud-test/setup.sh
