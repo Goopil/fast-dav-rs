@@ -25,10 +25,15 @@ WORKDIR /__w/fast-dav-rs/fast-dav-rs
 COPY Cargo.toml Cargo.lock ./
 
 # Stubs matching every target declared in Cargo.toml ([[test]], [[bench]], examples).
-RUN mkdir -p src tests/unit benches examples \
+RUN mkdir -p src tests/unit tests/e2e/sabredav tests/e2e/radicale \
+             tests/e2e/nextcloud tests/e2e/provider_a benches examples \
  && printf 'pub fn stub() {}\n' > src/lib.rs \
  && printf 'fn main() {}\n' > src/main.rs \
  && touch tests/unit/mod.rs \
+          tests/e2e/sabredav/mod.rs \
+          tests/e2e/radicale/mod.rs \
+          tests/e2e/nextcloud/mod.rs \
+          tests/e2e/provider_a/mod.rs \
  && printf 'fn main() {}\n' > benches/performance.rs \
  && printf 'fn main() {}\n' > benches/hot_paths.rs \
  && printf 'fn main() {}\n' > examples/stub.rs
