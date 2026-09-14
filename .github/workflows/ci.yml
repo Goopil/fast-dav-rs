@@ -53,7 +53,7 @@ jobs:
       - name: Cargo package
         # Packaging checks (include list, metadata, license). The compile
         # verification stays in the publish workflow (cargo publish dry-run).
-        run: cargo package --locked --no-deps
+        run: cargo package --locked --no-verify
 
   msrv:
     name: Verify MSRV (1.85)
@@ -72,6 +72,10 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    # audit-check creates a check run when advisories are found.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2
