@@ -17,19 +17,17 @@ concurrency:
 jobs:
   semver-checks:
     name: Semver Checks
+    # ci-base provides the stable toolchain plus a warm dependency tree, so
+    # only the crate itself is rebuilt for the current-side rustdoc analysis.
     runs-on: ubuntu-latest
+    container: ghcr.io/goopil/fast-dav-rs/ci-base:latest
 
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: stable-rust
+      - name: Restore warm dependency build
+        run: cp -a /opt/warm-target/. "$GITHUB_WORKSPACE/target/"
 
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
@@ -37,5 +35,5 @@ jobs:
           # Compare against the latest release (crates.io version == latest release tag)
           # with every feature enabled: a break behind a non-default feature is still breaking.
           feature-group: all-features
-          # Reuse the stable toolchain installed above instead of a second install.
+          # Reuse the toolchain shipped in the ci-base image.
           rust-toolchain: manual

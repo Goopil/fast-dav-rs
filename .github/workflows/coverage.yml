@@ -22,7 +22,11 @@ concurrency:
 jobs:
   coverage-and-analysis:
     name: Coverage (Codecov + SonarCloud)
+    # ci-base ships llvm-tools-preview, cargo-llvm-cov and cargo-nextest plus
+    # an instrumented (-Cinstrument-coverage) dependency build in
+    # /opt/warm-target, so only the crate itself recompiles with coverage.
     runs-on: ubuntu-latest
+    container: ghcr.io/goopil/fast-dav-rs/ci-base:latest
 
     steps:
       - name: Checkout sources (full history for SonarCloud)
@@ -30,25 +34,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: stable-rust
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
+      - name: Restore warm dependency build
+        run: cp -a /opt/warm-target/. "$GITHUB_WORKSPACE/target/"
 
       - name: Run tests with coverage and JUnit output
         run: |
