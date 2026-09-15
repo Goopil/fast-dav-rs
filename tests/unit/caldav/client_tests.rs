@@ -1178,7 +1178,9 @@ const INITIAL_SYNC_BODY: &str = r#"<?xml version="1.0"?>
   <D:sync-token>http://example.com/sync/2</D:sync-token>
 </D:multistatus>"#;
 
+// Covers the deprecated surface on purpose: it must keep working until removal.
 #[tokio::test]
+#[allow(deprecated)]
 async fn sync_collection_resilient_recovers_from_gone() {
     let ok_head = crate::common::http_helpers::response_head("", INITIAL_SYNC_BODY.len());
     let (base, captured) = crate::common::http_helpers::serve_sequence(vec![
@@ -1895,6 +1897,52 @@ async fn calendar_query_stream_yields_objects_in_order() {
     assert_eq!(objects[0].etag.as_deref(), Some("a"));
     assert_eq!(objects[0].calendar_data.as_deref(), Some("BEGIN:VCALENDAR"));
     assert_eq!(objects[1].href, "/cal/b.ics");
+}
+
+#[tokio::test]
+async fn items_stream_delegates_yield_events_in_order() {
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:response><D:href>/cal/a.ics</D:href><D:propstat><D:prop>
+<D:getetag>"a"</D:getetag><C:calendar-data>BEGIN:VCALENDAR</C:calendar-data>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+<D:response><D:href>/cal/b.ics</D:href><D:propstat><D:prop>
+<D:getetag>"b"</D:getetag><C:calendar-data>BEGIN:VCALENDAR</C:calendar-data>
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let base = crate::common::http_helpers::serve_always(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let mut stream = client
+        .propfind_items_stream("cal/", Depth::One, r#"<D:propfind xmlns:D="DAV:"/>"#)
+        .await
+        .unwrap();
+    let mut hrefs = Vec::new();
+    while let Some(event) = stream.next().await {
+        if let fast_dav_rs::DavStreamEvent::Item(item) = event.unwrap() {
+            hrefs.push(item.href);
+        }
+    }
+    assert_eq!(hrefs, ["/cal/a.ics", "/cal/b.ics"]);
+
+    let mut stream = client
+        .report_items_stream("cal/", Depth::One, r#"<C:calendar-query xmlns:D="DAV:"/>"#)
+        .await
+        .unwrap();
+    let mut hrefs = Vec::new();
+    while let Some(event) = stream.next().await {
+        if let fast_dav_rs::DavStreamEvent::Item(item) = event.unwrap() {
+            hrefs.push(item.href);
+        }
+    }
+    assert_eq!(hrefs, ["/cal/a.ics", "/cal/b.ics"]);
 }
 
 #[tokio::test]

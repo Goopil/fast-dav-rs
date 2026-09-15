@@ -2139,6 +2139,7 @@ impl WebDavClient {
     /// ```no_run
     /// use fast_dav_rs::WebDavClient;
     ///
+    /// # #[allow(deprecated)]
     /// # async fn run() -> fast_dav_rs::Result<()> {
     /// let client = WebDavClient::new("https://dav.example.com/cal/", None, None)?;
     /// let (headers, items, sync_token, resynced) = client
@@ -2159,6 +2160,10 @@ impl WebDavClient {
     /// # Ok(())
     /// # }
     /// ```
+    #[deprecated(
+        since = "0.18.0",
+        note = "use `SyncSession` (transparent stale-token re-sync), or `sync_collection` plus one manual re-issue when the token is stale (410 Gone / 403 `valid-sync-token`)"
+    )]
     pub async fn sync_collection_resilient(
         &self,
         path: &str,
@@ -2325,6 +2330,16 @@ impl WebDavClient {
     /// The body may still be compressed when the server honors the
     /// `Accept-Encoding` the client advertises: check `Content-Encoding` and
     /// decode before parsing (see [`send_stream`](Self::send_stream)).
+    ///
+    /// # Deprecated
+    ///
+    /// Prefer [`propfind_items_stream`](Self::propfind_items_stream): it
+    /// parses item-by-item with constant memory, decodes compression, and
+    /// checks the status eagerly.
+    #[deprecated(
+        since = "0.18.0",
+        note = "use `propfind_items_stream` instead: item-by-item parsing with compression handled and eager status checking"
+    )]
     pub async fn propfind_stream(
         &self,
         path: &str,
@@ -2352,6 +2367,16 @@ impl WebDavClient {
     /// The body may still be compressed when the server honors the
     /// `Accept-Encoding` the client advertises: check `Content-Encoding` and
     /// decode before parsing (see [`send_stream`](Self::send_stream)).
+    ///
+    /// # Deprecated
+    ///
+    /// Prefer [`report_items_stream`](Self::report_items_stream): it parses
+    /// item-by-item with constant memory, decodes compression, and checks
+    /// the status eagerly.
+    #[deprecated(
+        since = "0.18.0",
+        note = "use `report_items_stream` instead: item-by-item parsing with compression handled and eager status checking"
+    )]
     pub async fn report_stream(
         &self,
         path: &str,
@@ -2908,13 +2933,42 @@ macro_rules! impl_dav_client_delegates {
             /// The body may still be compressed when the server honors the
             /// `Accept-Encoding` the client advertises — decode before
             /// parsing (see [`WebDavClient::send_stream`]).
+            ///
+            /// # Deprecated
+            ///
+            /// Prefer [`propfind_items_stream`](Self::propfind_items_stream):
+            /// item-by-item parsing with compression handled and eager
+            /// status checking.
+            #[deprecated(
+                since = "0.18.0",
+                note = "use `propfind_items_stream` instead: item-by-item parsing with compression handled and eager status checking"
+            )]
             pub async fn propfind_stream(
                 &self,
                 path: &str,
                 depth: $crate::Depth,
                 xml_body: &str,
             ) -> $crate::Result<hyper::Response<hyper::body::Incoming>> {
+                #[allow(deprecated)]
                 self.webdav.propfind_stream(path, depth, xml_body).await
+            }
+
+            /// `PROPFIND` whose multistatus is yielded **item by item** as a
+            /// [`futures::Stream`], instead of being aggregated in memory.
+            /// Compression decoding and eager status checking are included.
+            ///
+            /// For typed CalDAV items prefer the domain client's
+            /// `calendar_query_stream`; for the stream semantics see
+            /// [`WebDavClient::propfind_items_stream`].
+            pub async fn propfind_items_stream(
+                &self,
+                path: &str,
+                depth: $crate::Depth,
+                xml_body: &str,
+            ) -> $crate::Result<
+                $crate::webdav::streaming::ItemStream<$crate::webdav::DavStreamEvent>,
+            > {
+                self.webdav.propfind_items_stream(path, depth, xml_body).await
             }
 
             /// Streaming variant of `REPORT`, returning the non-aggregated body.
@@ -2922,13 +2976,42 @@ macro_rules! impl_dav_client_delegates {
             /// The body may still be compressed when the server honors the
             /// `Accept-Encoding` the client advertises — decode before
             /// parsing (see [`WebDavClient::send_stream`]).
+            ///
+            /// # Deprecated
+            ///
+            /// Prefer [`report_items_stream`](Self::report_items_stream):
+            /// item-by-item parsing with compression handled and eager
+            /// status checking.
+            #[deprecated(
+                since = "0.18.0",
+                note = "use `report_items_stream` instead: item-by-item parsing with compression handled and eager status checking"
+            )]
             pub async fn report_stream(
                 &self,
                 path: &str,
                 depth: $crate::Depth,
                 xml_body: &str,
             ) -> $crate::Result<hyper::Response<hyper::body::Incoming>> {
+                #[allow(deprecated)]
                 self.webdav.report_stream(path, depth, xml_body).await
+            }
+
+            /// `REPORT` whose multistatus is yielded **item by item** as a
+            /// [`futures::Stream`], instead of being aggregated in memory.
+            /// Compression decoding and eager status checking are included.
+            ///
+            /// For typed streams prefer the domain client's
+            /// `calendar_query_stream` / `addressbook_query_stream`; for the
+            /// stream semantics see [`WebDavClient::report_items_stream`].
+            pub async fn report_items_stream(
+                &self,
+                path: &str,
+                depth: $crate::Depth,
+                xml_body: &str,
+            ) -> $crate::Result<
+                $crate::webdav::streaming::ItemStream<$crate::webdav::DavStreamEvent>,
+            > {
+                self.webdav.report_items_stream(path, depth, xml_body).await
             }
 
             /// Incrementally synchronise a collection using `sync-collection`
@@ -3012,23 +3095,15 @@ macro_rules! impl_dav_client_delegates {
             /// a `403` with `valid-sync-token`) triggers one retry as an
             /// initial sync, and the second failure is returned as-is.
             ///
-            /// # Example
+            /// # Deprecated
             ///
-            /// ```no_run
-            /// use fast_dav_rs::CalDavClient;
-            ///
-            /// # async fn example(client: &CalDavClient) -> fast_dav_rs::Result<()> {
-            /// let sync = client
-            ///     .sync_collection_resilient("calendars/user/work/", Some("stale-token"), None, true)
-            ///     .await?;
-            /// if sync.resynced {
-            ///     println!("stale token: rebuild caches from {} items", sync.items.len());
-            /// } else {
-            ///     println!("token: {:?}", sync.sync_token);
-            /// }
-            /// # Ok(())
-            /// # }
-            /// ```
+            /// Prefer [`SyncSession`](crate::SyncSession): it re-syncs
+            /// transparently on a stale token and follows result-set
+            /// truncation pages.
+            #[deprecated(
+                since = "0.18.0",
+                note = "use `SyncSession` (transparent stale-token re-sync), or `sync_collection` plus one manual re-issue when the token is stale (410 Gone / 403 `valid-sync-token`)"
+            )]
             pub async fn sync_collection_resilient(
                 &self,
                 path: &str,
@@ -3036,6 +3111,7 @@ macro_rules! impl_dav_client_delegates {
                 limit: Option<u32>,
                 include_data: bool,
             ) -> $crate::Result<$sync_response> {
+                #[allow(deprecated)]
                 let (headers, items, token, resynced) = self
                     .webdav
                     .sync_collection_resilient(path, sync_token, limit, include_data, $namespace, $data_element)
