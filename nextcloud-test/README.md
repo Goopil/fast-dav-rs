@@ -1,13 +1,21 @@
 # Nextcloud Test Environment
 
-Docker fixture running `nextcloud:stable-apache` with SQLite (the lightest
-possible setup for DAV interop testing) and a CLI-created test user, for the
+Docker fixture running Nextcloud with SQLite (the lightest possible setup
+for DAV interop testing) and a CLI-created test user, for the
 `e2e_nextcloud` integration tests.
 
 ## Setup
 
 ```bash
-./setup.sh        # idempotent; the first boot installs the instance (a few minutes)
+./setup.sh        # idempotent; starts in seconds (install baked into the image)
+```
+
+The compose file pulls `ghcr.io/goopil/fast-dav-rs/nextcloud-preinstalled:latest`
+(first-boot install baked at build time by the Docker Images workflow). To
+rebuild it locally:
+
+```bash
+docker build -t ghcr.io/goopil/fast-dav-rs/nextcloud-preinstalled:latest .
 ```
 
 - Server: http://localhost:8083
@@ -38,9 +46,10 @@ of scope for this fixture**:
 ./reset.sh
 ```
 
-Full wipe (`docker compose down -v`) followed by a fresh install — expect a
-few minutes on the next boot. Data persists across plain `docker compose
-down`/`up` via the `nc_data` volume, which keeps routine restarts fast.
+Full wipe (`docker compose down -v`) followed by a re-seed — the install is
+baked into the image, so the next boot is fast. Data persists across plain
+`docker compose down`/`up` via the `nc_data` volume, which keeps routine
+restarts fast.
 
 ## Run the tests
 
@@ -71,6 +80,7 @@ NEXTCLOUD_URL=http://localhost:8083 cargo test --test e2e_nextcloud
 ## Files
 
 - `docker-compose.yml` — Nextcloud service (port 8083, SQLite, healthcheck)
+- `Dockerfile` — preinstalled image (first-boot install baked at build time)
 - `setup.sh` / `reset.sh` — entry points (occ user creation, DAV warm-up,
   app-password minting)
 - `.app-password` — minted at runtime, git-ignored, never committed

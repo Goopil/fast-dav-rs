@@ -10,6 +10,11 @@ locking (PDO locks backend) and WebDAV Sync.
 ./setup.sh
 ```
 
+The compose file pulls the prebuilt images from GHCR
+(`ghcr.io/goopil/fast-dav-rs/sabredav-app` and `...-nginx`, built by the
+Docker Images workflow); the `build:` keys remain so a local rebuild is
+still possible with `docker compose build`.
+
 - Server: http://localhost:8080
 - Credentials: `test` / `test`
 
