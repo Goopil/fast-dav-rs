@@ -1,6 +1,9 @@
 services:
   nextcloud:
-    image: nextcloud:stable-apache
+    # Preinstalled image (first-boot install baked in, built by the Docker
+    # Images workflow): startup takes seconds instead of minutes. Rebuild
+    # locally with: docker build -t ghcr.io/goopil/fast-dav-rs/nextcloud-preinstalled:latest .
+    image: ghcr.io/goopil/fast-dav-rs/nextcloud-preinstalled:latest
     container_name: fast-dav-nextcloud
     ports:
       - "8083:80"

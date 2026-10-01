@@ -44,18 +44,21 @@ jobs:
         with:
           tool: cargo-fuzz
 
+      # The cargo-fuzz Linux binary published upstream is musl-static, so its
+      # default fuzz target is x86_64-unknown-linux-musl: rustc refuses ASan
+      # with statically linked libc, and musl std isn't installed. Force gnu.
       - name: Fuzz multistatus/REPORT XML parsing
-        run: cargo fuzz run multistatus_xml -- -max_total_time=300 -max_len=262144
+        run: cargo fuzz run multistatus_xml --target x86_64-unknown-linux-gnu -- -max_total_time=300 -max_len=262144
 
       - name: Fuzz sync-collection responses
-        run: cargo fuzz run sync_response -- -max_total_time=300 -max_len=262144
+        run: cargo fuzz run sync_response --target x86_64-unknown-linux-gnu -- -max_total_time=300 -max_len=262144
 
       - name: Fuzz ETag/URI helpers
-        run: cargo fuzz run uri_etag -- -max_total_time=300 -max_len=262144
+        run: cargo fuzz run uri_etag --target x86_64-unknown-linux-gnu -- -max_total_time=300 -max_len=262144
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crashes
           path: fuzz/artifacts

@@ -21,32 +21,25 @@ concurrency:
 jobs:
   lint-and-test:
     name: Lint and Test
+    # ci-base ships pinned toolchains (stable + 1.85 MSRV), CI tools
+    # (nextest, llvm-cov, codspeed) and a pre-compiled dependency tree
+    # (warm target at /opt/warm-target, built by the Docker Images
+    # workflow). Only the crate itself recompiles per run.
     runs-on: ubuntu-latest
+    container: ghcr.io/goopil/fast-dav-rs/ci-base:latest
 
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: stable-rust
+      - name: Restore warm dependency build
+        run: cp -a /opt/warm-target/. "$GITHUB_WORKSPACE/target/"
 
       - name: Cargo fmt
         run: cargo fmt --all --check
 
       - name: Cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Install nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
 
       - name: Cargo nextest
         run: cargo nextest run --all-features --locked --test unit_tests
@@ -58,22 +51,31 @@ jobs:
         run: cargo test --doc --all-features --locked
 
       - name: Cargo package
-        run: cargo package --locked
+        # Packaging checks (include list, metadata, license). The compile
+        # verification stays in the publish workflow (cargo publish dry-run).
+        run: cargo package --locked --no-verify
 
   msrv:
     name: Verify MSRV (1.85)
     runs-on: ubuntu-latest
+    container: ghcr.io/goopil/fast-dav-rs/ci-base:latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.85.0
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: msrv-1.85
-      - run: cargo check --all-features --locked
+      - name: Restore warm dependency build
+        run: cp -a /opt/warm-target/. "$GITHUB_WORKSPACE/target/"
+      - name: Cargo check (MSRV)
+        # The image carries a pre-warmed 1.85.0 check target.
+        run: cargo check --all-features --locked
+        env:
+          RUSTUP_TOOLCHAIN: "1.85.0"
 
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    # audit-check creates a check run when advisories are found.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v7
       - uses: rustsec/audit-check@v2

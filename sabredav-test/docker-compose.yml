@@ -1,6 +1,8 @@
 services:
   nginx:
-    image: local/sabredav-nginx:latest
+    # Pulled from GHCR (prebuilt by the Docker Images workflow); the build
+    # key below still allows a local rebuild: docker compose build nginx
+    image: ghcr.io/goopil/fast-dav-rs/sabredav-nginx:latest
     build: 
       context: ./nginx
       dockerfile: Dockerfile
@@ -13,8 +15,10 @@ services:
       - ./public:/var/www/html/public
 
   sabredav:
-    image: local/sabredav-app:latest
-    build: 
+    # Pulled from GHCR (prebuilt by the Docker Images workflow); the build
+    # key below still allows a local rebuild: docker compose build sabredav
+    image: ghcr.io/goopil/fast-dav-rs/sabredav-app:latest
+    build:
       context: .
       dockerfile: Dockerfile
     depends_on:
