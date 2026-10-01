@@ -1,19 +1,20 @@
 # Streaming & Sync
 
-- Use `caldav::parse_multistatus_stream` for CalDAV responses and `carddav::parse_multistatus_stream`
-  for CardDAV responses.
+- Stream CalDAV/CardDAV responses item by item with the `*_items_stream` methods
+  (`propfind_items_stream`, `report_items_stream`, `calendar_query_stream`,
+  `addressbook_query_stream`). The low-level `parse_multistatus_stream*` parsers are deprecated
+  since 0.18.0.
 - `supports_webdav_sync` and `sync_collection` work for both calendars and addressbooks.
 - `sync_collection_with_level` (all clients) sends a configurable `sync-level` (RFC 6578 §3.3):
   `SyncLevel::One` restricts the sync to the collection members, `SyncLevel::Infinite` includes
   all descendants.
-- `sync_collection_resilient` (all clients) recovers automatically from a stale sync token —
-  `410 Gone` (RFC 6578 §3.11) or `403 Forbidden` + `valid-sync-token` (§3.2) — by re-issuing the
-  report as an initial sync and returning the full result set with the new token; any other error
-  propagates unchanged. The response is flagged: the `WebDavClient` variant returns a 4-tuple whose
-  last element is the `resynced` flag, and `caldav::SyncResponse`/`carddav::SyncResponse` expose
-  `resynced == true`. Per RFC 6578 §3.4 an initial sync MUST NOT report deletions that predate the
-  stale token, so rebuild your caches from `items` instead of applying them incrementally when the
-  flag is set.
+- `SyncSession` (all clients) is the resilient sync engine: it recovers automatically from a stale
+  sync token — `410 Gone` (RFC 6578 §3.11) or `403 Forbidden` + `valid-sync-token` (§3.2) — by
+  re-issuing the report as an initial sync, and the delta it yields carries `resynced == true` on
+  the rebuild. Per RFC 6578 §3.4 an initial sync MUST NOT report deletions that predate the stale
+  token, so rebuild your caches from the delta instead of applying it incrementally when the flag
+  is set. The raw `sync_collection_resilient` methods are deprecated since 0.18.0 in favour of
+  `SyncSession`.
 - **Result truncation (RFC 6578 §3.6):** when the server truncates a sync result set it reports
   `507 Insufficient Storage` inside the 207 multistatus (normally on the request-URI).
   `caldav::SyncResponse`/`carddav::SyncResponse` expose this as `truncated == true`; the 507
@@ -188,9 +189,14 @@ async fn edit_shared_doc(client: &CalDavClient) -> Result<()> {
 
 ### Resilient sync example
 
+`sync_collection_resilient` is deprecated since 0.18.0 — prefer `SyncSession`
+(described above). The raw method remains available:
+
 ```rust
 use fast_dav_rs::{CalDavClient, Result, SyncLevel};
 
+// `sync_collection_resilient` is deprecated; `SyncSession` is the supported path.
+#[allow(deprecated)]
 async fn sync(client: &CalDavClient) -> Result<()> {
     // Incremental sync; on 410 Gone the report is re-issued as an initial sync
     // and the full result set with the new token is returned.
@@ -212,21 +218,23 @@ async fn sync(client: &CalDavClient) -> Result<()> {
 ### CalDAV streaming example
 
 ```rust,no_run
-use fast_dav_rs::{CalDavClient, Depth, Result, detect_encoding};
-use fast_dav_rs::caldav::parse_multistatus_stream;
+use fast_dav_rs::{CalDavClient, Result};
+use futures::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
-    let propfind_xml = r#"<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/><C:calendar-data/></D:prop></D:propfind>"#;
 
-    let response = client.propfind_stream("calendars/alice/work/", Depth::One, propfind_xml).await?;
-    let encoding = detect_encoding(response.headers());
-    let parsed = parse_multistatus_stream(response.into_body(), &[encoding]).await?;
+    // Each parsed object arrives as soon as its <D:response> completes;
+    // dropping the stream aborts the download.
+    let mut stream = client
+        .calendar_query_stream("calendars/alice/work/", "VEVENT", None, None, true, None)
+        .await?;
 
-    for item in parsed.items {
-        if let Some(data) = item.calendar_data {
-            println!("{} -> {} bytes", item.href, data.len());
+    while let Some(object) = stream.next().await {
+        let object = object?;
+        if let Some(data) = object.calendar_data {
+            println!("{} -> {} bytes", object.href, data.len());
         }
     }
 
@@ -237,21 +245,22 @@ async fn main() -> Result<()> {
 ### CardDAV streaming example
 
 ```rust,no_run
-use fast_dav_rs::{CardDavClient, Depth, Result, detect_encoding};
-use fast_dav_rs::carddav::parse_multistatus_stream;
+use fast_dav_rs::{CardDavClient, Result};
+use futures::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = CardDavClient::new("https://carddav.example.com/users/alice/", None, None)?;
-    let report_xml = r#"<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:prop><D:getetag/><C:address-data/></D:prop></C:addressbook-query>"#;
+    let filter_xml = r#"<C:filter><C:prop-filter name="FN"><C:text-match collation="i;unicode-casemap">Ada</C:text-match></C:prop-filter></C:filter>"#;
 
-    let response = client.report_stream("addressbooks/alice/team/", Depth::One, report_xml).await?;
-    let encoding = detect_encoding(response.headers());
-    let parsed = parse_multistatus_stream(response.into_body(), &[encoding]).await?;
+    let mut stream = client
+        .addressbook_query_stream("addressbooks/alice/team/", filter_xml, true)
+        .await?;
 
-    for item in parsed.items {
-        if let Some(data) = item.address_data {
-            println!("{} -> {} bytes", item.href, data.len());
+    while let Some(object) = stream.next().await {
+        let object = object?;
+        if let Some(data) = object.address_data {
+            println!("{} -> {} bytes", object.href, data.len());
         }
     }
 

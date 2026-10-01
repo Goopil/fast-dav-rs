@@ -14,6 +14,8 @@ pub use client::{
     map_sync_response,
 };
 pub use scheduling::{InboxItem, ScheduleEndpoints, SchedulingResponse};
+// Deprecation propagated from the source items; see `streaming.rs`.
+#[allow(deprecated)]
 pub use streaming::{
     parse_multistatus_bytes, parse_multistatus_bytes_visit, parse_multistatus_stream,
     parse_multistatus_stream_visit, parse_multistatus_stream_visit_with_timeout,
