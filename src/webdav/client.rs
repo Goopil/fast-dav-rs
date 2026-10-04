@@ -1537,7 +1537,28 @@ impl WebDavClient {
         dest_absolute_url: &str,
         overwrite: bool,
     ) -> Result<Response<Bytes>> {
-        self.copy_move(b"COPY", src_path, dest_absolute_url, overwrite)
+        self.copy_move(b"COPY", src_path, dest_absolute_url, overwrite, None)
+            .await
+    }
+
+    /// Send a WebDAV `COPY` with an explicit `Depth` header.
+    ///
+    /// Same contract as [`copy`](Self::copy) — `dest_absolute_url` must be an
+    /// absolute, already percent-encoded URI with scheme and authority,
+    /// validated before any network I/O — plus a `Depth` header sent
+    /// **verbatim**: `Depth::Zero` performs a **shallow copy**, the
+    /// collection is copied without its internal members (RFC 4918
+    /// §9.8.3). RFC 4918 only defines `0` for COPY; other values are sent
+    /// as asked (most servers treat `Depth: infinity` as the default
+    /// deep copy and reject anything else).
+    pub async fn copy_with_depth(
+        &self,
+        src_path: &str,
+        dest_absolute_url: &str,
+        overwrite: bool,
+        depth: Depth,
+    ) -> Result<Response<Bytes>> {
+        self.copy_move(b"COPY", src_path, dest_absolute_url, overwrite, Some(depth))
             .await
     }
 
@@ -1553,7 +1574,36 @@ impl WebDavClient {
         dest_absolute_url: &str,
         overwrite: bool,
     ) -> Result<Response<Bytes>> {
-        self.copy_move(b"MOVE", src_path, dest_absolute_url, overwrite)
+        self.copy_move(b"MOVE", src_path, dest_absolute_url, overwrite, None)
+            .await
+    }
+
+    /// Send a WebDAV `MOVE` with an explicit `Depth: 0` header.
+    ///
+    /// Same contract as [`r#move`](Self::r#move) — `dest_absolute_url` must
+    /// be an absolute, already percent-encoded URI with scheme and
+    /// authority, validated before any network I/O — plus the `Depth`
+    /// header. Only [`Depth::Zero`] is accepted, **before any network
+    /// I/O** (`Depth::One`/`Depth::Infinity` fail with
+    /// [`Error::InvalidInput`]): RFC 4918 §9.9.3 — MOVE acts as
+    /// `infinity` for collections (the whole subtree moves), so a `Depth`
+    /// header is only meaningful as `0` for a non-collection move, and
+    /// conforming servers reject other values.
+    pub async fn move_with_depth(
+        &self,
+        src_path: &str,
+        dest_absolute_url: &str,
+        overwrite: bool,
+        depth: Depth,
+    ) -> Result<Response<Bytes>> {
+        if !matches!(depth, Depth::Zero) {
+            return Err(Error::InvalidInput(format!(
+                "MOVE only accepts Depth: 0 (RFC 4918 §9.9.3 — MOVE acts as infinity for \
+                 collections; a Depth header is only meaningful as 0 for a non-collection move), \
+                 got {depth:?}"
+            )));
+        }
+        self.copy_move(b"MOVE", src_path, dest_absolute_url, overwrite, Some(depth))
             .await
     }
 
@@ -1563,6 +1613,7 @@ impl WebDavClient {
         src_path: &str,
         dest_absolute_url: &str,
         overwrite: bool,
+        depth: Option<Depth>,
     ) -> Result<Response<Bytes>> {
         // RFC 4918 §10.3 Simple-ref: the Destination is an absolute URI.
         // It is sent verbatim (no percent-encoding here), so reject values
@@ -1592,6 +1643,11 @@ impl WebDavClient {
             ));
         }
         let mut h = HeaderMap::new();
+        if let Some(depth) = depth {
+            // Sent verbatim (RFC 4918 §9.8.3 shallow COPY / §9.9.3 `0`-only
+            // MOVE); MOVE values other than 0 are rejected by the caller.
+            h.insert("Depth", header::HeaderValue::from_str(depth.as_str())?);
+        }
         h.insert(
             "Destination",
             header::HeaderValue::from_str(dest_absolute_url)?,

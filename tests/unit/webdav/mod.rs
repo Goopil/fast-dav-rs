@@ -3,6 +3,7 @@ pub mod builder_tests;
 pub mod compliance_tests;
 pub mod compression_probe_tests;
 pub mod conditional_tests;
+pub mod copy_move_tests;
 pub mod discovery_tests;
 pub mod locking_tests;
 pub mod prefer_tests;
