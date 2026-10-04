@@ -570,6 +570,27 @@ fn test_build_calendar_multiget_and_escapes() {
 }
 
 #[test]
+fn test_build_calendar_multiget_body_is_exactly_sized() {
+    // Regression guard: the body used to be grown through repeated
+    // `push_str`, leaving `capacity` above `len` depending on heap layout —
+    // the allocator sometimes had to physically relocate the buffer
+    // mid-growth, which made the 1k-hrefs request-body benchmark bimodal.
+    // The body is now sized exactly, in one allocation.
+    let body = fast_dav_rs::caldav::client::build_calendar_multiget_body(
+        vec!["/calendars/user/event1.ics"; 1_000],
+        true,
+        None,
+    )
+    .expect("Should create body");
+
+    assert_eq!(
+        body.capacity(),
+        body.len(),
+        "the body must be allocated at its exact size (no growth slack)"
+    );
+}
+
+#[test]
 fn test_build_calendar_multiget_empty() {
     let body =
         fast_dav_rs::caldav::client::build_calendar_multiget_body(Vec::<String>::new(), true, None);
