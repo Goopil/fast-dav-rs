@@ -3,6 +3,7 @@
 //! `If-Schedule-Tag-Match` conditional writes.
 
 use bytes::Bytes;
+use fast_dav_rs::caldav::FreeBusyType;
 use fast_dav_rs::{CalDavClient, RequestCompressionMode};
 
 use crate::common::http_helpers::{response_head, serve_capture, serve_once};
@@ -396,4 +397,74 @@ async fn schedule_tag_rejects_empty_tag_before_io() {
             "expected InvalidInput for DELETE, got {err:?}"
         );
     }
+}
+
+/// Wire shape of the FREEBUSY content lines the private
+/// `split_params_value` helper must parse (RFC 5545 §3.1): the
+/// params/value split happens at the first `:` **outside** double
+/// quotes, so a quoted `param-value` may contain `,` and `:` without
+/// ending the parameter section. Exercised through its public caller
+/// `free_busy_query` (the helper stays private). Regression lock for
+/// P3#14 — no bug found today; keep the shapes locked.
+#[tokio::test]
+async fn free_busy_query_parses_split_params_value_wire_shapes() {
+    let ical = concat!(
+        "BEGIN:VCALENDAR\r\n",
+        "BEGIN:VFREEBUSY\r\n",
+        // No params: split at the first (unquoted) colon.
+        "FREEBUSY:19970101T180000Z/19970101T190000Z\r\n",
+        // One quoted param: the comma inside quotes must not split the
+        // value off the params section.
+        "FREEBUSY;X-NOTE=\"Room, level 2\":19970102T180000Z/19970102T190000Z\r\n",
+        // Two params, the first quoted with an embedded colon: the quoted
+        // colon must not split before the params section ends.
+        "FREEBUSY;X-NOTE=\"Meet:ing\";FBTYPE=BUSY-TENTATIVE:19970103T180000Z/19970103T190000Z\r\n",
+        // Empty: no params/value colon at all — the line is skipped.
+        "FREEBUSY\r\n",
+        "END:VFREEBUSY\r\n",
+        "END:VCALENDAR\r\n",
+    );
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\
+<D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\
+<D:response><D:href>/cal/event.ics</D:href><D:propstat><D:prop>\
+<C:calendar-data><![CDATA[{ical}]]></C:calendar-data>\
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>\
+</D:multistatus>"
+    );
+    let (head, body) = multistatus_response(&xml);
+    let base = serve_once(head, body).await;
+    let client = make_caldav_client(&base);
+
+    let periods = client
+        .free_busy_query("calendars/inbox/", "19970101T000000Z", "19980101T000000Z")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        periods.len(),
+        3,
+        "the empty (colon-less) line must be skipped: {periods:?}"
+    );
+    assert_eq!(
+        periods[0].fb_type,
+        FreeBusyType::Busy,
+        "no params → default Busy"
+    );
+    assert_eq!(periods[0].start, "19970101T180000Z");
+    assert_eq!(periods[0].end, "19970101T190000Z");
+    assert_eq!(
+        periods[1].fb_type,
+        FreeBusyType::Busy,
+        "comma inside quotes must not split the value off"
+    );
+    assert_eq!(periods[1].start, "19970102T180000Z");
+    assert_eq!(periods[1].end, "19970102T190000Z");
+    assert_eq!(
+        periods[2].fb_type,
+        FreeBusyType::BusyTentative,
+        "two params; colon inside quotes must not split early"
+    );
+    assert_eq!(periods[2].start, "19970103T180000Z");
+    assert_eq!(periods[2].end, "19970103T190000Z");
 }
