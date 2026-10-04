@@ -408,6 +408,7 @@ impl CalDavClient {
     <C:max-attendees-per-instance/>
     <D:getetag/>
     <D:resourcetype/>
+    <D:current-user-privilege-set/>
     <D:sync-token/>
   </D:prop>
 </D:propfind>
@@ -1306,6 +1307,7 @@ pub fn map_calendar_list(mut items: Vec<DavItem>) -> Vec<CalendarInfo> {
                 max_resource_size: item.max_resource_size,
                 supported_calendar_data: std::mem::take(&mut item.supported_calendar_data),
                 max_attendees_per_instance: item.max_attendees_per_instance,
+                privileges: std::mem::take(&mut item.current_user_privileges),
             });
         }
     }
