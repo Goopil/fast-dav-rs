@@ -7,8 +7,8 @@
 | Path | Peak memory |
 |---|---|
 | High-level methods (`list_calendars`, `calendar_query`, `sync_collection`, …) | wire body (decompressed, full) + parsed items `Vec` + all `calendar_data`/`address_data` strings — **everything at once** (AUDIT-003, AUDIT-016) |
-| `parse_multistatus_stream` (default "streaming") | still buffers all items + data strings; only the *network read* is incremental (`caldav/streaming.rs:444`) |
-| `parse_multistatus_stream_visit` | item-at-a-time — the only true streaming path; no decompressed-byte cap either |
+| `parse_multistatus_stream` (default "streaming"; deprecated since 0.18.0) | still buffers all items + data strings; only the *network read* is incremental (`caldav/streaming.rs:444`) |
+| `parse_multistatus_stream_visit` (deprecated since 0.18.0) | item-at-a-time — the only true streaming path; no decompressed-byte cap either |
 | Batch helpers (`propfind_many`/`report_many`) | `Vec<BatchItem>` of fully-aggregated responses; memory ∝ paths × response size (`webdav/client.rs:919-952`) |
 
 **10× data:** a sync with `include_data = true` over a 10× collection multiplies peak RSS ~10×, plus `Vec`/`String` growth doubling. No cap exists anywhere (AUDIT-003), so "10× data" and "hostile server" converge on the same OOM.

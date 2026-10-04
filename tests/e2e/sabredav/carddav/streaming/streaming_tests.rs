@@ -1,3 +1,7 @@
+//! Covers the deprecated raw-stream/resilient surface on purpose: those APIs
+//! must keep working (and stay covered) until they are removed at 1.0.
+#![allow(deprecated)]
+
 use crate::util::unique_addressbook_name;
 use fast_dav_rs::CardDavClient;
 use fast_dav_rs::carddav::Depth;

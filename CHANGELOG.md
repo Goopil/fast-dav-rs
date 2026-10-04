@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `propfind_items_stream` / `report_items_stream` delegates on `CalDavClient` /
+  `CardDavClient` (parity with the `WebDavClient` item streams).
+
+### Deprecated
+
+Variant streaming/sync APIs in favour of the unified item-by-item paths (#230,
+Phase B). All deprecated APIs keep working and stay tested until the legacy
+surface is pruned at 1.0:
+
+- `propfind_stream` / `report_stream` (all clients) — use `propfind_items_stream`
+  / `report_items_stream`: item-by-item parsing with compression handled and
+  eager status checking.
+- The `parse_multistatus_stream(_with_timeout/_visit/_visit_with_timeout)`
+  parser family — use the `*_items_stream` client methods or
+  `multistatus_events(_with_timeout)` directly.
+- `sync_collection_resilient` (all clients) — use `SyncSession` (transparent
+  stale-token re-sync, truncation paging), or `sync_collection` plus one manual
+  re-issue when the token is stale.
+
 ## [0.17.0] - 2026-09-10
 
 ### Added

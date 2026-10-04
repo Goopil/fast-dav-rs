@@ -1201,10 +1201,22 @@ pub fn multistatus_events_with_timeout(
 ///
 /// Reads are bounded by the default idle timeout ([`STREAM_READ_IDLE_TIMEOUT`]); use
 /// [`parse_multistatus_stream_with_timeout`] to customize it.
+///
+/// # Deprecated
+///
+/// Prefer the item-by-item client APIs
+/// ([`WebDavClient::propfind_items_stream`](crate::WebDavClient::propfind_items_stream)
+/// / [`WebDavClient::report_items_stream`](crate::WebDavClient::report_items_stream))
+/// or the [`multistatus_events`] stream directly.
+#[deprecated(
+    since = "0.18.0",
+    note = "use the `*_items_stream` client methods or the `multistatus_events` stream directly: item-by-item consumption without the aggregate Vec"
+)]
 pub async fn parse_multistatus_stream(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
 ) -> Result<ParseResult<Vec<DavItem>>> {
+    #[allow(deprecated)]
     parse_multistatus_stream_with_timeout(resp_body, encodings, STREAM_READ_IDLE_TIMEOUT).await
 }
 
@@ -1214,6 +1226,17 @@ pub async fn parse_multistatus_stream(
 /// (i.e. waiting for the next XML event to arrive from the network). It is **not**
 /// a cap on the total parse duration, so huge-but-flowing responses are unaffected.
 /// When the timeout elapses, an error is returned and parsing stops.
+///
+/// # Deprecated
+///
+/// Prefer the item-by-item client APIs
+/// ([`WebDavClient::propfind_items_stream`](crate::WebDavClient::propfind_items_stream)
+/// / [`WebDavClient::report_items_stream`](crate::WebDavClient::report_items_stream))
+/// or [`multistatus_events_with_timeout`] directly.
+#[deprecated(
+    since = "0.18.0",
+    note = "use the `*_items_stream` client methods or `multistatus_events_with_timeout` directly: item-by-item consumption without the aggregate Vec"
+)]
 pub async fn parse_multistatus_stream_with_timeout(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
@@ -1236,6 +1259,19 @@ pub async fn parse_multistatus_stream_with_timeout(
 ///
 /// Reads are bounded by the default idle timeout ([`STREAM_READ_IDLE_TIMEOUT`]); use
 /// [`parse_multistatus_stream_visit_with_timeout`] to customize it.
+///
+/// # Deprecated
+///
+/// Prefer the item-by-item client APIs
+/// ([`WebDavClient::propfind_items_stream`](crate::WebDavClient::propfind_items_stream)
+/// / [`WebDavClient::report_items_stream`](crate::WebDavClient::report_items_stream)):
+/// the returned [`ItemStream`](crate::webdav::streaming::ItemStream) is `Unpin`
+/// and drives with `for_each`/`next` like the callback, while handling
+/// compression and status checking.
+#[deprecated(
+    since = "0.18.0",
+    note = "use the `*_items_stream` client methods: the `ItemStream` they return is Unpin and drives like the callback, with compression and status handling included"
+)]
 pub async fn parse_multistatus_stream_visit<F>(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
@@ -1244,6 +1280,7 @@ pub async fn parse_multistatus_stream_visit<F>(
 where
     F: FnMut(DavItem) -> Result<()> + Send,
 {
+    #[allow(deprecated)]
     parse_multistatus_stream_visit_with_timeout(
         resp_body,
         encodings,
@@ -1259,6 +1296,17 @@ where
 /// (i.e. waiting for the next XML event to arrive from the network). It is **not**
 /// a cap on the total parse duration, so huge-but-flowing responses are unaffected.
 /// When the timeout elapses, an error is returned and parsing stops.
+///
+/// # Deprecated
+///
+/// Prefer the item-by-item client APIs
+/// ([`WebDavClient::propfind_items_stream`](crate::WebDavClient::propfind_items_stream)
+/// / [`WebDavClient::report_items_stream`](crate::WebDavClient::report_items_stream))
+/// or [`multistatus_events_with_timeout`] directly.
+#[deprecated(
+    since = "0.18.0",
+    note = "use the `*_items_stream` client methods or `multistatus_events_with_timeout` directly: item-by-item consumption without the callback"
+)]
 pub async fn parse_multistatus_stream_visit_with_timeout<F>(
     resp_body: Incoming,
     encodings: &[ContentEncoding],
