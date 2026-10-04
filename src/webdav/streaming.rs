@@ -451,6 +451,8 @@ fn privilege_from_local_name(raw: &[u8]) -> Privilege {
         Privilege::Unlock
     } else if local.eq_ignore_ascii_case(b"read-free-busy") {
         Privilege::ReadFreeBusy
+    } else if local.eq_ignore_ascii_case(b"all") {
+        Privilege::All
     } else {
         Privilege::Other(String::from_utf8_lossy(local).into_owned())
     }
