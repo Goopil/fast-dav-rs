@@ -324,6 +324,7 @@ pub enum ElementName {
     ManagedId,
     CurrentUserPrivilegeSet,
     Privilege,
+    ScheduleTag,
 }
 
 /// Map a raw XML element name (`prefix:local` or `local`) to an
@@ -415,6 +416,8 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
         ElementName::CurrentUserPrivilegeSet
     } else if local.eq_ignore_ascii_case(b"privilege") {
         ElementName::Privilege
+    } else if local.eq_ignore_ascii_case(b"schedule-tag") {
+        ElementName::ScheduleTag
     } else if local.eq_ignore_ascii_case(b"owner") {
         ElementName::Owner
     } else if local.eq_ignore_ascii_case(b"getcontenttype") {
@@ -955,6 +958,18 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                 .current
                 .calendar_timezone
                 .get_or_insert_with(String::new);
+            return append_capped(existing, &text, MAX_ITEM_TEXT_BYTES);
+        }
+
+        // schedule-tag (RFC 6638 §10.1.1) is an opaque server token on a
+        // scheduling object resource; preserve the element text verbatim.
+        if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::ScheduleTag,
+        ]) {
+            let existing = self.current.schedule_tag.get_or_insert_with(String::new);
             return append_capped(existing, &text, MAX_ITEM_TEXT_BYTES);
         }
 
