@@ -82,8 +82,9 @@ features, and major releases introduce breaking changes when needed.
 - HTTP/2 with connection pooling and automatic response decompression.
 - Streaming XML parsing for multistatus responses.
 - Item-by-item streams with constant memory: `propfind_items_stream`/`report_items_stream` (WebDAV), `calendar_query_stream` (CalDAV), and `addressbook_query_stream` (CardDAV) yield each parsed entry as it arrives, decompress on the fly, and abort the download when dropped.
-- ETag helpers and conditional methods for safe updates.
-- Typed current-user privileges (`current_user_privileges`, RFC 3744 §5.4).
+- ETag helpers and conditional methods for safe updates, with a typed 412/428 classifier (`conditional_write_error`) for conditional-write responses.
+- `Depth`-aware COPY/MOVE (`copy_with_depth`, `move_with_depth`) and an `If` header builder (`if_header_for_lock_token`) for lock-token-guarded writes.
+- Typed current-user privileges (`current_user_privileges`, RFC 3744 §5.4), also surfaced per calendar on `CalendarInfo.privileges` with the aggregate `all` mapped to `Privilege::All`.
 
 ### Advanced Features
 
@@ -256,6 +257,54 @@ for privilege in &privileges {
 Ok(())
 }
 ```
+
+### Conditional writes: typed 412/428, `If` headers, `Depth` on COPY/MOVE
+
+The conditional write methods (`put_if_match`, `delete_if_match`,
+`put_if_schedule_tag`, …) return the raw response for **any** status by
+design. Apply the `conditional_write_error` classifier to get typed errors:
+
+| Status  | Typed error                                   | Meaning                                                                                       |
+|---------|-----------------------------------------------|-----------------------------------------------------------------------------------------------|
+| `2xx`   | —                                             | the write happened                                                                             |
+| `412`   | `Error::PreconditionFailed { operation }`     | the validator (ETag/lock/schedule-tag) did not match; reload the item and retry                |
+| `428`   | `Error::PreconditionRequired { operation }`   | the server requires a conditional header on this write (RFC 6585 §3)                           |
+| other   | `Error::UnexpectedStatus { operation, status }` | unexpected server status                                                                     |
+
+```rust
+use fast_dav_rs::Operation;
+use fast_dav_rs::webdav::conditional_write_error;
+
+async fn guarded_delete(
+    client: &fast_dav_rs::WebDavClient,
+    path: &str,
+    etag: &str,
+) -> fast_dav_rs::Result<()> {
+    let resp = client.delete_if_match(path, etag).await?;
+    match conditional_write_error(Operation::DeleteIfMatch, &resp) {
+        Ok(()) => Ok(()),
+        // Stale validator: reload the item, re-apply the change, retry.
+        Err(fast_dav_rs::Error::PreconditionFailed { .. }) => Ok(()),
+        Err(other) => Err(other),
+    }
+}
+```
+
+Writes issued while a WebDAV lock is held must carry the token in an `If`
+header (RFC 4918 §10.4) — `if_header_for_lock_token(&lock.token)` builds
+the parenthesized Coded-URL form `(<lock-token>)`, validated against the
+Coded-URL rules before anything is sent.
+
+COPY/MOVE gain explicit depth control: `copy_with_depth` sends the `Depth`
+header verbatim (`Depth::Zero` = shallow copy, RFC 4918 §9.8.3), and
+`move_with_depth` accepts `Depth::Zero` only (RFC 4918 §9.9.3 — MOVE acts
+as `infinity` for collections; a `Depth` header is only meaningful as `0`
+for a non-collection move).
+
+`list_calendars` also requests `current-user-privilege-set` and surfaces
+the granted set on the new `CalendarInfo.privileges` field (typed
+`Privilege`, empty when the server omits the property; the aggregate
+`all` maps to `Privilege::All`).
 
 ## Documentation
 

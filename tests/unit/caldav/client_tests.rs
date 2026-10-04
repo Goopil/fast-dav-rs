@@ -2,7 +2,7 @@ use fast_dav_rs::caldav::{
     CalendarDataLimits, CalendarQueryFilter, CalendarQueryOptions, FreeBusyType, ParamFilter,
     PropFilter, TextMatch, TimeRange, build_calendar_query_body_with_limits,
 };
-use fast_dav_rs::{CalDavClient, Depth, Error, RequestCompressionMode, SyncLevel};
+use fast_dav_rs::{CalDavClient, Depth, Error, Privilege, RequestCompressionMode, SyncLevel};
 use futures::StreamExt;
 use hyper::http::HeaderMap;
 
@@ -1118,6 +1118,94 @@ async fn list_calendars_requests_and_maps_collection_properties() {
     assert!(
         req.contains("<C:max-attendees-per-instance/>"),
         "max-attendees-per-instance must be requested: {req}"
+    );
+}
+
+#[tokio::test]
+async fn list_calendars_surfaces_current_user_privileges() {
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/home/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:displayname>Personal</D:displayname>
+        <D:resourcetype>
+          <D:collection/>
+          <C:calendar/>
+        </D:resourcetype>
+        <D:current-user-privilege-set>
+          <D:privilege><D:read/><D:write-content/></D:privilege>
+        </D:current-user-privilege-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let calendars = client.list_calendars("home/").await.unwrap();
+    assert_eq!(calendars.len(), 1);
+    assert!(
+        calendars[0].privileges.contains(&Privilege::Read),
+        "granted privileges must surface on CalendarInfo: {:?}",
+        calendars[0].privileges
+    );
+    assert!(
+        calendars[0].privileges.contains(&Privilege::WriteContent),
+        "granted privileges must surface on CalendarInfo: {:?}",
+        calendars[0].privileges
+    );
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(
+        req.contains("<D:current-user-privilege-set/>"),
+        "the list_calendars PROPFIND must request current-user-privilege-set (RFC 3744 §5.4): {req}"
+    );
+}
+
+#[tokio::test]
+async fn list_calendars_privileges_empty_when_server_omits_property() {
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:response>
+    <D:href>/home/personal/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype>
+          <D:collection/>
+          <C:calendar/>
+        </D:resourcetype>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let (base, _captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let calendars = client.list_calendars("home/").await.unwrap();
+    assert_eq!(calendars.len(), 1);
+    assert!(
+        calendars[0].privileges.is_empty(),
+        "privileges must be empty when the server omits the property: {:?}",
+        calendars[0].privileges
     );
 }
 

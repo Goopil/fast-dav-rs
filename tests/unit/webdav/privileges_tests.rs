@@ -72,6 +72,33 @@ async fn current_user_privileges_unknown_element_maps_to_other() {
 }
 
 #[tokio::test]
+async fn current_user_privileges_maps_all_aggregate() {
+    let body = multistatus_body("<D:privilege><D:all/></D:privilege>");
+    let (base, _captured) = serve_capture(response_head("", body.len()), body).await;
+    let client = make_client(&base);
+
+    let privileges = client.current_user_privileges("").await.unwrap();
+    assert_eq!(
+        privileges,
+        vec![Privilege::All],
+        "servers granting the aggregate 'all' must surface as Privilege::All, \
+         not Other(\"all\")"
+    );
+}
+
+#[test]
+fn multistatus_bytes_maps_all_aggregate_case_insensitively() {
+    let body = multistatus_body("<D:privilege><D:ALL/><D:all/></D:privilege>");
+    let result = parse_multistatus_bytes(&body).unwrap();
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(
+        result.items[0].current_user_privileges,
+        vec![Privilege::All, Privilege::All],
+        "the aggregate 'all' must map case-insensitively in both spellings"
+    );
+}
+
+#[tokio::test]
 async fn current_user_privileges_accepts_repeated_privilege_containers() {
     let body = multistatus_body(
         "<D:privilege><D:read/></D:privilege><D:privilege><D:bind/><D:unbind/></D:privilege>",

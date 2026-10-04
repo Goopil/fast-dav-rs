@@ -52,9 +52,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the property (some servers echo it in principal PROPFINDs). RFC 5397 §3's
   `current-user-principal` superseded the property for principal discovery;
   the field stays `None` when the property is absent.
+- Schedule-tag retrieval (RFC 6638 §10.1, #248):
+  `schedule_tag_from_headers` extracts the `Schedule-Tag` response header
+  (normalized like `etag_from_headers`; `None` when absent/empty), and
+  `DavItem.schedule_tag` carries the `schedule-tag` property parsed verbatim
+  from multistatus responses. Both feed the existing
+  `put_if_schedule_tag` / `delete_if_schedule_tag` conditional writes
+  (`If-Schedule-Tag-Match`, §8.3).
+- Typed conditional-write errors (Refs #252): `Error::PreconditionFailed`
+  (`412` — the validator (ETag/lock/schedule-tag) did not match; reload the
+  item and retry) and `Error::PreconditionRequired` (`428` — the server
+  requires a conditional header on this write), plus the public
+  `conditional_write_error` classifier that maps the raw response of the
+  conditional write methods (`put_if_match`, `delete_if_match`,
+  `put_if_schedule_tag`, …) onto them (`2xx` → `Ok`, otherwise typed
+  errors). New `Operation::PutIfMatch` / `Operation::DeleteIfMatch`
+  operations carry the exact guarded method in the error context. The
+  conditional writes keep returning raw responses by design — 100% additive.
+- `if_header_for_lock_token` — builds the RFC 4918 §10.4 `If` header
+  (parenthesized Coded-URL `(<lock-token>)`) for writes issued while a
+  WebDAV lock is held; rejects empty tokens, parentheses, and control
+  characters with `Error::InvalidInput` before anything is built.
+- `copy_with_depth` / `move_with_depth` on `WebDavClient` — explicit
+  `Depth` control: COPY sends the header verbatim (`Depth::Zero` = shallow
+  copy, RFC 4918 §9.8.3); MOVE accepts `Depth::Zero` only, rejecting other
+  values before any network I/O (RFC 4918 §9.9.3 — MOVE acts as `infinity`
+  for collections). The existing `copy`/`move` send no `Depth` header.
+- `Privilege::All` — the RFC 3744 §3.11 aggregate `all` privilege now maps
+  to a typed variant (case-insensitively) instead of surfacing as
+  `Other("all")`; the enum doc carries the migration caveat.
 
 ### Changed — 0.19 cycle (RFC punch list #225)
 
+- `list_calendars` now requests `current-user-privilege-set` (RFC 3744
+  §5.4) in addition to the collection properties and surfaces the granted
+  set on the new `CalendarInfo.privileges` field (empty when the server
+  omits the property — an absent privilege is not proof of denial).
 - Documentation-only clarifications (#253), no behavior change: the
   `mkcol` rustdoc spells out the wire contract — success is `201 Created`
   (RFC 4918 §9.1), non-success statuses and server-dependent `207`
@@ -65,13 +98,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   §3) and TXT (§6) record lookup are deliberately excluded to keep the
   dependency tree lean, with the `.well-known` probes covering the
   RFC 6764 §5 step plus the §6 base-URL fallback.
-- Schedule-tag retrieval (RFC 6638 §10.1, #248):
-  `schedule_tag_from_headers` extracts the `Schedule-Tag` response header
-  (normalized like `etag_from_headers`; `None` when absent/empty), and
-  `DavItem.schedule_tag` carries the `schedule-tag` property parsed verbatim
-  from multistatus responses. Both feed the existing
-  `put_if_schedule_tag` / `delete_if_schedule_tag` conditional writes
-  (`If-Schedule-Tag-Match`, §8.3).
 
 ## [0.18.0] - 2026-10-04
 

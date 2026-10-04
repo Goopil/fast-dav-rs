@@ -35,6 +35,8 @@ fn is_retryable(error: &Error) -> bool {
 | `Transport`            | A request was sent but the response stream broke                      |
 | `UnexpectedStatus`     | The server returned an unexpected HTTP status code                    |
 | `UnexpectedStatusWithDav` | Unexpected status with a `<D:error>` body (e.g. `423` + `no-conflicting-lock`) |
+| `PreconditionFailed`   | A conditional write returned `412` — the validator (ETag/lock/schedule-tag) did not match; reload the item and retry. Classify raw conditional-write responses with `conditional_write_error` |
+| `PreconditionRequired` | A conditional write returned `428` (RFC 6585 §3) — the server requires a conditional header on this write |
 | `SyncIncomplete`       | A `sync-collection` result set was truncated (507 inside the 207) and cannot be continued (no new sync token, or a repeated one) |
 | `PrincipalNotFound`    | Authentication succeeded but `current-user-principal` PROPFIND returned 404 — on some providers the signature of a wrong username form (e.g. email instead of the account ID) |
 | `Timeout`              | An operation exceeded its configured time limit                      |
@@ -52,7 +54,8 @@ fn is_retryable(error: &Error) -> bool {
 The `Operation` enum identifies which DAV operation produced an
 `UnexpectedStatus` (e.g. `PropfindCollections`, `ReportCalendarQuery`,
 `PropfindScheduleEndpoints`, `PostSchedule`, `ScheduleInbox`,
-`PostManagedAttachment`, `Lock`, `Unlock`). The
+`PostManagedAttachment`, `Lock`, `Unlock`, `PutIfMatch`, `DeleteIfMatch`).
+The
 `EtagReason` enum describes why an ETag was rejected (`Empty`,
 `InvalidFormat`, `InvalidCharacters`, `InvalidHeaderValue`, `Weak`).
 

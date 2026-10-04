@@ -212,6 +212,93 @@ pub fn schedule_tag_from_headers(headers: &HeaderMap) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Classify the raw response of a conditional write (RFC 9110 §13, WebDAV
+/// lock tokens RFC 4918 §7, schedule-tag RFC 6638 §8.2).
+///
+/// The conditional write methods (`put_if_match`, `put_if_none_match`,
+/// `delete_if_match`, `put_if_schedule_tag`, …) return the raw
+/// [`Response`] for **any** status by design — e.g. a `412` on a stale ETag
+/// is an expected outcome the caller must handle, not a transport failure.
+/// This helper turns such a raw response into a typed [`Result`]:
+///
+/// - any `2xx` → `Ok(())` — the write happened;
+/// - `412 Precondition Failed` → [`Error::PreconditionFailed`] — the
+///   validator (`ETag`/lock/schedule-tag) did not match; reload the item and
+///   retry;
+/// - `428 Precondition Required` → [`Error::PreconditionRequired`] — the
+///   server requires a conditional header on this write (RFC 6585 §3);
+/// - any other status → [`Error::UnexpectedStatus`].
+///
+/// # Example
+///
+/// ```no_run
+/// use fast_dav_rs::webdav::conditional_write_error;
+/// use fast_dav_rs::{Error, Operation, WebDavClient};
+///
+/// # async fn run(client: &WebDavClient) -> fast_dav_rs::Result<()> {
+/// let resp = client.delete_if_match("cal/event.ics", "\"etag\"").await?;
+/// match conditional_write_error(Operation::DeleteIfMatch, &resp) {
+///     Ok(()) => println!("deleted"),
+///     Err(Error::PreconditionFailed { .. }) => {
+///         // The ETag went stale: reload the item, re-apply the change,
+///         // then retry the conditional delete with the fresh ETag.
+///     }
+///     Err(other) => return Err(other),
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn conditional_write_error(operation: Operation, resp: &Response<Bytes>) -> Result<()> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    match status {
+        StatusCode::PRECONDITION_FAILED => Err(Error::PreconditionFailed { operation }),
+        StatusCode::PRECONDITION_REQUIRED => Err(Error::PreconditionRequired { operation }),
+        _ => Err(Error::UnexpectedStatus { operation, status }),
+    }
+}
+
+/// Build an RFC 4918 §10.4 `If` header for a lock-token-guarded write: the
+/// parenthesized Coded-URL form `(<lock-token>)`.
+///
+/// This client keeps no implicit lock state, so writes issued while a lock
+/// is held must carry the token themselves — pass the returned value as the
+/// `If` header of the request (e.g. through
+/// [`WebDavClient::send`](WebDavClient::send)). The token is validated
+/// against the Coded-URL rules the locking API already applies (RFC 4918
+/// §10.5): an empty token, parentheses, or characters that cannot appear in
+/// a Coded-URL fail with [`Error::InvalidInput`] before anything is built.
+///
+/// # Example
+///
+/// ```no_run
+/// use fast_dav_rs::Operation;
+/// use fast_dav_rs::webdav::{
+///     LockScope, WebDavClient, conditional_write_error, if_header_for_lock_token,
+/// };
+/// use hyper::{Method, http::HeaderMap};
+///
+/// # async fn run(client: &WebDavClient) -> fast_dav_rs::Result<()> {
+/// let lock = client
+///     .lock("docs/plan.txt", LockScope::Exclusive, "", Some(300))
+///     .await?;
+/// let mut headers = HeaderMap::new();
+/// headers.insert("If", if_header_for_lock_token(&lock.token)?.parse()?);
+/// let resp = client
+///     .send(Method::DELETE, "docs/plan.txt", headers, None, None)
+///     .await?;
+/// // A server enforcing the lock answers 412 when the token does not apply.
+/// conditional_write_error(Operation::DeleteIfMatch, &resp)?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn if_header_for_lock_token(lock_token: &str) -> Result<String> {
+    WebDavClient::validate_lock_token(lock_token)?;
+    Ok(format!("(<{lock_token}>)"))
+}
+
 /// Extract the `Preference-Applied` response header (RFC 7240 §3) and map it
 /// to a [`Prefer`] preference the client supports.
 ///
@@ -1487,7 +1574,28 @@ impl WebDavClient {
         dest_absolute_url: &str,
         overwrite: bool,
     ) -> Result<Response<Bytes>> {
-        self.copy_move(b"COPY", src_path, dest_absolute_url, overwrite)
+        self.copy_move(b"COPY", src_path, dest_absolute_url, overwrite, None)
+            .await
+    }
+
+    /// Send a WebDAV `COPY` with an explicit `Depth` header.
+    ///
+    /// Same contract as [`copy`](Self::copy) — `dest_absolute_url` must be an
+    /// absolute, already percent-encoded URI with scheme and authority,
+    /// validated before any network I/O — plus a `Depth` header sent
+    /// **verbatim**: `Depth::Zero` performs a **shallow copy**, the
+    /// collection is copied without its internal members (RFC 4918
+    /// §9.8.3). RFC 4918 only defines `0` for COPY; other values are sent
+    /// as asked (most servers treat `Depth: infinity` as the default
+    /// deep copy and reject anything else).
+    pub async fn copy_with_depth(
+        &self,
+        src_path: &str,
+        dest_absolute_url: &str,
+        overwrite: bool,
+        depth: Depth,
+    ) -> Result<Response<Bytes>> {
+        self.copy_move(b"COPY", src_path, dest_absolute_url, overwrite, Some(depth))
             .await
     }
 
@@ -1503,7 +1611,36 @@ impl WebDavClient {
         dest_absolute_url: &str,
         overwrite: bool,
     ) -> Result<Response<Bytes>> {
-        self.copy_move(b"MOVE", src_path, dest_absolute_url, overwrite)
+        self.copy_move(b"MOVE", src_path, dest_absolute_url, overwrite, None)
+            .await
+    }
+
+    /// Send a WebDAV `MOVE` with an explicit `Depth: 0` header.
+    ///
+    /// Same contract as [`r#move`](Self::r#move) — `dest_absolute_url` must
+    /// be an absolute, already percent-encoded URI with scheme and
+    /// authority, validated before any network I/O — plus the `Depth`
+    /// header. Only [`Depth::Zero`] is accepted, **before any network
+    /// I/O** (`Depth::One`/`Depth::Infinity` fail with
+    /// [`Error::InvalidInput`]): RFC 4918 §9.9.3 — MOVE acts as
+    /// `infinity` for collections (the whole subtree moves), so a `Depth`
+    /// header is only meaningful as `0` for a non-collection move, and
+    /// conforming servers reject other values.
+    pub async fn move_with_depth(
+        &self,
+        src_path: &str,
+        dest_absolute_url: &str,
+        overwrite: bool,
+        depth: Depth,
+    ) -> Result<Response<Bytes>> {
+        if !matches!(depth, Depth::Zero) {
+            return Err(Error::InvalidInput(format!(
+                "MOVE only accepts Depth: 0 (RFC 4918 §9.9.3 — MOVE acts as infinity for \
+                 collections; a Depth header is only meaningful as 0 for a non-collection move), \
+                 got {depth:?}"
+            )));
+        }
+        self.copy_move(b"MOVE", src_path, dest_absolute_url, overwrite, Some(depth))
             .await
     }
 
@@ -1513,6 +1650,7 @@ impl WebDavClient {
         src_path: &str,
         dest_absolute_url: &str,
         overwrite: bool,
+        depth: Option<Depth>,
     ) -> Result<Response<Bytes>> {
         // RFC 4918 §10.3 Simple-ref: the Destination is an absolute URI.
         // It is sent verbatim (no percent-encoding here), so reject values
@@ -1542,6 +1680,11 @@ impl WebDavClient {
             ));
         }
         let mut h = HeaderMap::new();
+        if let Some(depth) = depth {
+            // Sent verbatim (RFC 4918 §9.8.3 shallow COPY / §9.9.3 `0`-only
+            // MOVE); MOVE values other than 0 are rejected by the caller.
+            h.insert("Depth", header::HeaderValue::from_str(depth.as_str())?);
+        }
         h.insert(
             "Destination",
             header::HeaderValue::from_str(dest_absolute_url)?,

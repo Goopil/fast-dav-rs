@@ -1,5 +1,5 @@
 pub use crate::webdav::types::{
-    BatchItem, Collation, DavItem, Depth, MatchType, MediaType, ParamFilter, TextMatch,
+    BatchItem, Collation, DavItem, Depth, MatchType, MediaType, ParamFilter, Privilege, TextMatch,
 };
 
 use crate::webdav::xml;
@@ -49,6 +49,11 @@ pub struct CalendarInfo {
     /// Maximum number of attendees per scheduling instance the server accepts
     /// (RFC 4791 §5.2.9); `None` when the server does not advertise it.
     pub max_attendees_per_instance: Option<u32>,
+    /// Privileges the authenticated user holds on this collection, from
+    /// `current-user-privilege-set` (RFC 3744 §5.4). `list_calendars`
+    /// requests the property, but the set is empty when the server omitted
+    /// it — the absence of a privilege is not proof of denial.
+    pub privileges: Vec<Privilege>,
 }
 
 /// Calendar object (event or task) returned by a `REPORT`.

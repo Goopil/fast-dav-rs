@@ -729,6 +729,12 @@ impl MediaType {
 /// inherited or aggregated ACEs: the set is advisory, and an absent
 /// privilege does not prove an operation will be denied.
 ///
+/// # Versioning note
+///
+/// Servers that advertise the aggregate `all` privilege used to map to
+/// `Other("all")` before 0.19; they now map to [`Privilege::All`] — match
+/// on `All` for the aggregate (implies read and write).
+///
 /// ```no_run
 /// use fast_dav_rs::webdav::Privilege;
 ///
@@ -737,6 +743,7 @@ impl MediaType {
 ///         match privilege {
 ///             Privilege::Read => println!("can read"),
 ///             Privilege::Write | Privilege::WriteContent => println!("can write"),
+///             Privilege::All => println!("full access"),
 ///             Privilege::Other(name) => println!("server-specific: {name}"),
 ///             _ => println!("other privilege"),
 ///         }
@@ -762,6 +769,11 @@ pub enum Privilege {
     Unlock,
     /// Read the calendar free-busy information (CalDAV, RFC 4791 §6.1.1).
     ReadFreeBusy,
+    /// The aggregate `all` privilege (RFC 3744 §3.11): implies read and
+    /// write. Matches servers granting `all` instead of enumerating the
+    /// privileges it aggregates. Servers that advertised `all` mapped to
+    /// [`Privilege::Other`] before 0.19.
+    All,
     /// An unrecognized privilege: the element's local name, verbatim.
     Other(String),
 }
