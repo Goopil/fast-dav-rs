@@ -491,6 +491,12 @@ pub enum Operation {
     /// `?action=attachment-add` (managed attachments; CalendarServer wire
     /// form of RFC 8607).
     PostManagedAttachment,
+    /// `PUT` of an attachment body on an attachment resource with the
+    /// `Cal-Managed-ID` header (managed-attachment update, RFC 8607 §5.2).
+    PutManagedAttachment,
+    /// `DELETE` of an attachment resource with the `Cal-Managed-ID` header
+    /// (managed-attachment removal, RFC 8607 §5.3).
+    DeleteManagedAttachment,
     /// `PROPFIND` to read `current-user-privilege-set` (RFC 3744 §5.4).
     PropfindCurrentUserPrivilegeSet,
     /// `PROPPATCH` to set/remove a calendar's `calendar-timezone`
@@ -524,6 +530,8 @@ impl std::fmt::Display for Operation {
             Self::PostSchedule => "POST scheduling outbox",
             Self::ScheduleInbox => "PROPFIND schedule inbox",
             Self::PostManagedAttachment => "POST managed attachment",
+            Self::PutManagedAttachment => "PUT managed attachment",
+            Self::DeleteManagedAttachment => "DELETE managed attachment",
             Self::PropfindCurrentUserPrivilegeSet => "PROPFIND current-user-privilege-set",
             Self::Propfind => "PROPFIND",
             Self::Report => "REPORT",
