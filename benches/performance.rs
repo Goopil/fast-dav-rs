@@ -11,6 +11,9 @@
 //!   on a ~50 MB multistatus.
 //! - **B4** — fresh client per iteration (serverless pattern): connection
 //!   setup + per-instance compression probe in `Auto` vs `Disabled`.
+//! - **B5** — item-by-item stream guard: `report_items_stream` /
+//!   `calendar_query_stream` vs the deprecated `visit` reference on the same
+//!   ~50 MB multistatus as B3 (successor-path coverage).
 //!
 //! The fixture is an **in-process** hyper HTTP/1.1 server bound to an
 //! ephemeral `127.0.0.1` port — no network, no Docker. Synthetic multistatus
@@ -26,12 +29,15 @@ use bytes::Bytes;
 use codspeed_criterion_compat::{
     BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
 };
+use fast_dav_rs::CalDavClient;
+use fast_dav_rs::DavStreamEvent;
 use fast_dav_rs::RequestCompressionMode;
 // B3 intentionally benches the deprecated raw-stream escape hatches (see its
 // doc comment): keep their cost tracked until removal.
 #[allow(deprecated)]
 use fast_dav_rs::webdav::streaming::{parse_multistatus_stream, parse_multistatus_stream_visit};
 use fast_dav_rs::webdav::{Depth, SyncLevel, WebDavClient};
+use futures::StreamExt;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -378,11 +384,124 @@ fn bench_b4_fresh_client_auto(c: &mut Criterion) {
     group.finish();
 }
 
+/// B5 — guard the successor of B3's streaming paths: the item-by-item
+/// `*_items_stream` engine (`ItemStream` + `multistatus_events`), benched on
+/// the same ~50 MB multistatus with B3's metrology.
+///
+/// Three arms share one fixture and differ only in the consumed API:
+///
+/// - `visit` — the deprecated callback parser, kept as the reference so
+///   deltas stay meaningful (mirrors B3's `visit` arm);
+/// - `items_stream` — `report_items_stream`: eager status check, on-the-fly
+///   decompression negotiation, per-item yield through `ItemStream`;
+/// - `calendar_query_stream` — the typed CalDAV arm: adds the per-item
+///   `map_calendar_object` cost and `CalendarObject` allocations on top of
+///   the same engine as `items_stream`.
+///
+/// Deltas: `items_stream − visit` isolates the new engine vs the callback;
+/// `calendar_query_stream − items_stream` isolates the typed mapping layer.
+#[allow(deprecated)] // the `visit` reference arm drives the deprecated parser on purpose
+fn bench_b5_items_stream(c: &mut Criterion) {
+    let rt = runtime();
+
+    let payload = build_sync_payload(5_000, true, 80);
+    let payload_len = payload.len() as u64;
+    let routes = HashMap::from([("/big/", payload)]);
+    let base = start_fixture(&rt, routes);
+
+    let webdav = WebDavClient::builder(base.as_str())
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .expect("webdav client");
+    let caldav = CalDavClient::builder(base.as_str())
+        .request_compression(RequestCompressionMode::Disabled)
+        .build()
+        .expect("caldav client");
+
+    let mut group = c.benchmark_group("B5_items_stream_50mb");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(5));
+    group.throughput(Throughput::Bytes(payload_len));
+
+    group.bench_function("visit", |b| {
+        b.to_async(&rt).iter(|| {
+            let client = webdav.clone();
+            async move {
+                let resp = client
+                    .report_stream("big/", Depth::Zero, SYNC_REQUEST_BODY)
+                    .await
+                    .expect("report_stream");
+                let mut seen = 0usize;
+                let sync_token = parse_multistatus_stream_visit(resp.into_body(), &[], |item| {
+                    black_box(&item);
+                    seen += 1;
+                    Ok(())
+                })
+                .await
+                .expect("parse multistatus");
+                assert_eq!(seen, 5_000);
+                assert_eq!(sync_token.as_deref(), Some(SYNC_TOKEN));
+                black_box(seen)
+            }
+        });
+    });
+
+    group.bench_function("items_stream", |b| {
+        b.to_async(&rt).iter(|| {
+            let client = webdav.clone();
+            async move {
+                let mut stream = client
+                    .report_items_stream("big/", Depth::Zero, SYNC_REQUEST_BODY)
+                    .await
+                    .expect("report_items_stream");
+                let mut seen = 0usize;
+                let mut sync_token = None;
+                while let Some(event) = stream.next().await {
+                    match event.expect("stream event") {
+                        DavStreamEvent::Item(item) => {
+                            black_box(&item);
+                            seen += 1;
+                        }
+                        DavStreamEvent::SyncToken(token) => sync_token = Some(token),
+                        _ => {}
+                    }
+                }
+                assert_eq!(seen, 5_000);
+                assert_eq!(sync_token.as_deref(), Some(SYNC_TOKEN));
+                black_box(seen)
+            }
+        });
+    });
+
+    group.bench_function("calendar_query_stream", |b| {
+        b.to_async(&rt).iter(|| {
+            let client = caldav.clone();
+            async move {
+                let mut stream = client
+                    .calendar_query_stream("big/", "VEVENT", None, None, true, None)
+                    .await
+                    .expect("calendar_query_stream");
+                let mut seen = 0usize;
+                while let Some(object) = stream.next().await {
+                    let object = object.expect("calendar object");
+                    black_box(object.calendar_data.as_deref().map_or(0, str::len));
+                    seen += 1;
+                }
+                assert_eq!(seen, 5_000);
+                black_box(seen)
+            }
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_b1_sync_collection,
     bench_b2_first_request_auto,
     bench_b3_multistatus_parse,
-    bench_b4_fresh_client_auto
+    bench_b4_fresh_client_auto,
+    bench_b5_items_stream
 );
 criterion_main!(benches);
