@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Managed-attachment update/removal on `CalDavClient` (RFC 8607 §5.2/§5.3,
+  #249): `put_managed_attachment` overwrites a stored attachment with `PUT`
+  on its href plus `Cal-Managed-ID` and `Content-Type`, and
+  `delete_managed_attachment` removes it with `DELETE` plus
+  `Cal-Managed-ID`. Non-success statuses surface as `Error::UnexpectedStatus`
+  with the new `Operation::PutManagedAttachment` /
+  `Operation::DeleteManagedAttachment`; empty href / managed id /
+  content-type are rejected before any network I/O.
+- e2e coverage on Radicale recording the fixture's observed
+  managed-attachment behavior (unsupported: attachment-add `POST` → `405`,
+  non-iCalendar `PUT` into a calendar → `400`).
+
 ## [0.18.0] - 2026-10-04
 
 ### Added

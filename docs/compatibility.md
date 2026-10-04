@@ -32,6 +32,7 @@ Fixtures and test targets:
 | Discovery (RFC 6764) | ✅ | ✅ | ✅ | ◐ (A1) |
 | WebDAV-Sync (RFC 6578) | ✅ | ✅ | ✅ | — |
 | LOCK (RFC 4918 class 2) | ✅ | ❌ (R1) | ◐ (N2) | — |
+| Managed attachments (RFC 8607) | — | ❌ (R2) | — | — |
 | Scheduling (RFC 6638) | ✅ (S1) | — | — | — |
 | `calendar-timezone` (RFC 4791 §5.2.2) | — (S2) | ✅ | ✅ | — |
 | Compression (gzip / brotli / zstd) | ✅ | — | — | — |
@@ -48,6 +49,13 @@ Notes:
   `LOCK` request is answered `405 Method Not Allowed` (observed on Radicale
   3.7.6; also listed in `radicale-test/README.md`). Clients must not rely on
   locking even when the compliance class is advertised.
+- **(R2) Radicale has no managed attachments (RFC 8607).** A
+  `POST ?action=attachment-add` to a calendar collection is answered `405`,
+  a `PUT` of non-iCalendar content into a calendar collection is rejected
+  `400` (collection item data is validated), and a `DELETE` of a
+  never-created attachment resource is `404` (observed on Radicale 3.7.6;
+  also listed in `radicale-test/README.md`). Clients must not rely on
+  `Cal-Managed-ID` semantics here.
 - **(S1) SabreDAV scheduling** is verified for endpoint discovery
   (schedule-inbox-URL, schedule-outbox-URL, calendar-user-address-set) and
   schedule-inbox listing. Two gaps: the fixture (SabreDAV 4.7.1) does not
@@ -92,6 +100,7 @@ tests below; `—` cells have no test and are therefore absent.
 | LOCK | SabreDAV | ✅ | `sabredav/webdav/locking_tests.rs` → `test_lock_refresh_unlock_relock_lifecycle`, `test_put_succeeds_after_unlock` |
 | LOCK | Radicale | ❌ (R1) | `radicale/locking.rs` → `test_lock_unsupported_records_observed_behavior` (LOCK → error status, 405 observed) |
 | LOCK | Nextcloud | ◐ (N2) | `nextcloud/locking.rs` → `test_lock_unlock_round_trip_on_nextcloud` (full contract — `LOCK` → token, token-less `PUT` → `423`, `UNLOCK` frees — on the files tree; CalDAV tree accepts but does not enforce locks, note N2) |
+| Managed attachments | Radicale | ❌ (R2) | `radicale/attachments.rs` → `test_managed_attachment_unsupported_records_observed_behavior` (attachment-add `POST` → 405 observed), `test_managed_attachment_put_delete_unsupported_records_observed_behavior` (non-iCalendar `PUT` into a calendar → 400 observed, `DELETE` of a missing resource → 404 observed) |
 | Scheduling | SabreDAV | ✅ (S1) | `sabredav/caldav/scheduling_tests.rs` → `test_discover_schedule_endpoints_on_sabredav` (inbox/outbox hrefs + `mailto:` user address asserted), `test_list_inbox_empty_on_sabredav`; schedule-tag gap recorded by `test_schedule_tag_unsupported_records_observed_behavior_on_sabredav` |
 | `calendar-timezone` | Radicale | ✅ | `radicale/core.rs` → `test_calendar_timezone_write_round_trip` (PROPPATCH set → stored verbatim, remove → reads back absent) |
 | `calendar-timezone` | Nextcloud | ✅ | `nextcloud/crud.rs` → `test_calendar_timezone_write_round_trip` (PROPPATCH set → read back, remove → absent) |
