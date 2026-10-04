@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.19.0] - 2026-10-04
 
-### Added — 0.19 cycle (RFC punch list #225)
+### Added — RFC coverage punch list (#225)
 
 - Request-body builders (#250):
   - PROPFIND helpers (RFC 4918 §9.1): `build_propfind_allprop`,
@@ -108,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `DavItem.group_member_set`: hrefs collected by the shared
   multistatus streaming parser.
 
-### Changed — 0.19 cycle (RFC punch list #225)
+### Changed — RFC coverage punch list (#225)
 
 - `list_calendars` now requests `current-user-privilege-set` (RFC 3744
   §5.4) in addition to the collection properties and surfaces the granted
