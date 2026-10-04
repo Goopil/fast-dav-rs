@@ -140,3 +140,76 @@ fn data_element_xml_with_limits_escapes_values() {
     );
     assert!(!xml.contains("<injected/>"));
 }
+
+/// S4.3 — `build_propfind_allprop` produces the RFC 4918 §9.1 allprop body.
+#[test]
+fn build_propfind_allprop_full_body() {
+    assert_eq!(
+        fast_dav_rs::webdav::build_propfind_allprop(),
+        "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>"
+    );
+}
+
+/// S4.3 — `build_propfind_propname` produces the RFC 4918 §9.1 propname body.
+#[test]
+fn build_propfind_propname_full_body() {
+    assert_eq!(
+        fast_dav_rs::webdav::build_propfind_propname(),
+        "<D:propfind xmlns:D=\"DAV:\"><D:propname/></D:propfind>"
+    );
+}
+
+/// S4.3 — `build_propfind_props` groups the namespace declarations on the
+/// root and renders `<D:prop>` children as `<ns-prefix:name/>` (for `DAV:`
+/// the conventional `D:` prefix).
+#[test]
+fn build_propfind_props_groups_namespaces_on_root() {
+    let body = fast_dav_rs::webdav::build_propfind_props(&[
+        ("DAV:", "displayname"),
+        ("urn:ietf:params:xml:ns:caldav", "calendar-description"),
+    ]);
+    assert_eq!(
+        body,
+        "<D:propfind xmlns:D=\"DAV:\" xmlns:ns1=\"urn:ietf:params:xml:ns:caldav\">\
+<D:prop><D:displayname/><ns1:calendar-description/></D:prop></D:propfind>"
+    );
+}
+
+/// S4.3 — repeated namespaces share one declaration and keep their prefix;
+/// distinct namespaces get sequential `ns1`, `ns2`, … prefixes.
+#[test]
+fn build_propfind_props_dedupes_namespace_declarations() {
+    let body = fast_dav_rs::webdav::build_propfind_props(&[
+        ("urn:ietf:params:xml:ns:caldav", "calendar-data"),
+        ("DAV:", "getetag"),
+        ("urn:ietf:params:xml:ns:caldav", "calendar-data"), // hmm, duplicate pair
+        ("http://calendarserver.org/ns/", "getctag"),
+    ]);
+    assert_eq!(
+        body,
+        "<D:propfind xmlns:D=\"DAV:\" xmlns:ns1=\"urn:ietf:params:xml:ns:caldav\" \
+xmlns:ns2=\"http://calendarserver.org/ns/\"><D:prop>\
+<ns1:calendar-data/><D:getetag/><ns1:calendar-data/><ns2:getctag/>\
+</D:prop></D:propfind>"
+    );
+}
+
+/// S4.3 — namespace URIs and local names are escaped so untrusted values
+/// cannot inject markup.
+#[test]
+fn build_propfind_props_escapes_names_and_namespaces() {
+    let body = fast_dav_rs::webdav::build_propfind_props(&[
+        ("DAV:", "display\"name"),
+        ("<evil>/", "<x/>"),
+    ]);
+    assert!(body.contains("<D:display&quot;name/>"), "unescaped: {body}");
+    assert!(
+        body.contains("xmlns:ns1=\"&lt;evil&gt;/\""),
+        "unescaped namespace: {body}"
+    );
+    assert!(
+        body.contains("<ns1:&lt;x/&gt;/>"),
+        "unescaped local name: {body}"
+    );
+    assert!(!body.contains("<x/>"), "injection possible: {body}");
+}

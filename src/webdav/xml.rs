@@ -309,6 +309,99 @@ pub fn build_calendar_query_body_with_limits(options: &CalendarQueryOptions) -> 
     )
 }
 
+/// Build a PROPFIND request body requesting **all** properties
+/// (RFC 4918 §9.1, `<D:allprop/>`).
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::build_propfind_allprop;
+///
+/// assert_eq!(
+///     build_propfind_allprop(),
+///     "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>"
+/// );
+/// ```
+pub fn build_propfind_allprop() -> String {
+    "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>".to_owned()
+}
+
+/// Build a PROPFIND request body requesting property **names** only
+/// (RFC 4918 §9.1, `<D:propname/>`) — the server returns the list of
+/// properties defined on each resource without their values.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::build_propfind_propname;
+///
+/// assert_eq!(
+///     build_propfind_propname(),
+///     "<D:propfind xmlns:D=\"DAV:\"><D:propname/></D:propfind>"
+/// );
+/// ```
+pub fn build_propfind_propname() -> String {
+    "<D:propfind xmlns:D=\"DAV:\"><D:propname/></D:propfind>".to_owned()
+}
+
+/// Build a PROPFIND request body requesting a specific property list
+/// (RFC 4918 §9.1, `<D:prop>`).
+///
+/// `props` carries `(namespace, local-name)` pairs. Namespace declarations
+/// are grouped on the `<D:propfind>` root: `DAV:` uses the conventional
+/// `D:` prefix, any other namespace gets a sequential `ns1`, `ns2`, … prefix
+/// bound once on first appearance. Namespace URIs and local names are
+/// escaped so untrusted values cannot inject markup. An empty namespace
+/// renders an unprefixed child (a property in no namespace).
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::build_propfind_props;
+///
+/// let body = build_propfind_props(&[
+///     ("DAV:", "displayname"),
+///     ("urn:ietf:params:xml:ns:caldav", "calendar-description"),
+/// ]);
+/// assert!(body.starts_with(
+///     "<D:propfind xmlns:D=\"DAV:\" xmlns:ns1=\"urn:ietf:params:xml:ns:caldav\">"
+/// ));
+/// assert!(body.contains("<D:displayname/>"));
+/// assert!(body.contains("<ns1:calendar-description/>"));
+/// ```
+pub fn build_propfind_props(props: &[(&str, &str)]) -> String {
+    // Namespace-prefix bindings in first-appearance order; `DAV:` is bound
+    // to the conventional `D` prefix up front, further namespaces get `ns1`,
+    // `ns2`, … and are declared once on the root element.
+    let mut bindings: Vec<(&str, String)> = vec![("DAV:", "D".to_owned())];
+    let mut declarations = String::from("xmlns:D=\"DAV:\"");
+    let mut children = String::with_capacity(props.len() * 16);
+    for (namespace, name) in props {
+        let prefix = match bindings.iter().position(|(ns, _)| ns == namespace) {
+            Some(index) => bindings[index].1.as_str(),
+            None => {
+                let prefix = if namespace.is_empty() {
+                    String::new()
+                } else {
+                    format!("ns{}", bindings.len())
+                };
+                if !namespace.is_empty() {
+                    declarations
+                        .push_str(&format!(" xmlns:{prefix}=\"{}\"", escape_xml(namespace)));
+                }
+                bindings.push((namespace, prefix));
+                bindings.last().unwrap().1.as_str()
+            }
+        };
+        if prefix.is_empty() {
+            children.push_str(&format!("<{}/>", escape_xml(name)));
+        } else {
+            children.push_str(&format!("<{prefix}:{}/>", escape_xml(name)));
+        }
+    }
+    format!("<D:propfind {declarations}><D:prop>{children}</D:prop></D:propfind>")
+}
+
 /// Render a `<C:text-match>` element.
 ///
 /// CalDAV (RFC 4791 §9.7.5) has no `match-type` attribute and defaults the

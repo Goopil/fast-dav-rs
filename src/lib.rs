@@ -46,6 +46,7 @@ pub use webdav::{
     DavCapabilities, DavCompliance, DavStreamEvent, HyperClient, ItemStream, LockInfo, LockScope,
     OAuth2RefreshProvider, Prefer, Privilege, PropStat, RequestCompressionMode, SyncCapability,
     SyncDelta, SyncEntry, SyncLevel, SyncSession, SyncSnapshot, TokenProvider, WebDavClient,
-    WebDavError, data_element_xml_with_limits, discover_caldav, discover_carddav,
-    etag_from_headers, normalize_etag, normalize_sync_token, preference_applied_from_headers,
+    WebDavError, build_propfind_allprop, build_propfind_propname, build_propfind_props,
+    data_element_xml_with_limits, discover_caldav, discover_carddav, etag_from_headers,
+    normalize_etag, normalize_sync_token, preference_applied_from_headers,
 };

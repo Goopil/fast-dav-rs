@@ -27,4 +27,7 @@ pub use types::{
     BatchItem, DavCapabilities, DavCompliance, DavItem, DavItemCommon, Depth, LockInfo, LockScope,
     Prefer, Privilege, PropStat, SyncCapability, SyncLevel, WebDavError, parse_dav_header,
 };
-pub use xml::{build_sync_collection_body, data_element_xml_with_limits, escape_xml};
+pub use xml::{
+    build_propfind_allprop, build_propfind_propname, build_propfind_props,
+    build_sync_collection_body, data_element_xml_with_limits, escape_xml,
+};
