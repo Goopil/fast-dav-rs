@@ -1,3 +1,4 @@
+pub mod acl_tests;
 pub mod auth_tests;
 pub mod builder_tests;
 pub mod compliance_tests;

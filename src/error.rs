@@ -449,6 +449,8 @@ pub enum Error {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Operation {
+    /// `ACL` to modify the access control list of a resource (RFC 3744 §8.1).
+    Acl,
     /// `PROPFIND` to discover the current-user-principal.
     PropfindCurrentUserPrincipal,
     /// `PROPFIND` to discover the calendar-home-set.
@@ -505,6 +507,7 @@ pub enum Operation {
 impl std::fmt::Display for Operation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
+            Self::Acl => "ACL",
             Self::PropfindCurrentUserPrincipal => "PROPFIND current-user-principal",
             Self::PropfindCalendarHomeSet => "PROPFIND calendar-home-set",
             Self::PropfindAddressbookHomeSet => "PROPFIND addressbook-home-set",
