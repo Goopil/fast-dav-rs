@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 0.19 (RFC punch list #225)
+
+#### Added
+
+- Typed conditional-write errors (Refs #252): `Error::PreconditionFailed`
+  (`412` — the validator (ETag/lock/schedule-tag) did not match; reload the
+  item and retry) and `Error::PreconditionRequired` (`428` — the server
+  requires a conditional header on this write), plus the public
+  `conditional_write_error` classifier that maps the raw response of the
+  conditional write methods (`put_if_match`, `delete_if_match`,
+  `put_if_schedule_tag`, …) onto them (`2xx` → `Ok`, otherwise typed
+  errors). New `Operation::PutIfMatch` / `Operation::DeleteIfMatch`
+  operations carry the exact guarded method in the error context. The
+  conditional writes keep returning raw responses by design — 100% additive.
+- `if_header_for_lock_token` — builds the RFC 4918 §10.4 `If` header
+  (parenthesized Coded-URL `(<lock-token>)`) for writes issued while a
+  WebDAV lock is held; rejects empty tokens, parentheses, and control
+  characters with `Error::InvalidInput` before anything is built.
+- `copy_with_depth` / `move_with_depth` on `WebDavClient` — explicit
+  `Depth` control: COPY sends the header verbatim (`Depth::Zero` = shallow
+  copy, RFC 4918 §9.8.3); MOVE accepts `Depth::Zero` only, rejecting other
+  values before any network I/O (RFC 4918 §9.9.3 — MOVE acts as `infinity`
+  for collections). The existing `copy`/`move` send no `Depth` header.
+- `Privilege::All` — the RFC 3744 §3.11 aggregate `all` privilege now maps
+  to a typed variant (case-insensitively) instead of surfacing as
+  `Other("all")`; the enum doc carries the migration caveat.
+
+#### Changed
+
+- `list_calendars` now requests `current-user-privilege-set` (RFC 3744
+  §5.4) in addition to the collection properties and surfaces the granted
+  set on the new `CalendarInfo.privileges` field (empty when the server
+  omits the property — an absent privilege is not proof of denial).
+
 ## [0.18.0] - 2026-10-04
 
 ### Added
