@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+0.19 cycle (RFC punch list #225).
+
+### Added
+
+- `DavItem.principal_url` (#253): the legacy `principal-URL` href (RFC 3744
+  §4.2), parsed from multistatus responses whenever the server still returns
+  the property (some servers echo it in principal PROPFINDs). RFC 5397 §3's
+  `current-user-principal` superseded the property for principal discovery;
+  the field stays `None` when the property is absent.
+
+### Changed
+
+- Documentation-only clarifications (#253), no behavior change: the
+  `mkcol` rustdoc spells out the wire contract — success is `201 Created`
+  (RFC 4918 §9.1), non-success statuses and server-dependent `207`
+  multi-status bodies pass through to the caller untouched (RFC 5689
+  extended-MKCOL bodies are covered by unit wire tests) — and the
+  discovery docs (module, `discover_caldav`/`discover_carddav`, README,
+  docs/advanced-configuration.md) state explicitly that DNS SRV (RFC 6764
+  §3) and TXT (§6) record lookup are deliberately excluded to keep the
+  dependency tree lean, with the `.well-known` probes covering the
+  RFC 6764 §5 step plus the §6 base-URL fallback.
+
 ## [0.18.0] - 2026-10-04
 
 ### Added

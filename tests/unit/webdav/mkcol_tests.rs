@@ -35,7 +35,11 @@ async fn mkcol_without_body_sends_mkcol_with_empty_body() {
 
     let resp = client.mkcol("col/", None).await.unwrap();
 
-    assert_eq!(resp.status(), 201, "RFC 4918 §9.1: MKCOL answers 201 Created");
+    assert_eq!(
+        resp.status(),
+        201,
+        "RFC 4918 §9.1: MKCOL answers 201 Created"
+    );
 
     let (head, body) = request_parts(&captured.lock().unwrap());
     assert!(
