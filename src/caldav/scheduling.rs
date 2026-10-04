@@ -422,7 +422,9 @@ impl CalDavClient {
     /// header instead of an ETag when an "Attendee" may have processed the
     /// invitation in between: the schedule-tag changes on attendee-driven
     /// changes even when the event data (and therefore the ETag) of the
-    /// "Organizer" copy did not. The server answers `412 Precondition
+    /// "Organizer" copy did not. Extract the tag with
+    /// [`schedule_tag_from_headers`](crate::webdav::schedule_tag_from_headers)
+    /// or from `DavItem.schedule_tag`. The server answers `412 Precondition
     /// Failed` when the tag no longer matches; the response (any status)
     /// is returned to the caller.
     ///

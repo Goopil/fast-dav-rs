@@ -14,7 +14,7 @@ pub use auth::{OAuth2RefreshProvider, TokenProvider};
 pub use builder::WebDavClientBuilder;
 pub use client::{
     RequestCompressionMode, WebDavClient, etag_from_headers, normalize_etag, normalize_sync_token,
-    preference_applied_from_headers,
+    preference_applied_from_headers, schedule_tag_from_headers,
 };
 pub use discovery::{discover_caldav, discover_carddav};
 pub use streaming::{

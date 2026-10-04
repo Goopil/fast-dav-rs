@@ -806,6 +806,10 @@ pub struct DavItem {
     /// RFC 8607 defines `MANAGED-ID` only as an iCalendar `ATTACH`
     /// parameter, §4.3).
     pub managed_ids: Vec<String>,
+    /// `schedule-tag` property of a scheduling object resource
+    /// (RFC 6638 §10.1.1): the opaque server token, kept verbatim.
+    /// `None` when the property was not returned.
+    pub schedule_tag: Option<String>,
     /// Privileges granted to the authenticated user, from
     /// `current-user-privilege-set` (RFC 3744 §5.4). Empty when the property
     /// was not requested or the server omitted it.
@@ -858,6 +862,7 @@ impl DavItem {
             schedule_outbox: None,
             calendar_user_addresses: Vec::new(),
             managed_ids: Vec::new(),
+            schedule_tag: None,
             current_user_privileges: Vec::new(),
             current_user_principal: Vec::new(),
             principal_url: None,

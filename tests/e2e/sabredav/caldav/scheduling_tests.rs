@@ -82,6 +82,133 @@ async fn test_list_inbox_empty_on_sabredav() {
     );
 }
 
+/// A minimal valid iTIP free-busy REQUEST (RFC 6638 §5: the outbox `POST`
+/// body MUST be a `VFREEBUSY` component with `METHOD:REQUEST`). The UID is
+/// substituted by the caller for fixture hygiene.
+fn free_busy_request_ics(uid: &str, organizer: &str, attendee: &str) -> String {
+    format!(
+        "BEGIN:VCALENDAR\r\n\
+         VERSION:2.0\r\n\
+         PRODID:-//fast-dav-rs//e2e//EN\r\n\
+         METHOD:REQUEST\r\n\
+         BEGIN:VFREEBUSY\r\n\
+         UID:{uid}\r\n\
+         DTSTAMP:20261004T120000Z\r\n\
+         DTSTART:20261005T000000Z\r\n\
+         DTEND:20261006T000000Z\r\n\
+         ORGANIZER:{organizer}\r\n\
+         ATTENDEE:{attendee}\r\n\
+         END:VFREEBUSY\r\n\
+         END:VCALENDAR\r\n"
+    )
+}
+
+/// The fixture user's `mailto:` calendar user address, as advertised by
+/// `calendar-user-address-set`.
+fn fixture_user_address(endpoints: &fast_dav_rs::caldav::ScheduleEndpoints) -> String {
+    endpoints
+        .user_addresses
+        .iter()
+        .find(|a| a.starts_with("mailto:"))
+        .cloned()
+        .expect("fixture must advertise a mailto: calendar user address")
+}
+
+/// Outbox `POST` of a well-formed iTIP `VFREEBUSY` REQUEST (RFC 6638 §5)
+/// via [`CalDavClient::post_schedule`]. SabreDAV 4.7.1 answers **200 OK**
+/// with a `CALDAV:schedule-response` XML body whose `request-status` is
+/// `2.0;Success` (observed live; RFC 6638 §5.2 allows a 200/204 family
+/// success), so the documented success status is asserted and the body
+/// shape is recorded here.
+#[tokio::test]
+async fn test_outbox_post_well_formed_free_busy_request() {
+    let client = sabredav_caldav_client();
+    let principal = client
+        .discover_current_user_principal()
+        .await
+        .expect("principal discovery PROPFIND")
+        .expect("fixture must advertise the current user principal");
+    let endpoints = client
+        .discover_schedule_endpoints(&principal)
+        .await
+        .expect("schedule endpoints PROPFIND");
+    let outbox = endpoints
+        .outbox
+        .clone()
+        .expect("SabreDAV Schedule plugin must advertise the schedule outbox");
+    let address = fixture_user_address(&endpoints);
+
+    let itip = Bytes::from(free_busy_request_ics(
+        &unique_uid("outbox-fb"),
+        &address,
+        &address,
+    ));
+    let response = client
+        .post_schedule(&outbox, &address, &[&address], itip)
+        .await
+        .expect("well-formed free-busy REQUEST must succeed");
+
+    assert_eq!(
+        response.status.as_u16(),
+        200,
+        "fixture answers the free-busy REQUEST with 200 (schedule-response)"
+    );
+    let body = String::from_utf8_lossy(&response.body).into_owned();
+    assert!(
+        body.contains("schedule-response"),
+        "expected a CALDAV:schedule-response body"
+    );
+    assert!(
+        body.contains("2.0;Success"),
+        "expected request-status 2.0;Success in the schedule response"
+    );
+}
+
+/// Outbox `POST` of a malformed (non-iCalendar) body: the server rejects it
+/// with a non-2xx status — SabreDAV 4.7.1 answers **400 Bad Request** with
+/// a `<D:error>` body (observed live) — which `post_schedule` maps to
+/// `Error::UnexpectedStatus { operation: PostSchedule }`.
+#[tokio::test]
+async fn test_outbox_post_malformed_itip_rejected_on_sabredav() {
+    let client = sabredav_caldav_client();
+    let principal = client
+        .discover_current_user_principal()
+        .await
+        .expect("principal discovery PROPFIND")
+        .expect("fixture must advertise the current user principal");
+    let endpoints = client
+        .discover_schedule_endpoints(&principal)
+        .await
+        .expect("schedule endpoints PROPFIND");
+    let outbox = endpoints
+        .outbox
+        .clone()
+        .expect("SabreDAV Schedule plugin must advertise the schedule outbox");
+    let address = fixture_user_address(&endpoints);
+
+    let err = client
+        .post_schedule(
+            &outbox,
+            &address,
+            &[&address],
+            Bytes::from_static(b"not a calendar at all"),
+        )
+        .await
+        .expect_err("malformed iTIP must be rejected");
+
+    assert!(
+        matches!(
+            err,
+            fast_dav_rs::Error::UnexpectedStatus {
+                operation: fast_dav_rs::Operation::PostSchedule,
+                ref status,
+                ..
+            } if !status.is_success()
+        ),
+        "expected UnexpectedStatus(PostSchedule) with a non-2xx status, got {err:?}"
+    );
+}
+
 /// SabreDAV 4.7.1 does not implement the RFC 6638 §8 schedule-tag
 /// mechanism: scheduling object responses carry no `Schedule-Tag` header
 /// (fixture limitation, verified live), so the conditional round-trip

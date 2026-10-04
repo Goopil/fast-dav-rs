@@ -50,4 +50,5 @@ pub use webdav::{
     WebDavError, build_propfind_allprop, build_propfind_propname, build_propfind_props,
     data_element_xml_with_limits, discover_caldav, discover_carddav, etag_from_headers,
     normalize_etag, normalize_sync_token, preference_applied_from_headers,
+    schedule_tag_from_headers,
 };
