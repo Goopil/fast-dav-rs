@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Schedule-tag retrieval (RFC 6638 §10.1, #248):
+  `schedule_tag_from_headers` extracts the `Schedule-Tag` response header
+  (normalized like `etag_from_headers`; `None` when absent/empty), and
+  `DavItem.schedule_tag` carries the `schedule-tag` property parsed verbatim
+  from multistatus responses. Both feed the existing
+  `put_if_schedule_tag` / `delete_if_schedule_tag` conditional writes
+  (`If-Schedule-Tag-Match`, §8.3).
+
 ## [0.18.0] - 2026-10-04
 
 ### Added

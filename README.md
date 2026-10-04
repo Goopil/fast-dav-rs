@@ -74,7 +74,7 @@ features, and major releases introduce breaking changes when needed.
 
 - CalDAV calendar discovery, queries, and event CRUD.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
-- CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, and `If-Schedule-Tag-Match` conditional writes.
+- CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, schedule-tag retrieval (`Schedule-Tag` header + `schedule-tag` property), and `If-Schedule-Tag-Match` conditional writes.
 - CalDAV `calendar-timezone` read + write (RFC 4791 §5.2.2): per-calendar read and via `CalendarInfo.timezone`; `set_calendar_timezone` stores/removes the property via `PROPPATCH`.
 - CalDAV managed attachments (RFC 8607, sent in the non-IETF CalendarServer collection-targeted form): `post_managed_attachment` stores an attachment via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
 - Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`). CardDAV vCard writes are sent verbatim — no client-side vCard validation.
@@ -493,6 +493,48 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+Schedule-tag retrieval (RFC 6638 §10.1): a scheduling object resource carries
+an opaque `schedule-tag` that the server bumps on attendee-driven changes even
+when the resource data (and its ETag) did not change. Read it from the
+`Schedule-Tag` response header (§10.1.2) or the `schedule-tag` multistatus
+property (§10.1.1) and send it back with the `If-Schedule-Tag-Match`
+conditional writes (§8.3):
+
+```rust,no_run
+use bytes::Bytes;
+use fast_dav_rs::webdav::schedule_tag_from_headers;
+use fast_dav_rs::{CalDavClient, Result};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
+    let ics = Bytes::from("BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n");
+
+    let response = client.get("calendars/work/meeting.ics").await?;
+    if let Some(tag) = schedule_tag_from_headers(response.headers()) {
+        // The token is opaque: treat it as a black box and echo it back.
+        // 412 Precondition Failed means an attendee-driven change landed
+        // in between — reload the event and retry.
+        let status = client
+            .put_if_schedule_tag("calendars/work/meeting.ics", ics, &tag)
+            .await?;
+        println!("conditional PUT returned {}", status.status());
+    }
+    Ok(())
+}
+```
+
+`DavItem.schedule_tag` exposes the same token parsed verbatim from
+multistatus bodies (`PROPFIND` / `calendar-query` / `calendar-multiget`
+responses), for callers that discover the tag through a listing instead of
+a resource GET.
+
+Provider quirks (outbox `POST`): SabreDAV 4.7.1 answers a well-formed
+`VFREEBUSY` REQUEST with `200 OK` and a `CALDAV:schedule-response` XML body
+whose `request-status` is `2.0;Success` (RFC 6638 §5.2 success family), and
+rejects a malformed (non-iCalendar) body with `400 Bad Request` and a
+`<D:error>` body (verified against the fixture).
 
 ### CardDAV contact CRUD
 
