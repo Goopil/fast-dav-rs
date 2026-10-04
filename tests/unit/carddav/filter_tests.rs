@@ -22,6 +22,13 @@ fn collation_ascii_casemap_as_str() {
 }
 
 #[test]
+fn collation_octet_as_str() {
+    // RFC 4790 registry; RFC 6352 §7.3 requires servers to support
+    // `i;ascii-casemap` and `i;octet`.
+    assert_eq!(Collation::Octet.as_str(), "i;octet");
+}
+
+#[test]
 fn collation_default_is_unicode_casemap() {
     assert_eq!(Collation::default(), Collation::UnicodeCasemap);
 }

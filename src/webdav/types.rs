@@ -161,6 +161,10 @@ pub enum Collation {
     UnicodeCasemap,
     /// `i;ascii-casemap` — case-insensitive, ASCII only.
     AsciiCasemap,
+    /// `i;octet` — case-sensitive, byte-wise comparison (RFC 4790
+    /// registry; RFC 6352 §7.3 — servers must support `i;ascii-casemap`
+    /// and `i;octet`).
+    Octet,
 }
 
 impl Collation {
@@ -169,6 +173,7 @@ impl Collation {
         match self {
             Self::UnicodeCasemap => "i;unicode-casemap",
             Self::AsciiCasemap => "i;ascii-casemap",
+            Self::Octet => "i;octet",
         }
     }
 }

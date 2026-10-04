@@ -168,6 +168,25 @@ fn test_build_addressbook_query_filters() {
 }
 
 #[test]
+fn collation_octet_serializes_in_addressbook_query_filter() {
+    // RFC 6352 §7.3: `i;octet` is one of the two collations servers must
+    // support; it must serialize into the text-match attribute.
+    use fast_dav_rs::carddav::types::{Collation, MatchType};
+
+    let filter = fast_dav_rs::carddav::client::build_addressbook_query_filter(
+        "FN",
+        "Ada",
+        Collation::Octet,
+        MatchType::Equals,
+        false,
+    );
+    assert!(
+        filter.contains("collation=\"i;octet\""),
+        "expected collation=\"i;octet\" on the wire, got: {filter}"
+    );
+}
+
+#[test]
 fn test_build_addressbook_multiget_and_escapes() {
     let body = fast_dav_rs::carddav::client::build_addressbook_multiget_body(
         vec![
