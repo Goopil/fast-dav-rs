@@ -213,3 +213,63 @@ fn build_propfind_props_escapes_names_and_namespaces() {
     );
     assert!(!body.contains("<x/>"), "injection possible: {body}");
 }
+
+/// S4.4 — `build_mkcalendar_body` renders the RFC 4791 §9.5 skeleton with
+/// all typed properties.
+#[test]
+fn build_mkcalendar_body_serializes_all_props() {
+    let props = fast_dav_rs::webdav::MkCalendarProps::new()
+        .with_displayname("My Calendar")
+        .with_description("Work events")
+        .with_supported_components(["VEVENT", "VTODO"]);
+    let body = fast_dav_rs::webdav::build_mkcalendar_body(&props).unwrap();
+    assert_eq!(
+        body,
+        "<C:mkcalendar xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\
+<D:set><D:prop><D:displayname>My Calendar</D:displayname>\
+<C:calendar-description>Work events</C:calendar-description>\
+<C:supported-calendar-component-set><C:comp name=\"VEVENT\"/><C:comp name=\"VTODO\"/>\
+</C:supported-calendar-component-set></D:prop></D:set></C:mkcalendar>"
+    );
+}
+
+/// S4.4 — empty props produce the minimal §9.5 skeleton (no
+/// `supported-calendar-component-set` element).
+#[test]
+fn build_mkcalendar_body_empty_props_minimal_skeleton() {
+    let body =
+        fast_dav_rs::webdav::build_mkcalendar_body(&fast_dav_rs::webdav::MkCalendarProps::new())
+            .unwrap();
+    assert_eq!(
+        body,
+        "<C:mkcalendar xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\
+<D:set><D:prop></D:prop></D:set></C:mkcalendar>"
+    );
+}
+
+/// S4.4 — component names in the supported-component set are validated
+/// (ASCII alphanumeric + `-`, non-empty) before any XML is produced.
+#[test]
+fn build_mkcalendar_body_rejects_invalid_component_names() {
+    for bad in ["VE EVENT", "VE;EVENT", "VE<EVENT", "", "ÉVÉNEMENT"] {
+        let props = fast_dav_rs::webdav::MkCalendarProps::new().with_supported_components([bad]);
+        let err = fast_dav_rs::webdav::build_mkcalendar_body(&props).unwrap_err();
+        assert!(
+            matches!(err, fast_dav_rs::Error::InvalidComponentName { .. }),
+            "expected InvalidComponentName for {bad:?}, got: {err:?}"
+        );
+    }
+}
+
+/// S4.4 — displayname and description are escaped so untrusted values
+/// cannot inject markup.
+#[test]
+fn build_mkcalendar_body_escapes_text_values() {
+    let props = fast_dav_rs::webdav::MkCalendarProps::new()
+        .with_displayname("<script>")
+        .with_description("a & b");
+    let body = fast_dav_rs::webdav::build_mkcalendar_body(&props).unwrap();
+    assert!(body.contains("<D:displayname>&lt;script&gt;</D:displayname>"));
+    assert!(body.contains("<C:calendar-description>a &amp; b</C:calendar-description>"));
+    assert!(!body.contains("<script>"));
+}

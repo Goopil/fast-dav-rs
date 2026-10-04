@@ -402,6 +402,132 @@ pub fn build_propfind_props(props: &[(&str, &str)]) -> String {
     format!("<D:propfind {declarations}><D:prop>{children}</D:prop></D:propfind>")
 }
 
+/// Typed properties for a MKCALENDAR request body (RFC 4791 §9.5),
+/// rendered by [`build_mkcalendar_body`] and usable with the existing
+/// [`CalDavClient::mkcalendar`](crate::CalDavClient::mkcalendar) /
+/// [`WebDavClient::mkcol`](crate::WebDavClient::mkcol) methods.
+///
+/// Build with [`MkCalendarProps::new`] plus the `with_*` constructors:
+///
+/// ```
+/// use fast_dav_rs::webdav::MkCalendarProps;
+///
+/// let props = MkCalendarProps::new()
+///     .with_displayname("Work")
+///     .with_description("Work events")
+///     .with_supported_components(["VEVENT", "VTODO"]);
+/// assert_eq!(props.supported_components, ["VEVENT", "VTODO"]);
+/// ```
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct MkCalendarProps {
+    /// `displayname` (RFC 4918 §5.2) of the created collection.
+    pub displayname: Option<String>,
+    /// `calendar-description` (RFC 4791 §5.2.1) of the created calendar.
+    pub description: Option<String>,
+    /// Component names advertised in
+    /// `supported-calendar-component-set` (RFC 4791 §5.2.3), e.g.
+    /// `VEVENT`, `VTODO`. Validated (ASCII alphanumeric + `-`, non-empty)
+    /// by [`build_mkcalendar_body`]; an empty list omits the element
+    /// entirely (the server default applies).
+    pub supported_components: Vec<String>,
+}
+
+impl MkCalendarProps {
+    /// Create empty properties (the minimal §9.5 skeleton is rendered).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the `displayname` of the created collection.
+    pub fn with_displayname(mut self, displayname: impl Into<String>) -> Self {
+        self.displayname = Some(displayname.into());
+        self
+    }
+
+    /// Set the `calendar-description` of the created calendar.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Set the advertised component names (replaces any previous list).
+    pub fn with_supported_components<I, S>(mut self, components: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.supported_components = components.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+/// Build a MKCALENDAR request body (RFC 4791 §9.5):
+/// `<C:mkcalendar><D:set><D:prop>…</D:prop></D:set></C:mkcalendar>` with the
+/// [`MkCalendarProps`] as `<D:prop>` children — `displayname`
+/// (`<D:displayname>`), `description` (`<C:calendar-description>`) and
+/// `supported_components` (`<C:supported-calendar-component-set>` with one
+/// `<C:comp name="…"/>` per name).
+///
+/// `displayname` and `description` are escaped; component names are
+/// validated (ASCII alphanumeric + `-`, non-empty) so untrusted values
+/// cannot alter the request structure. An empty property set renders the
+/// minimal skeleton (empty `<D:prop>`).
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidComponentName`](crate::Error::InvalidComponentName)
+/// when a supported-component name is empty or contains a character outside
+/// ASCII alphanumerics and `-`.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::{MkCalendarProps, build_mkcalendar_body};
+///
+/// let props = MkCalendarProps::new()
+///     .with_displayname("Work")
+///     .with_supported_components(["VEVENT"]);
+/// let body = build_mkcalendar_body(&props)?;
+/// assert!(body.starts_with(
+///     "<C:mkcalendar xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
+/// ));
+/// assert!(body.contains("<D:displayname>Work</D:displayname>"));
+/// assert!(body.contains("<C:comp name=\"VEVENT\"/>"));
+/// # Ok::<(), fast_dav_rs::Error>(())
+/// ```
+pub fn build_mkcalendar_body(props: &MkCalendarProps) -> Result<String> {
+    let mut body = String::from(
+        "<C:mkcalendar xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\
+<D:set><D:prop>",
+    );
+    if let Some(displayname) = &props.displayname {
+        body.push_str(&format!(
+            "<D:displayname>{}</D:displayname>",
+            escape_xml(displayname)
+        ));
+    }
+    if let Some(description) = &props.description {
+        body.push_str(&format!(
+            "<C:calendar-description>{}</C:calendar-description>",
+            escape_xml(description)
+        ));
+    }
+    if !props.supported_components.is_empty() {
+        body.push_str("<C:supported-calendar-component-set>");
+        for name in &props.supported_components {
+            validate_component_name(
+                name,
+                "invalid mkcalendar supported-calendar-component-set component",
+            )?;
+            body.push_str(&format!("<C:comp name=\"{}\"/>", escape_xml(name)));
+        }
+        body.push_str("</C:supported-calendar-component-set>");
+    }
+    body.push_str("</D:prop></D:set></C:mkcalendar>");
+    Ok(body)
+}
+
 /// Render a `<C:text-match>` element.
 ///
 /// CalDAV (RFC 4791 §9.7.5) has no `match-type` attribute and defaults the

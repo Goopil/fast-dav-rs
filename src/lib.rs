@@ -27,10 +27,11 @@ pub use caldav::streaming::{
 // import them from `caldav::` or `carddav::` instead.
 pub use caldav::{
     BatchItem, CalDavClient, CalendarDataLimits, CalendarInfo, CalendarObject,
-    CalendarQueryOptions, DavItem, Depth, InboxItem, ManagedAttachment, MediaType,
+    CalendarQueryOptions, DavItem, Depth, InboxItem, ManagedAttachment, MediaType, MkCalendarProps,
     ScheduleEndpoints, SchedulingResponse, TimeRange, ValidationLevel,
     build_calendar_multiget_body, build_calendar_query_body, build_calendar_query_body_with_limits,
-    map_calendar_list, map_calendar_object, map_calendar_objects, validate_icalendar,
+    build_mkcalendar_body, map_calendar_list, map_calendar_object, map_calendar_objects,
+    validate_icalendar,
 };
 pub use carddav::builder::CardDavClientBuilder;
 pub use carddav::{

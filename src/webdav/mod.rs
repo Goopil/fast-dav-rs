@@ -28,6 +28,6 @@ pub use types::{
     Prefer, Privilege, PropStat, SyncCapability, SyncLevel, WebDavError, parse_dav_header,
 };
 pub use xml::{
-    build_propfind_allprop, build_propfind_propname, build_propfind_props,
-    build_sync_collection_body, data_element_xml_with_limits, escape_xml,
+    MkCalendarProps, build_mkcalendar_body, build_propfind_allprop, build_propfind_propname,
+    build_propfind_props, build_sync_collection_body, data_element_xml_with_limits, escape_xml,
 };
