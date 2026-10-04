@@ -47,7 +47,7 @@ absolute truth.
 5. Item-by-item stream guard on the same 50 MB multistatus as B3 —
    `report_items_stream` (raw engine) and `calendar_query_stream` (typed
    mapping) vs the deprecated `visit` reference; keeps the 0.17 successor
-   paths under regression surveillance.
+   paths under regression surveillance, with memory bounded per item.
 
 ### Baselines (2026-09)
 
@@ -72,6 +72,8 @@ Local reference runs, Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.96 (B1
 | B5 ~50 MB multistatus | deprecated `parse_multistatus_stream_visit` (reference) | 28.117 ms | 0.097 ms |
 | B5 ~50 MB multistatus | `report_items_stream` (raw engine) | 28.581 ms | 0.161 ms |
 | B5 ~50 MB multistatus | `calendar_query_stream` (typed mapping) | 28.673 ms | 0.049 ms |
+
+*B5's `visit` row re-measures B3's `visit` arm on a newer toolchain; compare within-group deltas only, not B3↔B5 rows.*
 
 Reading the numbers:
 

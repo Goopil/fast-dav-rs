@@ -473,6 +473,10 @@ fn bench_b5_items_stream(c: &mut Criterion) {
         });
     });
 
+    // Item-count assert only: the typed stream drops sync-token events by
+    // design (`calendar_query_stream`'s `filter_map` forwards `Item` events
+    // and discards the rest), so the sync-token assert applies to the two raw
+    // arms — the item-count assert proves full consumption.
     group.bench_function("calendar_query_stream", |b| {
         b.to_async(&rt).iter(|| {
             let client = caldav.clone();
