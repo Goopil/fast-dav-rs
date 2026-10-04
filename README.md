@@ -94,6 +94,9 @@ features, and major releases introduce breaking changes when needed.
 - Automatic request compression negotiation (br, zstd, gzip) with overrides.
 - Streaming send APIs for custom workflows.
 - RFC 6764 `.well-known` service discovery (`discover_caldav`/`discover_carddav`).
+  DNS SRV (§3) and TXT (§6) record lookup are deliberately excluded (lean
+  dependency tree — no DNS resolver); callers supply the base URL, and the
+  `.well-known` probes cover the RFC 6764 §5 step plus the §6 base-URL fallback.
 - Retry with exponential backoff for transient failures (429/503/504) with `Retry-After` support.
 - Optional `tracing` instrumentation behind the `tracing` feature (zero-cost when disabled).
 
@@ -179,6 +182,13 @@ directly** — a single credentialed `PROPFIND`, and the primary discovery
 step. The RFC 6764 `.well-known` probes (`discover_caldav` /
 `discover_carddav`) are the fallback for servers that host DAV under a
 context path; some providers answer `.well-known` unreliably.
+
+RFC 6764's DNS-based discovery steps are deliberately not implemented:
+SRV record lookup (§3) and TXT record lookup (§6) are excluded to keep
+the dependency tree lean (no DNS resolver crate). Callers resolve the
+base URL themselves; the `.well-known` probes cover the RFC 6764 §5 step
+and implement the §6 base-URL fallback (`404` on `.well-known` returns
+the base URL).
 
 If authentication succeeds but the principal `PROPFIND` returns `404` (the
 server never answers `401`), discovery fails with `Error::PrincipalNotFound`.
