@@ -5,12 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.18.0] - 2026-10-04
 
 ### Added
 
 - `propfind_items_stream` / `report_items_stream` delegates on `CalDavClient` /
   `CardDavClient` (parity with the `WebDavClient` item streams).
+- **B5** benchmark group (`B5_items_stream_50mb`), CodSpeed-gated (#244): three
+  arms on the ~50 MB B3 fixture — the deprecated `visit` reference, the raw
+  `report_items_stream` engine, and the typed `calendar_query_stream` mapping —
+  guarding the item-by-item successor paths.
 
 ### Deprecated
 
@@ -27,6 +31,14 @@ surface is pruned at 1.0:
 - `sync_collection_resilient` (all clients) — use `SyncSession` (transparent
   stale-token re-sync, truncation paging), or `sync_collection` plus one manual
   re-issue when the token is stale.
+
+### Changed
+
+- Multiget request bodies are sized exactly in one allocation instead of being
+  grown through repeated `push_str` on a scratch buffer (#245). Output is
+  byte-identical; this removes a heap-layout-dependent reallocation that made
+  the 1k-hrefs request-body benchmark bimodal (79.9 µs vs 149.2 µs on identical
+  code) and produced recurring false CodSpeed regression reports (#230, #243).
 
 ## [0.17.0] - 2026-09-10
 
