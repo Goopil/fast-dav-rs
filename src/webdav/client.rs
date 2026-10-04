@@ -175,6 +175,43 @@ pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Extract the `Schedule-Tag` response header (RFC 6638 §10.1.2) from a
+/// response header map, if present.
+///
+/// The schedule-tag is an **opaque** token owned by the server: it changes
+/// whenever an attendee-driven change was processed on a scheduling object
+/// resource, even when the resource's ETag stayed the same. The returned
+/// value is **normalized** like [`normalize_etag`] (surrounding double
+/// quotes stripped) and empty values yield `None`.
+///
+/// Send the value back with
+/// [`put_if_schedule_tag`](crate::CalDavClient::put_if_schedule_tag) /
+/// [`delete_if_schedule_tag`](crate::CalDavClient::delete_if_schedule_tag)
+/// to guard conditional writes with `If-Schedule-Tag-Match`.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::schedule_tag_from_headers;
+/// use hyper::HeaderMap;
+///
+/// let mut headers = HeaderMap::new();
+/// headers.insert("Schedule-Tag", "\"d8a5e-2f1\"".parse().unwrap());
+/// assert_eq!(
+///     schedule_tag_from_headers(&headers).as_deref(),
+///     Some("d8a5e-2f1")
+/// );
+///
+/// assert_eq!(schedule_tag_from_headers(&HeaderMap::new()), None);
+/// ```
+pub fn schedule_tag_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("Schedule-Tag")
+        .and_then(|v| v.to_str().ok())
+        .map(normalize_etag)
+        .filter(|s| !s.is_empty())
+}
+
 /// Extract the `Preference-Applied` response header (RFC 7240 §3) and map it
 /// to a [`Prefer`] preference the client supports.
 ///
