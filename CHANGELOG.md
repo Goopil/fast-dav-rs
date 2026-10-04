@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — 0.19 cycle (RFC punch list #225)
+
+- **CardDAV** limited `address-data` + result limits (#251): `AddressQueryOptions`
+  (`webdav::types`, re-exported at the crate root and under `carddav`) carrying
+  the raw filter XML, the limited `<C:address-data><C:prop name="…"/></C:address-data>`
+  form (RFC 6352 §10.4.2) and the `<D:limit><D:nresults>` cap as the last child
+  (§10.6); `build_addressbook_query_body_with_options` (the legacy
+  `build_addressbook_query_body` now delegates to it, byte-identical output) and
+  `CardDavClient::addressbook_query_options` with pre-I/O prop-name validation
+  (`[A-Za-z0-9-]+`, `Error::InvalidInput`) and stable duplicate dropping.
+- **CardDAV** `Collation::Octet` (`i;octet`) for `text-match` comparisons
+  (RFC 4790 registry; RFC 6352 §7.3 requires servers to support
+  `i;ascii-casemap` and `i;octet`).
+
 ## [0.18.0] - 2026-10-04
 
 ### Added
