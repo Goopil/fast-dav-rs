@@ -33,7 +33,7 @@
 
 ## 5. Recommended benchmarks
 
-Implemented in `benches/performance.rs` with `criterion`; **B1, B3 and B4 are
+Implemented in `benches/performance.rs` with `criterion`; **B1, B3, B4 and B5 are
 CI-gated by CodSpeed** (`.github/workflows/codspeed.yml`, `simulation` + `memory`
 instruments, <1% variance). **B2 stays local-only**: it measures wall-time
 semantics (probe head-of-line blocking, §2.1) that the simulation instrument
@@ -44,15 +44,19 @@ absolute truth.
 2. First-request latency in `Auto` mode, 32 concurrent callers — assert probe HOL elimination.
 3. Aggregated vs `_visit` parse throughput on a 50 MB multistatus — document the real delta to justify the "use `_visit` for large syncs" guidance.
 4. Fresh client per iteration (serverless pattern, §2.3) — connection setup + per-instance probe cost, `Auto` vs `Disabled`.
+5. Item-by-item stream guard on the same 50 MB multistatus as B3 —
+   `report_items_stream` (raw engine) and `calendar_query_stream` (typed
+   mapping) vs the deprecated `visit` reference; keeps the 0.17 successor
+   paths under regression surveillance.
 
 ### Baselines (2026-09)
 
-Local reference run, Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.96, `bench` profile.
+Local reference run, Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.98.1, `bench` profile.
 - Fixture: in-process hyper HTTP/1.1 server on an ephemeral `127.0.0.1` port,
   serving canned 207 multistatus payloads; synthetic XML is generated outside
   the measured closures; no sleeps, server responds immediately.
 - Payload sizes: B1 1k-with-data ≈ 1.8 MB · 1k-etags-only ≈ 0.2 MB ·
-  10k-with-data ≈ 17.8 MB · 10k-etags-only ≈ 2.2 MB; B3 ≈ 50 MB
+  10k-with-data ≈ 17.8 MB · 10k-etags-only ≈ 2.2 MB; B3/B5 ≈ 50 MB
   (5,000 items × ~10 KB of `calendar-data`).
 
 | Scenario | Case | Median | σ |
@@ -65,6 +69,9 @@ Local reference run, Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.96, `be
 | B2 first request, 32 callers | `Disabled` (baseline) | 536 µs | 27 µs |
 | B3 ~50 MB multistatus | aggregated `parse_multistatus_stream` | 29.5 ms | 9.0 ms |
 | B3 ~50 MB multistatus | `parse_multistatus_stream_visit` | 24.2 ms | 0.75 ms |
+| B5 ~50 MB multistatus | deprecated `parse_multistatus_stream_visit` (reference) | 28.117 ms | 0.097 ms |
+| B5 ~50 MB multistatus | `report_items_stream` (raw engine) | 28.581 ms | 0.161 ms |
+| B5 ~50 MB multistatus | `calendar_query_stream` (typed mapping) | 28.673 ms | 0.049 ms |
 
 Reading the numbers:
 
@@ -81,6 +88,11 @@ Reading the numbers:
   aggregated (~18% faster end-to-end), and it never materializes the full item
   list (§1): the aggregated path still buffers every item + data string at
   once. This justifies the "use `_visit` for large syncs" guidance.
+- **B5** — the guard on the successor paths: `items_stream − visit` isolates the
+  `ItemStream`/`multistatus_events` engine vs the callback, and
+  `calendar_query_stream − items_stream` isolates the per-item typed mapping.
+  A regression here means the 0.17 streaming APIs got slower, independently of
+  the legacy parsers B3 keeps tracking until their removal.
 
 ### CI regression gate (CodSpeed)
 
@@ -90,7 +102,7 @@ under two instruments: `simulation` (simulated CPU work — instructions, cache 
 memory behaviour, not wall clock — comparable across CI machines) and `memory`
 (peak heap allocations, one run each). B2 is excluded (see §5).
 
-- `benches/performance.rs` — the B1/B3/B4 client-level scenarios above. They
+- `benches/performance.rs` — the B1/B3/B4/B5 client-level scenarios above. They
   drive real sockets through the in-process fixture, so part of their cost is
   system time the simulator does not model; treat large swings, not
   single-digit percents, as signal.
