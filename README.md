@@ -76,7 +76,7 @@ features, and major releases introduce breaking changes when needed.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
 - CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, and `If-Schedule-Tag-Match` conditional writes.
 - CalDAV `calendar-timezone` read + write (RFC 4791 §5.2.2): per-calendar read and via `CalendarInfo.timezone`; `set_calendar_timezone` stores/removes the property via `PROPPATCH`.
-- CalDAV managed attachments (RFC 8607, sent in the non-IETF CalendarServer collection-targeted form): `post_managed_attachment` stores an attachment via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
+- CalDAV managed attachments (RFC 8607, sent in the non-IETF CalendarServer collection-targeted form): `post_managed_attachment` stores an attachment via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; `put_managed_attachment` / `delete_managed_attachment` update/remove it with the `Cal-Managed-ID` header (§5.2/§5.3); the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
 - Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`). CardDAV vCard writes are sent verbatim — no client-side vCard validation.
 - CardDAV addressbook discovery, queries, and contact CRUD.
 - HTTP/2 with connection pooling and automatic response decompression.
@@ -748,10 +748,11 @@ Feature coverage per fixture — every ✅ cites the e2e test that asserts it
 | LOCK (RFC 4918 class 2) | ✅ | ❌ | ◐ | — |
 | Scheduling (RFC 6638) | ✅ | — | — | — |
 | `calendar-timezone` (RFC 4791 §5.2.2) | — | ✅ | ✅ | — |
+| Managed attachments (RFC 8607) | — | ❌ | — | — |
 | Compression | ✅ | — | — | — |
 | OAuth / Bearer | — | — | — | — |
 
-✅ asserted by an e2e test · ❌ known unsupported (Radicale: `LOCK` → `405` despite an advertised class 2) · ◐ partial (Provider A: unauthenticated smoke-tier probes only; Nextcloud LOCK: asserted on the files tree — the CalDAV tree accepts but does not enforce locks) · — not tested. New providers are added only with a fixture.
+✅ asserted by an e2e test · ❌ known unsupported (Radicale: `LOCK` → `405` despite an advertised class 2; managed attachments: attachment-add `POST` → `405` and a non-iCalendar `PUT` into a calendar → `400` — asserted by e2e) · ◐ partial (Provider A: unauthenticated smoke-tier probes only; Nextcloud LOCK: asserted on the files tree — the CalDAV tree accepts but does not enforce locks) · — not tested. New providers are added only with a fixture.
 
 ## Limitations & Non-Goals
 

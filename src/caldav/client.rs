@@ -1115,10 +1115,158 @@ impl CalDavClient {
             (None, Some(_)) => Err(Error::other("attachment POST returned no Location header")),
         }
     }
+
+    /// Update a stored attachment via **managed attachments** (RFC 8607
+    /// §5.2).
+    ///
+    /// Sends `PUT href` with `body` verbatim as the attachment content, plus
+    /// `Content-Type: content_type` and the `Cal-Managed-ID: managed_id`
+    /// header — the id returned by
+    /// [`post_managed_attachment`](Self::post_managed_attachment), which
+    /// authorizes overwriting the server-stored attachment. `href` must
+    /// already be the attachment resource (the `href` field of the
+    /// [`ManagedAttachment`](crate::caldav::ManagedAttachment) returned by
+    /// the POST); it may be a path or an absolute URI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`](crate::Error::InvalidInput) **before
+    /// any network I/O** when `href` or `managed_id` is empty, when
+    /// `content_type` is empty, or when either cannot form a valid HTTP
+    /// header value. Returns
+    /// [`Error::UnexpectedStatus`](crate::Error::UnexpectedStatus) with
+    /// [`Operation::PutManagedAttachment`](crate::Operation::PutManagedAttachment)
+    /// when the server responds with a non-success status (a stale or
+    /// mismatched `Cal-Managed-ID` is typically a `412`/`403` depending on
+    /// the server).
+    ///
+    /// # Example
+    /// ```no_run
+    /// use fast_dav_rs::{CalDavClient, Result};
+    ///
+    /// # async fn example(client: &CalDavClient, href: &str, managed_id: &str) -> Result<()> {
+    /// client
+    ///     .put_managed_attachment(href, b"updated attachment", "text/plain", managed_id)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn put_managed_attachment(
+        &self,
+        href: &str,
+        body: &[u8],
+        content_type: &str,
+        managed_id: &str,
+    ) -> Result<Response<Bytes>> {
+        if href.is_empty() {
+            return Err(Error::InvalidInput(
+                "managed attachment href must not be empty: pass the attachment resource \
+                 from `ManagedAttachment.href`"
+                    .to_owned(),
+            ));
+        }
+        let content_type_value = managed_attachment_header("content-type", content_type)?;
+        let managed_id_value = managed_attachment_header("managed id", managed_id)?;
+        let mut h = HeaderMap::new();
+        h.insert(header::CONTENT_TYPE, content_type_value);
+        h.insert(MANAGED_ID_HEADER, managed_id_value);
+        let resp = self
+            .send(
+                Method::PUT,
+                href,
+                h,
+                Some(Bytes::copy_from_slice(body)),
+                None,
+            )
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::PutManagedAttachment,
+                status,
+            });
+        }
+        Ok(resp)
+    }
+
+    /// Remove a stored attachment via **managed attachments** (RFC 8607
+    /// §5.3).
+    ///
+    /// Sends `DELETE href` with the `Cal-Managed-ID: managed_id` header —
+    /// the id returned by
+    /// [`post_managed_attachment`](Self::post_managed_attachment), which
+    /// authorizes removing the server-stored attachment. `href` must
+    /// already be the attachment resource (the `href` field of the
+    /// [`ManagedAttachment`](crate::caldav::ManagedAttachment) returned by
+    /// the POST); it may be a path or an absolute URI.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`](crate::Error::InvalidInput) **before
+    /// any network I/O** when `href` or `managed_id` is empty or cannot
+    /// form a valid HTTP header value. Returns
+    /// [`Error::UnexpectedStatus`](crate::Error::UnexpectedStatus) with
+    /// [`Operation::DeleteManagedAttachment`](crate::Operation::DeleteManagedAttachment)
+    /// when the server responds with a non-success status.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use fast_dav_rs::{CalDavClient, Result};
+    ///
+    /// # async fn example(client: &CalDavClient, href: &str, managed_id: &str) -> Result<()> {
+    /// client.delete_managed_attachment(href, managed_id).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn delete_managed_attachment(
+        &self,
+        href: &str,
+        managed_id: &str,
+    ) -> Result<Response<Bytes>> {
+        if href.is_empty() {
+            return Err(Error::InvalidInput(
+                "managed attachment href must not be empty: pass the attachment resource \
+                 from `ManagedAttachment.href`"
+                    .to_owned(),
+            ));
+        }
+        let managed_id_value = managed_attachment_header("managed id", managed_id)?;
+        let mut h = HeaderMap::new();
+        h.insert(MANAGED_ID_HEADER, managed_id_value);
+        let resp = self.send(Method::DELETE, href, h, None, None).await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::DeleteManagedAttachment,
+                status,
+            });
+        }
+        Ok(resp)
+    }
 }
 
 pub fn escape_xml(input: &str) -> String {
     crate::webdav::xml::escape_xml(input)
+}
+
+/// The `Cal-Managed-ID` request header name (RFC 8607 §5.1), sent on
+/// managed-attachment updates/removals to authorize the write.
+const MANAGED_ID_HEADER: header::HeaderName = header::HeaderName::from_static("cal-managed-id");
+
+/// Validate a managed-attachment header value (`content-type` or
+/// `managed id`) and wrap it: an empty value is rejected **before any
+/// network I/O**, so no request reaches the wire on validation failure.
+fn managed_attachment_header(what: &str, value: &str) -> Result<header::HeaderValue> {
+    if value.is_empty() {
+        return Err(Error::InvalidInput(format!(
+            "managed attachment {what} must not be empty"
+        )));
+    }
+    header::HeaderValue::from_str(value).map_err(|err| {
+        Error::InvalidInput(format!(
+            "managed attachment {what} cannot form a valid header value: {err}"
+        ))
+    })
 }
 
 /// RFC 3986 unreserved characters — the safe set for URL query values.

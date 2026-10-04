@@ -47,6 +47,12 @@ observed status/body and assert only the loose shape:
 - **No LOCK**: `OPTIONS /` advertises `DAV: 1, 2, 3`, but a `LOCK` request is
   answered `405 Method Not Allowed`. Clients must not rely on locking even
   when the compliance class is advertised.
+- **No managed attachments (RFC 8607)**: a `POST ?action=attachment-add` to a
+  calendar collection is answered `405 Method Not Allowed`; a `PUT` of
+  non-iCalendar content into a calendar collection is rejected `400`
+  (collection item data is validated, so no attachment resource can exist),
+  and `DELETE` of a never-created attachment resource is `404`. Clients must
+  not rely on `Cal-Managed-ID` semantics here.
 - **Auto-create on first principal access**: on empty storage, the first
   authenticated `PROPFIND` of `/{user}/` succeeds (207) and creates the
   principal collection tree — no `MKCOL` needed. Arbitrary nonexistent paths
