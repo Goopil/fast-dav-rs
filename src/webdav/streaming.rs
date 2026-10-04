@@ -204,6 +204,14 @@ impl CommonParser {
             ElementName::Response,
             ElementName::Propstat,
             ElementName::Prop,
+            ElementName::PrincipalUrl,
+            ElementName::Href,
+        ]) {
+            self.current.principal_url = Some(trimmed.to_string());
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
             ElementName::Owner,
             ElementName::Href,
         ]) {
@@ -324,6 +332,7 @@ pub enum ElementName {
     ManagedId,
     CurrentUserPrivilegeSet,
     Privilege,
+    PrincipalUrl,
 }
 
 /// Map a raw XML element name (`prefix:local` or `local`) to an
@@ -415,6 +424,8 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
         ElementName::CurrentUserPrivilegeSet
     } else if local.eq_ignore_ascii_case(b"privilege") {
         ElementName::Privilege
+    } else if local.eq_ignore_ascii_case(b"principal-url") {
+        ElementName::PrincipalUrl
     } else if local.eq_ignore_ascii_case(b"owner") {
         ElementName::Owner
     } else if local.eq_ignore_ascii_case(b"getcontenttype") {
@@ -1869,6 +1880,19 @@ mod tests {
             resp.current_user_principal,
             vec!["/principals/me/".to_string()]
         );
+    }
+
+    #[test]
+    fn on_text_sets_principal_url() {
+        let mut parser = CommonParser::new();
+        parser.on_start(b"D:response");
+        parser.on_start(b"D:propstat");
+        parser.on_start(b"D:prop");
+        parser.on_start(b"D:principal-URL");
+        parser.on_start(b"D:href");
+        parser.on_text("/principals/me/");
+        let resp = parser.finish_response();
+        assert_eq!(resp.principal_url.as_deref(), Some("/principals/me/"));
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub mod discovery_tests;
 pub mod locking_tests;
 pub mod mkcol_tests;
 pub mod prefer_tests;
+pub mod principal_url_tests;
 pub mod privileges_tests;
 pub mod protocol_tests;
 pub mod redirect_tests;
