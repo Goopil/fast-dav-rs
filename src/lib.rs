@@ -26,9 +26,9 @@ pub use caldav::streaming::{
 // NOT re-exported here: CalDAV and CardDAV define distinct same-named items —
 // import them from `caldav::` or `carddav::` instead.
 pub use caldav::{
-    BatchItem, CalDavClient, CalendarInfo, CalendarObject, DavItem, Depth, InboxItem,
-    ManagedAttachment, MediaType, ScheduleEndpoints, SchedulingResponse, ValidationLevel,
-    build_calendar_multiget_body, build_calendar_query_body, map_calendar_list,
+    BatchItem, CalDavClient, CalendarDataLimits, CalendarInfo, CalendarObject, DavItem, Depth,
+    InboxItem, ManagedAttachment, MediaType, ScheduleEndpoints, SchedulingResponse, TimeRange,
+    ValidationLevel, build_calendar_multiget_body, build_calendar_query_body, map_calendar_list,
     map_calendar_object, map_calendar_objects, validate_icalendar,
 };
 pub use carddav::builder::CardDavClientBuilder;
@@ -45,6 +45,6 @@ pub use webdav::{
     DavCapabilities, DavCompliance, DavStreamEvent, HyperClient, ItemStream, LockInfo, LockScope,
     OAuth2RefreshProvider, Prefer, Privilege, PropStat, RequestCompressionMode, SyncCapability,
     SyncDelta, SyncEntry, SyncLevel, SyncSession, SyncSnapshot, TokenProvider, WebDavClient,
-    WebDavError, discover_caldav, discover_carddav, etag_from_headers, normalize_etag,
-    normalize_sync_token, preference_applied_from_headers,
+    WebDavError, data_element_xml_with_limits, discover_caldav, discover_carddav,
+    etag_from_headers, normalize_etag, normalize_sync_token, preference_applied_from_headers,
 };

@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::caldav::types::TimeRange;
 use crate::webdav::xml;
 
 /// Outcome of the WebDAV-Sync (RFC 6578) support probe.
@@ -920,4 +921,62 @@ pub(crate) fn map_sync_rows(
     }
 
     (sync_token, out, truncated)
+}
+
+/// Data-return limits for a CalDAV `calendar-data` element
+/// (RFC 4791 §9.6.4): restrict the recurrence expansions or the free-busy
+/// periods the server materializes to a given window.
+///
+/// Each limit is an optional [`TimeRange`]. When a range is set, both its
+/// `start` and `end` bounds are serialized as the mandatory
+/// `start`/`end` attributes of the corresponding element
+/// (`<C:limit-recurrence-set>` / `<C:limit-freebusy-set>`); ranges without an
+/// `end` are rejected by [`CalDavClient::calendar_query_options`](crate::CalDavClient::calendar_query_options)
+/// before any network I/O (RFC 4791 §9.6.4 declares both attributes
+/// `#REQUIRED`).
+///
+/// Build with [`CalendarDataLimits::new`] plus the `with_*` constructors:
+///
+/// ```
+/// use fast_dav_rs::{TimeRange, webdav::CalendarDataLimits};
+///
+/// let limits = CalendarDataLimits::new()
+///     .with_recurrence_set(TimeRange::new("20240101T000000Z").with_end("20241231T235959Z"));
+/// assert!(limits.recurrence_set.is_some());
+/// assert!(limits.freebusy_set.is_none());
+/// ```
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct CalendarDataLimits {
+    /// Window restricting the recurrence expansions returned for recurring
+    /// components (`limit-recurrence-set`).
+    pub recurrence_set: Option<TimeRange>,
+    /// Window restricting the free-busy periods returned for `VFREEBUSY`
+    /// data (`limit-freebusy-set`).
+    pub freebusy_set: Option<TimeRange>,
+}
+
+impl CalendarDataLimits {
+    /// Create empty limits (no `limit-recurrence-set`, no
+    /// `limit-freebusy-set` element is serialized).
+    pub fn new() -> Self {
+        Self {
+            recurrence_set: None,
+            freebusy_set: None,
+        }
+    }
+
+    /// Restrict the returned recurrence expansions to `range`
+    /// (`<C:limit-recurrence-set start=… end=…/>`).
+    pub fn with_recurrence_set(mut self, range: TimeRange) -> Self {
+        self.recurrence_set = Some(range);
+        self
+    }
+
+    /// Restrict the returned free-busy periods to `range`
+    /// (`<C:limit-freebusy-set start=… end=…/>`).
+    pub fn with_freebusy_set(mut self, range: TimeRange) -> Self {
+        self.freebusy_set = Some(range);
+        self
+    }
 }

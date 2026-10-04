@@ -1,4 +1,5 @@
-use crate::webdav::types::{Collation, MatchType, SyncLevel};
+use crate::caldav::types::TimeRange;
+use crate::webdav::types::{CalendarDataLimits, Collation, MatchType, SyncLevel};
 use crate::{Error, Result};
 
 pub fn escape_xml(input: &str) -> String {
@@ -85,20 +86,99 @@ pub(crate) fn validate_utc_datetime(value: &str, context: &str) -> Result<()> {
 /// `data_element` is an XML element name; it is escaped so a hostile value
 /// cannot inject markup (a server will reject the resulting ill-formed name).
 pub(crate) fn data_element_xml(data_element: &str, expand: Option<(&str, Option<&str>)>) -> String {
+    data_element_xml_inner(data_element, expand, None)
+}
+
+/// Render a CalDAV/CardDAV data element with optional data-return limits
+/// (RFC 4791 §9.6.4): `<C:limit-recurrence-set start="…" end="…"/>` and/or
+/// `<C:limit-freebusy-set start="…" end="…"/>`, serialized inside the data
+/// element **after** `<C:expand>` (RFC 4791 §9.6 DTD order:
+/// `expand?, limit-recurrence-set?, limit-freebusy-set?`).
+///
+/// Like [`data_element_xml`], this is a pure renderer: the values are escaped
+/// so untrusted input cannot inject markup, but the DTD constraints (both
+/// `start` and `end` are `#REQUIRED` on the limit elements, `end` after
+/// `start`) are enforced by the validating entry point
+/// [`CalDavClient::calendar_query_options`](crate::CalDavClient::calendar_query_options),
+/// not here. A limit range without `end` renders with the `end` attribute
+/// omitted.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::{TimeRange, webdav::{CalendarDataLimits, xml::data_element_xml_with_limits}};
+///
+/// let limits = CalendarDataLimits::new()
+///     .with_recurrence_set(TimeRange::new("20240101T000000Z").with_end("20241231T235959Z"));
+/// let xml = data_element_xml_with_limits(
+///     "calendar-data",
+///     Some(("20240101T000000Z", "20240301T000000Z")),
+///     Some(&limits),
+/// );
+/// assert!(xml.starts_with("<C:calendar-data><C:expand"));
+/// assert!(xml.contains("<C:limit-recurrence-set start=\"20240101T000000Z\" end=\"20241231T235959Z\"/>"));
+/// assert!(xml.ends_with("</C:calendar-data>"));
+/// ```
+pub fn data_element_xml_with_limits(
+    data_element: &str,
+    expand: Option<(&str, &str)>,
+    limits: Option<&CalendarDataLimits>,
+) -> String {
+    data_element_xml_inner(data_element, expand.map(|(s, e)| (s, Some(e))), limits)
+}
+
+/// Shared core behind [`data_element_xml`] and
+/// [`data_element_xml_with_limits`].
+fn data_element_xml_inner(
+    data_element: &str,
+    expand: Option<(&str, Option<&str>)>,
+    limits: Option<&CalendarDataLimits>,
+) -> String {
     let data_element = escape_xml(data_element);
-    let Some((start, end)) = expand else {
-        return format!("<C:{data_element}/>");
+    let mut out = match expand {
+        None => {
+            let has_limits =
+                limits.is_some_and(|l| l.recurrence_set.is_some() || l.freebusy_set.is_some());
+            if !has_limits {
+                // Bare element with nothing inside: keep the historical
+                // self-closing form byte-identical.
+                return format!("<C:{data_element}/>");
+            }
+            format!("<C:{data_element}>")
+        }
+        Some((start, end)) => {
+            let mut out = format!(
+                "<C:{data_element}><C:expand start=\"{}\"",
+                escape_xml(start)
+            );
+            if let Some(e) = end {
+                out.push_str(&format!(" end=\"{}\"", escape_xml(e)));
+            }
+            out.push_str("/>");
+            out
+        }
     };
-    let mut out = format!(
-        "<C:{data_element}><C:expand start=\"{}\"",
-        escape_xml(start)
-    );
-    if let Some(e) = end {
-        out.push_str(&format!(" end=\"{}\"", escape_xml(e)));
+    if let Some(limits) = limits {
+        if let Some(range) = &limits.recurrence_set {
+            out.push_str(&limit_element_xml("limit-recurrence-set", range));
+        }
+        if let Some(range) = &limits.freebusy_set {
+            out.push_str(&limit_element_xml("limit-freebusy-set", range));
+        }
     }
-    out.push_str("/></C:");
+    out.push_str("</C:");
     out.push_str(&data_element);
     out.push('>');
+    out
+}
+
+/// Render one `limit-*` element (RFC 4791 §9.6.4) from a time-range.
+fn limit_element_xml(element: &str, range: &TimeRange) -> String {
+    let mut out = format!("<C:{element} start=\"{}\"", escape_xml(&range.start));
+    if let Some(end) = &range.end {
+        out.push_str(&format!(" end=\"{}\"", escape_xml(end)));
+    }
+    out.push_str("/>");
     out
 }
 
