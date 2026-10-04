@@ -51,7 +51,7 @@ absolute truth.
 
 ### Baselines (2026-09)
 
-Local reference run, Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.98.1, `bench` profile.
+Local reference runs, Apple M2 Max (12 cores, 32 GB), macOS 26.6, rustc 1.96 (B1–B4, 2026-09) / macOS 26.6.2, rustc 1.98.1 (B5, 2026-10), `bench` profile.
 - Fixture: in-process hyper HTTP/1.1 server on an ephemeral `127.0.0.1` port,
   serving canned 207 multistatus payloads; synthetic XML is generated outside
   the measured closures; no sleeps, server responds immediately.
