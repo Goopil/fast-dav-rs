@@ -811,6 +811,11 @@ pub struct DavItem {
     /// was not requested or the server omitted it.
     pub current_user_privileges: Vec<Privilege>,
     pub current_user_principal: Vec<String>,
+    /// `principal-URL` href (RFC 3744 §4.2) — a legacy principal property:
+    /// RFC 5397 §3's `current-user-principal` superseded it for discovery,
+    /// so this is populated only when the server still returns the property
+    /// (some servers echo it in principal PROPFINDs).
+    pub principal_url: Option<String>,
     pub owner: Option<String>,
     pub calendar_description: Option<String>,
     pub calendar_timezone: Option<String>,
@@ -855,6 +860,7 @@ impl DavItem {
             managed_ids: Vec::new(),
             current_user_privileges: Vec::new(),
             current_user_principal: Vec::new(),
+            principal_url: None,
             owner: None,
             calendar_description: None,
             calendar_timezone: None,
@@ -885,6 +891,10 @@ pub struct DavItemCommon {
     pub is_collection: bool,
     pub sync_token: Option<String>,
     pub current_user_principal: Vec<String>,
+    /// `principal-URL` href (RFC 3744 §4.2) — legacy principal property
+    /// superseded by `current-user-principal` (RFC 5397 §3) for discovery;
+    /// populated when the server returns it.
+    pub principal_url: Option<String>,
     pub owner: Option<String>,
     pub content_type: Option<String>,
     pub last_modified: Option<String>,
@@ -905,6 +915,7 @@ macro_rules! apply_common_fields {
         $self.is_collection = $common.is_collection;
         $self.sync_token = $common.sync_token;
         $self.current_user_principal = $common.current_user_principal;
+        $self.principal_url = $common.principal_url;
         $self.owner = $common.owner;
         $self.content_type = $common.content_type;
         $self.last_modified = $common.last_modified;

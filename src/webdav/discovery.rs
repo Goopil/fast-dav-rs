@@ -13,8 +13,13 @@
 //! is not `https://` fails the probe with
 //! [`Error::InvalidInput`](crate::Error::InvalidInput).
 //!
-//! DNS SRV record lookup (RFC 6764 §3/§6 step 2) is not implemented — the
-//! caller supplies the base URL.
+//! DNS-based service discovery (RFC 6764) is deliberately **out of scope**:
+//! SRV record lookup (§3) and TXT record lookup (§6) are not implemented —
+//! the caller supplies the base URL. This keeps the dependency tree lean (no
+//! DNS resolver crate); the `.well-known` probes below cover RFC 6764 §5,
+//! the discovery step the RFC itself falls back to when DNS records are
+//! absent, and `current-user-principal` bootstrapping covers the common
+//! authenticated case without any DNS hop.
 //!
 //! # Discovery order
 //!
@@ -157,7 +162,12 @@ async fn discover_well_known(
 /// allows servers to require authentication before redirecting; on
 /// cross-origin redirect hops they are stripped automatically.
 ///
-/// DNS SRV record lookup (RFC 6764 §3) is not part of this API.
+/// DNS-based service discovery is not part of this API: SRV record lookup
+/// (RFC 6764 §3) and TXT record lookup (RFC 6764 §6) are deliberately
+/// excluded to keep the dependency tree lean (no DNS resolver crate). The
+/// `.well-known` probe below covers RFC 6764 §5; supply the base URL the
+/// SRV/TXT records would have resolved to (or rely on the §6 fallback,
+/// which this probe implements by returning the base URL on `404`).
 ///
 /// # Example
 ///
@@ -185,6 +195,9 @@ pub async fn discover_caldav(client: &WebDavClient) -> Result<String> {
 /// [`Error::UnexpectedStatus`] with [`Operation::DiscoverWellKnownCarddav`]
 /// (a 3xx that could not be followed fails with a descriptive error
 /// instead — see [`discover_caldav`]).
+///
+/// Like [`discover_caldav`], DNS SRV (RFC 6764 §3) and TXT (§6) record
+/// lookup are excluded — the caller supplies the base URL.
 ///
 /// # Example
 ///

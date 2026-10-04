@@ -1584,7 +1584,18 @@ impl WebDavClient {
         .await
     }
 
-    /// Send a WebDAV `MKCOL` to create a generic collection. Some servers accept an optional XML body.
+    /// Send a WebDAV `MKCOL` to create a generic collection.
+    ///
+    /// RFC 4918 §9.1: success is `201 Created`; other statuses (405 on an
+    /// existing resource, 409, 415, 507, …) are **not** mapped to errors —
+    /// the raw response is returned and the caller inspects its status.
+    /// This includes a server-dependent `207` multi-status: RFC 4918 defines
+    /// no 207 for MKCOL, and it is passed through untouched (never mistaken
+    /// for success — the caller sees the status and any error propstat).
+    ///
+    /// `xml_body` sends an RFC 5689 extended-MKCOL body with
+    /// `Content-Type: application/xml` for servers that accept it (e.g.
+    /// creating a typed collection in one request).
     pub async fn mkcol(&self, path: &str, xml_body: Option<&str>) -> Result<Response<Bytes>> {
         let mut h = HeaderMap::new();
         let body = xml_body.map(|s| {

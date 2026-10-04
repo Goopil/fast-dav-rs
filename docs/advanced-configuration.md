@@ -203,7 +203,11 @@ except a 3xx that could not be followed (redirect following disabled, unresolvab
 credentials are attached to the probe and stripped
 automatically on cross-origin redirect hops, and the discovered service URL is returned
 without userinfo (redirect targets are server-controlled; see "Base-URL credentials are
-rejected"). DNS SRV record lookup (RFC 6764 §3) is not
+rejected"). RFC 6764's DNS-based discovery steps are deliberately out of scope: SRV
+record lookup (§3) and TXT record lookup (§6) are excluded to keep the dependency tree
+lean (no DNS resolver crate). Supply the base URL the DNS records would have resolved
+to — the `.well-known` probe above covers the RFC 6764 §5 step and implements the §6
+base-URL fallback (a `404` returns the base URL). DNS SRV/TXT record lookup is not
 implemented:
 
 ```rust
