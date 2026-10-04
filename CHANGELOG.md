@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added — 0.19 cycle (RFC punch list #225)
 
+- Request-body builders (#250):
+  - PROPFIND helpers (RFC 4918 §9.1): `build_propfind_allprop`,
+    `build_propfind_propname` and `build_propfind_props` (explicit
+    `(namespace, local-name)` list with root-level namespace declarations and
+    escaping).
+  - Typed MKCALENDAR body (RFC 4791 §9.5): `MkCalendarProps` +
+    `build_mkcalendar_body` (validated component names, escaped text values,
+    minimal skeleton for an empty property set).
+  - Calendar-data limits (RFC 4791 §9.6.4): `CalendarDataLimits` and
+    `data_element_xml_with_limits` (`limit-recurrence-set` /
+    `limit-freebusy-set` inside `<C:calendar-data>`, after `<C:expand>`), plus
+    `build_calendar_query_body_with_limits`.
+- `CalDavClient::calendar_query_options` with the extensible
+  `CalendarQueryOptions` struct (component, filter window, data inclusion,
+  server-side expansion, data-return limits) — new options are added to the
+  struct instead of new positional method variants.
 - **CardDAV** limited `address-data` + result limits (#251): `AddressQueryOptions`
   (`webdav::types`, re-exported at the crate root and under `carddav`) carrying
   the raw filter XML, the limited `<C:address-data><C:prop name="…"/></C:address-data>`

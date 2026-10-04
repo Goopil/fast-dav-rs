@@ -1,4 +1,7 @@
-use crate::webdav::types::{Collation, MatchType, SyncLevel};
+use crate::caldav::types::TimeRange;
+use crate::webdav::types::{
+    CalendarDataLimits, CalendarQueryOptions, Collation, MatchType, SyncLevel,
+};
 use crate::{Error, Result};
 
 pub fn escape_xml(input: &str) -> String {
@@ -85,18 +88,87 @@ pub(crate) fn validate_utc_datetime(value: &str, context: &str) -> Result<()> {
 /// `data_element` is an XML element name; it is escaped so a hostile value
 /// cannot inject markup (a server will reject the resulting ill-formed name).
 pub(crate) fn data_element_xml(data_element: &str, expand: Option<(&str, Option<&str>)>) -> String {
+    data_element_xml_inner(data_element, expand, None)
+}
+
+/// Render a CalDAV/CardDAV data element with optional data-return limits
+/// (RFC 4791 §9.6.4): `<C:limit-recurrence-set start="…" end="…"/>` and/or
+/// `<C:limit-freebusy-set start="…" end="…"/>`, serialized inside the data
+/// element **after** `<C:expand>` (RFC 4791 §9.6 DTD order:
+/// `expand?, limit-recurrence-set?, limit-freebusy-set?`).
+///
+/// Like [`data_element_xml`], this is a pure renderer: the values are escaped
+/// so untrusted input cannot inject markup, but the DTD constraints (both
+/// `start` and `end` are `#REQUIRED` on the limit elements, `end` after
+/// `start`) are enforced by the validating entry point
+/// [`CalDavClient::calendar_query_options`](crate::CalDavClient::calendar_query_options),
+/// not here. A limit range without `end` renders with the `end` attribute
+/// omitted.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::{TimeRange, webdav::{CalendarDataLimits, xml::data_element_xml_with_limits}};
+///
+/// let limits = CalendarDataLimits::new()
+///     .with_recurrence_set(TimeRange::new("20240101T000000Z").with_end("20241231T235959Z"));
+/// let xml = data_element_xml_with_limits(
+///     "calendar-data",
+///     Some(("20240101T000000Z", "20240301T000000Z")),
+///     Some(&limits),
+/// );
+/// assert!(xml.starts_with("<C:calendar-data><C:expand"));
+/// assert!(xml.contains("<C:limit-recurrence-set start=\"20240101T000000Z\" end=\"20241231T235959Z\"/>"));
+/// assert!(xml.ends_with("</C:calendar-data>"));
+/// ```
+pub fn data_element_xml_with_limits(
+    data_element: &str,
+    expand: Option<(&str, &str)>,
+    limits: Option<&CalendarDataLimits>,
+) -> String {
+    data_element_xml_inner(data_element, expand.map(|(s, e)| (s, Some(e))), limits)
+}
+
+/// Shared core behind [`data_element_xml`] and
+/// [`data_element_xml_with_limits`].
+fn data_element_xml_inner(
+    data_element: &str,
+    expand: Option<(&str, Option<&str>)>,
+    limits: Option<&CalendarDataLimits>,
+) -> String {
     let data_element = escape_xml(data_element);
-    let Some((start, end)) = expand else {
-        return format!("<C:{data_element}/>");
+    let mut out = match expand {
+        None => {
+            let has_limits =
+                limits.is_some_and(|l| l.recurrence_set.is_some() || l.freebusy_set.is_some());
+            if !has_limits {
+                // Bare element with nothing inside: keep the historical
+                // self-closing form byte-identical.
+                return format!("<C:{data_element}/>");
+            }
+            format!("<C:{data_element}>")
+        }
+        Some((start, end)) => {
+            let mut out = format!(
+                "<C:{data_element}><C:expand start=\"{}\"",
+                escape_xml(start)
+            );
+            if let Some(e) = end {
+                out.push_str(&format!(" end=\"{}\"", escape_xml(e)));
+            }
+            out.push_str("/>");
+            out
+        }
     };
-    let mut out = format!(
-        "<C:{data_element}><C:expand start=\"{}\"",
-        escape_xml(start)
-    );
-    if let Some(e) = end {
-        out.push_str(&format!(" end=\"{}\"", escape_xml(e)));
+    if let Some(limits) = limits {
+        if let Some(range) = &limits.recurrence_set {
+            out.push_str(&limit_element_xml("limit-recurrence-set", range));
+        }
+        if let Some(range) = &limits.freebusy_set {
+            out.push_str(&limit_element_xml("limit-freebusy-set", range));
+        }
     }
-    out.push_str("/></C:");
+    out.push_str("</C:");
     out.push_str(&data_element);
     out.push('>');
     out
@@ -107,6 +179,16 @@ pub(crate) fn data_element_xml(data_element: &str, expand: Option<(&str, Option<
 /// (RFC 6578 §3.3) and the `addressbook-query` REPORT (RFC 6352 §10.6).
 pub(crate) fn limit_nresults_xml(limit: u32) -> String {
     format!("<D:limit><D:nresults>{limit}</D:nresults></D:limit>")
+}
+
+/// Render one `limit-*` element (RFC 4791 §9.6.4) from a time-range.
+fn limit_element_xml(element: &str, range: &TimeRange) -> String {
+    let mut out = format!("<C:{element} start=\"{}\"", escape_xml(&range.start));
+    if let Some(end) = &range.end {
+        out.push_str(&format!(" end=\"{}\"", escape_xml(end)));
+    }
+    out.push_str("/>");
+    out
 }
 
 /// Build a `sync-collection` REPORT body (RFC 6578 §3.3).
@@ -165,6 +247,290 @@ pub fn build_sync_collection_body(
     }
     body.push_str("</D:sync-collection>");
     body
+}
+
+/// Build a `calendar-query` REPORT body (RFC 4791 §7.8) from structured
+/// options, with optional data-return limits (RFC 4791 §9.6.4).
+///
+/// Pure XML renderer: no validation happens here. The validating entry point
+/// is [`CalDavClient::calendar_query_options`](crate::CalDavClient::calendar_query_options),
+/// which rejects invalid component names, UTC date-times, and limit windows
+/// before any network I/O.
+///
+/// The `<C:calendar-data>` element is included when `include_data` is set —
+/// and implied when `expand` or `limits` is set (a server cannot expand or
+/// limit data it does not return).
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::{TimeRange, caldav::CalendarQueryOptions, webdav::CalendarDataLimits};
+///
+/// let options = CalendarQueryOptions::new("VEVENT")
+///     .with_start("20240101T000000Z")
+///     .with_end("20240201T000000Z")
+///     .with_limits(
+///         CalendarDataLimits::new()
+///             .with_recurrence_set(TimeRange::new("20240101T000000Z").with_end("20241231T235959Z")),
+///     );
+/// let body = fast_dav_rs::caldav::build_calendar_query_body_with_limits(&options);
+/// assert!(body.contains("<C:limit-recurrence-set start=\"20240101T000000Z\" end=\"20241231T235959Z\"/>"));
+/// assert!(body.contains("<C:calendar-data><C:limit-recurrence-set"));
+/// ```
+pub fn build_calendar_query_body_with_limits(options: &CalendarQueryOptions) -> String {
+    let mut prop = String::from("<D:prop><D:getetag/>");
+    if options.include_data || options.expand.is_some() || options.limits.is_some() {
+        prop.push_str(&data_element_xml_inner(
+            "calendar-data",
+            options
+                .expand
+                .as_ref()
+                .map(|tr| (tr.start.as_str(), tr.end.as_deref())),
+            options.limits.as_ref(),
+        ));
+    }
+    prop.push_str("</D:prop>");
+
+    let mut filter = format!(
+        "<C:filter>\
+           <C:comp-filter name=\"VCALENDAR\">\
+             <C:comp-filter name=\"{}\">",
+        escape_xml(&options.component)
+    );
+    if options.start.is_some() || options.end.is_some() {
+        filter.push_str("<C:time-range");
+        if let Some(s) = &options.start {
+            filter.push_str(&format!(" start=\"{}\"", escape_xml(s)));
+        }
+        if let Some(e) = &options.end {
+            filter.push_str(&format!(" end=\"{}\"", escape_xml(e)));
+        }
+        filter.push_str("/>");
+    }
+    filter.push_str("</C:comp-filter></C:comp-filter></C:filter>");
+
+    format!(
+        r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">{prop}{filter}</C:calendar-query>"#
+    )
+}
+
+/// Build a PROPFIND request body requesting **all** properties
+/// (RFC 4918 §9.1, `<D:allprop/>`).
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::build_propfind_allprop;
+///
+/// assert_eq!(
+///     build_propfind_allprop(),
+///     "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>"
+/// );
+/// ```
+pub fn build_propfind_allprop() -> String {
+    "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>".to_owned()
+}
+
+/// Build a PROPFIND request body requesting property **names** only
+/// (RFC 4918 §9.1, `<D:propname/>`) — the server returns the list of
+/// properties defined on each resource without their values.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::build_propfind_propname;
+///
+/// assert_eq!(
+///     build_propfind_propname(),
+///     "<D:propfind xmlns:D=\"DAV:\"><D:propname/></D:propfind>"
+/// );
+/// ```
+pub fn build_propfind_propname() -> String {
+    "<D:propfind xmlns:D=\"DAV:\"><D:propname/></D:propfind>".to_owned()
+}
+
+/// Build a PROPFIND request body requesting a specific property list
+/// (RFC 4918 §9.1, `<D:prop>`).
+///
+/// `props` carries `(namespace, local-name)` pairs. Namespace declarations
+/// are grouped on the `<D:propfind>` root: `DAV:` uses the conventional
+/// `D:` prefix, any other namespace gets a sequential `ns1`, `ns2`, … prefix
+/// bound once on first appearance. Namespace URIs and local names are
+/// escaped so untrusted values cannot inject markup. An empty namespace
+/// renders an unprefixed child (a property in no namespace).
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::build_propfind_props;
+///
+/// let body = build_propfind_props(&[
+///     ("DAV:", "displayname"),
+///     ("urn:ietf:params:xml:ns:caldav", "calendar-description"),
+/// ]);
+/// assert!(body.starts_with(
+///     "<D:propfind xmlns:D=\"DAV:\" xmlns:ns1=\"urn:ietf:params:xml:ns:caldav\">"
+/// ));
+/// assert!(body.contains("<D:displayname/>"));
+/// assert!(body.contains("<ns1:calendar-description/>"));
+/// ```
+pub fn build_propfind_props(props: &[(&str, &str)]) -> String {
+    // Namespace-prefix bindings in first-appearance order; `DAV:` is bound
+    // to the conventional `D` prefix up front, further namespaces get `ns1`,
+    // `ns2`, … and are declared once on the root element.
+    let mut bindings: Vec<(&str, String)> = vec![("DAV:", "D".to_owned())];
+    let mut declarations = String::from("xmlns:D=\"DAV:\"");
+    let mut children = String::with_capacity(props.len() * 16);
+    for (namespace, name) in props {
+        let prefix = match bindings.iter().position(|(ns, _)| ns == namespace) {
+            Some(index) => bindings[index].1.as_str(),
+            None => {
+                let prefix = if namespace.is_empty() {
+                    String::new()
+                } else {
+                    format!("ns{}", bindings.len())
+                };
+                if !namespace.is_empty() {
+                    declarations
+                        .push_str(&format!(" xmlns:{prefix}=\"{}\"", escape_xml(namespace)));
+                }
+                bindings.push((namespace, prefix));
+                bindings.last().unwrap().1.as_str()
+            }
+        };
+        if prefix.is_empty() {
+            children.push_str(&format!("<{}/>", escape_xml(name)));
+        } else {
+            children.push_str(&format!("<{prefix}:{}/>", escape_xml(name)));
+        }
+    }
+    format!("<D:propfind {declarations}><D:prop>{children}</D:prop></D:propfind>")
+}
+
+/// Typed properties for a MKCALENDAR request body (RFC 4791 §9.5),
+/// rendered by [`build_mkcalendar_body`] and usable with the existing
+/// [`CalDavClient::mkcalendar`](crate::CalDavClient::mkcalendar) /
+/// [`WebDavClient::mkcol`](crate::WebDavClient::mkcol) methods.
+///
+/// Build with [`MkCalendarProps::new`] plus the `with_*` constructors:
+///
+/// ```
+/// use fast_dav_rs::webdav::MkCalendarProps;
+///
+/// let props = MkCalendarProps::new()
+///     .with_displayname("Work")
+///     .with_description("Work events")
+///     .with_supported_components(["VEVENT", "VTODO"]);
+/// assert_eq!(props.supported_components, ["VEVENT", "VTODO"]);
+/// ```
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct MkCalendarProps {
+    /// `displayname` (RFC 4918 §5.2) of the created collection.
+    pub displayname: Option<String>,
+    /// `calendar-description` (RFC 4791 §5.2.1) of the created calendar.
+    pub description: Option<String>,
+    /// Component names advertised in
+    /// `supported-calendar-component-set` (RFC 4791 §5.2.3), e.g.
+    /// `VEVENT`, `VTODO`. Validated (ASCII alphanumeric + `-`, non-empty)
+    /// by [`build_mkcalendar_body`]; an empty list omits the element
+    /// entirely (the server default applies).
+    pub supported_components: Vec<String>,
+}
+
+impl MkCalendarProps {
+    /// Create empty properties (the minimal §9.5 skeleton is rendered).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the `displayname` of the created collection.
+    pub fn with_displayname(mut self, displayname: impl Into<String>) -> Self {
+        self.displayname = Some(displayname.into());
+        self
+    }
+
+    /// Set the `calendar-description` of the created calendar.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Set the advertised component names (replaces any previous list).
+    pub fn with_supported_components<I, S>(mut self, components: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.supported_components = components.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+/// Build a MKCALENDAR request body (RFC 4791 §9.5):
+/// `<C:mkcalendar><D:set><D:prop>…</D:prop></D:set></C:mkcalendar>` with the
+/// [`MkCalendarProps`] as `<D:prop>` children — `displayname`
+/// (`<D:displayname>`), `description` (`<C:calendar-description>`) and
+/// `supported_components` (`<C:supported-calendar-component-set>` with one
+/// `<C:comp name="…"/>` per name).
+///
+/// `displayname` and `description` are escaped; component names are
+/// validated (ASCII alphanumeric + `-`, non-empty) so untrusted values
+/// cannot alter the request structure. An empty property set renders the
+/// minimal skeleton (empty `<D:prop>`).
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidComponentName`](crate::Error::InvalidComponentName)
+/// when a supported-component name is empty or contains a character outside
+/// ASCII alphanumerics and `-`.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::webdav::{MkCalendarProps, build_mkcalendar_body};
+///
+/// let props = MkCalendarProps::new()
+///     .with_displayname("Work")
+///     .with_supported_components(["VEVENT"]);
+/// let body = build_mkcalendar_body(&props)?;
+/// assert!(body.starts_with(
+///     "<C:mkcalendar xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
+/// ));
+/// assert!(body.contains("<D:displayname>Work</D:displayname>"));
+/// assert!(body.contains("<C:comp name=\"VEVENT\"/>"));
+/// # Ok::<(), fast_dav_rs::Error>(())
+/// ```
+pub fn build_mkcalendar_body(props: &MkCalendarProps) -> Result<String> {
+    let mut body = String::from(
+        "<C:mkcalendar xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\
+<D:set><D:prop>",
+    );
+    if let Some(displayname) = &props.displayname {
+        body.push_str(&format!(
+            "<D:displayname>{}</D:displayname>",
+            escape_xml(displayname)
+        ));
+    }
+    if let Some(description) = &props.description {
+        body.push_str(&format!(
+            "<C:calendar-description>{}</C:calendar-description>",
+            escape_xml(description)
+        ));
+    }
+    if !props.supported_components.is_empty() {
+        body.push_str("<C:supported-calendar-component-set>");
+        for name in &props.supported_components {
+            validate_component_name(
+                name,
+                "invalid mkcalendar supported-calendar-component-set component",
+            )?;
+            body.push_str(&format!("<C:comp name=\"{}\"/>", escape_xml(name)));
+        }
+        body.push_str("</C:supported-calendar-component-set>");
+    }
+    body.push_str("</D:prop></D:set></C:mkcalendar>");
+    Ok(body)
 }
 
 /// Render a `<C:text-match>` element.

@@ -22,9 +22,13 @@ pub use streaming::{
     multistatus_events_with_timeout, parse_error_body, parse_lock_discovery_bytes,
 };
 pub use sync::{SyncDelta, SyncEntry, SyncSession, SyncSnapshot};
+pub use types::CalendarDataLimits;
 pub use types::{
     AddressQueryOptions, BatchItem, DavCapabilities, DavCompliance, DavItem, DavItemCommon, Depth,
     LockInfo, LockScope, Prefer, Privilege, PropStat, SyncCapability, SyncLevel, WebDavError,
     parse_dav_header,
 };
-pub use xml::{build_sync_collection_body, escape_xml};
+pub use xml::{
+    MkCalendarProps, build_mkcalendar_body, build_propfind_allprop, build_propfind_propname,
+    build_propfind_props, build_sync_collection_body, data_element_xml_with_limits, escape_xml,
+};
