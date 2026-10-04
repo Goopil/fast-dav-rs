@@ -9,10 +9,11 @@ pub use crate::webdav::sync::{SyncDelta, SyncEntry, SyncSession, SyncSnapshot};
 pub use builder::CardDavClientBuilder;
 pub use client::{
     CardDavClient, VCARD_CONTENT_TYPE, build_addressbook_multiget_body,
-    build_addressbook_query_body, build_addressbook_query_filter,
-    build_addressbook_query_filter_email, build_addressbook_query_filter_fn,
-    build_addressbook_query_filter_uid, build_sync_collection_body, map_address_object,
-    map_address_objects, map_addressbook_list, map_sync_response,
+    build_addressbook_query_body, build_addressbook_query_body_with_options,
+    build_addressbook_query_filter, build_addressbook_query_filter_email,
+    build_addressbook_query_filter_fn, build_addressbook_query_filter_uid,
+    build_sync_collection_body, map_address_object, map_address_objects, map_addressbook_list,
+    map_sync_response,
 };
 // Deprecation propagated from the source items; see `streaming.rs`.
 #[allow(deprecated)]
@@ -22,6 +23,6 @@ pub use streaming::{
     parse_multistatus_stream_with_timeout,
 };
 pub use types::{
-    AddressBookInfo, AddressObject, BatchItem, CardDavFilter, Collation, DavItem, Depth, MatchType,
-    ParamFilter, SyncItem, SyncResponse, TextMatch,
+    AddressBookInfo, AddressObject, AddressQueryOptions, BatchItem, CardDavFilter, Collation,
+    DavItem, Depth, MatchType, ParamFilter, SyncItem, SyncResponse, TextMatch,
 };

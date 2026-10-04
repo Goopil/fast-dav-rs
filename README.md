@@ -532,6 +532,47 @@ For structured filtering, `CardDavClient::addressbook_query_filter` takes a
 pre-I/O comp-filter/prop-filter/param-filter exclusivity validation of CalDAV
 `calendar_query` (RFC 4791 §9.7.1-§9.7.3).
 
+### CardDAV limited address-data and result limits (RFC 6352 §10.4/§10.6)
+
+`CardDavClient::addressbook_query_options` takes an `AddressQueryOptions`:
+the raw filter XML, the `address-data` payload shape, and the
+`<D:limit><D:nresults>` result cap. With `address_data_props` set, only
+those vCard properties are returned; `Collation::Octet` (`i;octet`) is
+available for byte-wise case-sensitive `text-match` comparisons.
+
+```rust,no_run
+use fast_dav_rs::webdav::AddressQueryOptions;
+use fast_dav_rs::{CardDavClient, Result};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let client = CardDavClient::new("https://carddav.example.com/users/alice/", None, None)?;
+
+    // Only the FN + EMAIL properties of the first 50 matching cards:
+    let options = AddressQueryOptions::new(
+        "<C:filter><C:prop-filter name=\"EMAIL\">\
+         <C:text-match collation=\"i;octet\">jane@example.com</C:text-match>\
+         </C:prop-filter></C:filter>",
+    )
+    .with_include_data(true)
+    .with_address_data_props(vec!["FN".to_owned(), "EMAIL".to_owned()])
+    .with_limit(Some(50));
+
+    let contacts = client
+        .addressbook_query_options("addressbooks/alice/team/", &options)
+        .await?;
+
+    for contact in &contacts {
+        println!("{} -> {:?}", contact.href, contact.etag);
+    }
+    Ok(())
+}
+```
+
+Property names must be non-empty ASCII `[A-Za-z0-9-]+` (validated before any
+network I/O; duplicates are dropped, keeping the first occurrence) and the
+limit is serialized as the last child of `addressbook-query` per §10.6.
+
 ## Batch Operations
 
 ```rust,no_run

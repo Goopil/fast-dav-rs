@@ -23,7 +23,8 @@ pub use streaming::{
 };
 pub use sync::{SyncDelta, SyncEntry, SyncSession, SyncSnapshot};
 pub use types::{
-    BatchItem, DavCapabilities, DavCompliance, DavItem, DavItemCommon, Depth, LockInfo, LockScope,
-    Prefer, Privilege, PropStat, SyncCapability, SyncLevel, WebDavError, parse_dav_header,
+    AddressQueryOptions, BatchItem, DavCapabilities, DavCompliance, DavItem, DavItemCommon, Depth,
+    LockInfo, LockScope, Prefer, Privilege, PropStat, SyncCapability, SyncLevel, WebDavError,
+    parse_dav_header,
 };
 pub use xml::{build_sync_collection_body, escape_xml};

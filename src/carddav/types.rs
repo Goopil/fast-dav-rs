@@ -1,7 +1,7 @@
 use crate::carddav::client::escape_xml;
 
 pub use crate::webdav::types::{
-    BatchItem, Collation, DavItem, Depth, MatchType, ParamFilter, TextMatch,
+    AddressQueryOptions, BatchItem, Collation, DavItem, Depth, MatchType, ParamFilter, TextMatch,
 };
 /// A CardDAV addressbook-query filter (RFC 6352 §7).
 ///

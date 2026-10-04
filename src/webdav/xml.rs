@@ -102,6 +102,13 @@ pub(crate) fn data_element_xml(data_element: &str, expand: Option<(&str, Option<
     out
 }
 
+/// Render the RFC 4918 `<D:limit><D:nresults>N</D:nresults></D:limit>`
+/// result-truncation element, shared by the `sync-collection` REPORT
+/// (RFC 6578 §3.3) and the `addressbook-query` REPORT (RFC 6352 §10.6).
+pub(crate) fn limit_nresults_xml(limit: u32) -> String {
+    format!("<D:limit><D:nresults>{limit}</D:nresults></D:limit>")
+}
+
 /// Build a `sync-collection` REPORT body (RFC 6578 §3.3).
 ///
 /// `sync_level` controls the `<D:sync-level>` element: [`SyncLevel::One`]
@@ -154,9 +161,7 @@ pub fn build_sync_collection_body(
     }
     body.push_str("</D:prop>");
     if let Some(limit) = limit {
-        body.push_str("<D:limit><D:nresults>");
-        body.push_str(&limit.to_string());
-        body.push_str("</D:nresults></D:limit>");
+        body.push_str(&limit_nresults_xml(limit));
     }
     body.push_str("</D:sync-collection>");
     body

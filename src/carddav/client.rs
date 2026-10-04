@@ -12,7 +12,7 @@ use crate::carddav::types::{
 };
 use crate::impl_dav_client_delegates;
 use crate::webdav::client::WebDavClient;
-use crate::webdav::types::map_sync_rows;
+use crate::webdav::types::{AddressQueryOptions, map_sync_rows};
 use crate::{Error, Operation, Result};
 
 pub use crate::webdav::client::RequestCompressionMode;
@@ -270,6 +270,90 @@ impl CardDavClient {
         include_data: bool,
     ) -> Result<Vec<AddressObject>> {
         let xml = build_addressbook_query_body(filter_xml, include_data);
+
+        let resp = self.report(addressbook_path, Depth::One, &xml).await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::ReportAddressbookQuery,
+                status: resp.status(),
+            });
+        }
+        let body = resp.into_body();
+        Ok(map_address_objects(parse_multistatus_bytes(&body)?.items))
+    }
+
+    /// Execute a CardDAV `addressbook-query` with full control over the
+    /// `address-data` payload shape and the result-count limit
+    /// ([`AddressQueryOptions`], RFC 6352 §10.3/§10.4/§10.6).
+    ///
+    /// Non-empty `address_data_props` are sent as the limited
+    /// `<C:address-data><C:prop name="…"/></C:address-data>` form (§10.4.2)
+    /// so the server returns only those vCard properties; with empty props
+    /// the bare `<C:address-data/>` (or nothing) is sent as in
+    /// [`addressbook_query`](Self::addressbook_query). A `limit` is
+    /// serialized as `<D:limit><D:nresults>` as the last child (§10.6).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::webdav::AddressQueryOptions;
+    /// use fast_dav_rs::{CardDavClient, Result};
+    ///
+    /// # async fn example() -> Result<()> {
+    /// let client = CardDavClient::new(
+    ///     "https://contacts.example.com/dav/user01/",
+    ///     Some("user01"),
+    ///     Some("secret"),
+    /// )?;
+    ///
+    /// // Only the FN + EMAIL properties of the first 50 matching cards:
+    /// let options = AddressQueryOptions::new(
+    ///     "<C:filter><C:prop-filter name=\"EMAIL\">\
+    ///      <C:text-match collation=\"i;octet\">ada@example.com</C:text-match>\
+    ///      </C:prop-filter></C:filter>",
+    /// )
+    /// .with_include_data(true)
+    /// .with_address_data_props(vec!["FN".to_owned(), "EMAIL".to_owned()])
+    /// .with_limit(Some(50));
+    /// let contacts = client
+    ///     .addressbook_query_options("/dav/user01/contacts/", &options)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`] before any network I/O when an
+    /// `address_data_props` entry is empty or contains a character outside
+    /// `[A-Za-z0-9-]+`; duplicates are dropped silently, keeping the first
+    /// occurrence. Returns [`Error::UnexpectedStatus`] (with
+    /// [`Operation::ReportAddressbookQuery`]) on a non-success response, and
+    /// transport/parse errors as usual.
+    pub async fn addressbook_query_options(
+        &self,
+        addressbook_path: &str,
+        options: &AddressQueryOptions,
+    ) -> Result<Vec<AddressObject>> {
+        let mut props: Vec<String> = Vec::with_capacity(options.address_data_props.len());
+        for name in &options.address_data_props {
+            if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+                return Err(Error::InvalidInput(format!(
+                    "addressbook-query address-data prop name `{name}`: must be \
+                     non-empty ASCII `[A-Za-z0-9-]+` (RFC 6352 §10.4.2)"
+                )));
+            }
+            if !props.iter().any(|known| known == name) {
+                props.push(name.clone());
+            }
+        }
+        let effective = AddressQueryOptions {
+            filter_xml: options.filter_xml.clone(),
+            include_data: options.include_data,
+            address_data_props: props,
+            limit: options.limit,
+        };
+        let xml = build_addressbook_query_body_with_options(&effective);
 
         let resp = self.report(addressbook_path, Depth::One, &xml).await?;
         if !resp.status().is_success() {
@@ -718,15 +802,70 @@ pub fn extract_prop_inner(xml_body: &str) -> Option<String> {
     }
 }
 
-pub fn build_addressbook_query_body(filter_xml: &str, include_data: bool) -> String {
-    let mut prop = String::from("<D:prop><D:getetag/>");
-    if include_data {
-        prop.push_str("<C:address-data/>");
+/// Build an `addressbook-query` REPORT body from [`AddressQueryOptions`]
+/// (RFC 6352 §10.3).
+///
+/// The `<D:prop>` child carries `<D:getetag/>` plus the `address-data`
+/// element in its RFC 6352 §10.4.2 limited form
+/// `<C:address-data><C:prop name="FN"/>…</C:address-data>` when
+/// `address_data_props` is non-empty, otherwise the bare form
+/// `<C:address-data/>` when `include_data` is set (and no `address-data` at
+/// all when neither is requested). `filter_xml` is inserted verbatim, and
+/// `<D:limit><D:nresults>` (§10.6) is appended as the **last** child of
+/// `addressbook-query` when a limit is set.
+///
+/// Prop names are serialized with XML escaping; the caller method
+/// [`addressbook_query_options`](CardDavClient::addressbook_query_options)
+/// additionally validates them as `[A-Za-z0-9-]+` and drops duplicates
+/// before any network I/O.
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::carddav::build_addressbook_query_body_with_options;
+/// use fast_dav_rs::webdav::AddressQueryOptions;
+///
+/// let options = AddressQueryOptions::new("<C:filter/>")
+///     .with_include_data(true)
+///     .with_address_data_props(vec!["FN".to_owned()])
+///     .with_limit(Some(10));
+/// let body = build_addressbook_query_body_with_options(&options);
+/// assert!(
+///     body.contains("<C:address-data><C:prop name=\"FN\"/></C:address-data>")
+/// );
+/// assert!(
+///     body.ends_with("<D:limit><D:nresults>10</D:nresults></D:limit></C:addressbook-query>")
+/// );
+/// ```
+pub fn build_addressbook_query_body_with_options(options: &AddressQueryOptions) -> String {
+    let mut body = String::from(
+        r#"<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:prop><D:getetag/>"#,
+    );
+    if options.address_data_props.is_empty() {
+        if options.include_data {
+            body.push_str("<C:address-data/>");
+        }
+    } else {
+        body.push_str("<C:address-data>");
+        for name in &options.address_data_props {
+            body.push_str("<C:prop name=\"");
+            body.push_str(&escape_xml(name));
+            body.push_str("\"/>");
+        }
+        body.push_str("</C:address-data>");
     }
-    prop.push_str("</D:prop>");
+    body.push_str("</D:prop>");
+    body.push_str(&options.filter_xml);
+    if let Some(limit) = options.limit {
+        body.push_str(&crate::webdav::xml::limit_nresults_xml(limit));
+    }
+    body.push_str("</C:addressbook-query>");
+    body
+}
 
-    format!(
-        r#"<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">{prop}{filter_xml}</C:addressbook-query>"#
+pub fn build_addressbook_query_body(filter_xml: &str, include_data: bool) -> String {
+    build_addressbook_query_body_with_options(
+        &AddressQueryOptions::new(filter_xml).with_include_data(include_data),
     )
 }
 
