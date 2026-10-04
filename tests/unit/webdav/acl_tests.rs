@@ -140,6 +140,25 @@ fn build_acl_body_read_free_busy_uses_caldav_namespace() {
 }
 
 #[test]
+fn build_acl_body_serializes_typed_all_privilege() {
+    use fast_dav_rs::webdav::Privilege;
+    use fast_dav_rs::webdav::acl::{Ace, AcePrincipal};
+
+    let body = fast_dav_rs::webdav::acl::build_acl_body(&[Ace {
+        principal: AcePrincipal::All,
+        grant: vec![Privilege::All],
+        deny: Vec::new(),
+        protected: false,
+    }])
+    .unwrap();
+    assert!(
+        body.contains("<D:privilege><D:all/></D:privilege>"),
+        "the typed All aggregate must serialize as the DAV: `all` element \
+         (RFC 3744 §3.11): {body}"
+    );
+}
+
+#[test]
 fn build_acl_body_rejects_empty_href_principal() {
     use fast_dav_rs::webdav::Privilege;
     use fast_dav_rs::webdav::acl::{Ace, AcePrincipal};

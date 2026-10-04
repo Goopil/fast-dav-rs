@@ -85,6 +85,7 @@ fn privilege_xml_parts(privilege: &Privilege) -> Option<(&'static str, &str)> {
         Privilege::Bind => Some(("D", "bind")),
         Privilege::Unbind => Some(("D", "unbind")),
         Privilege::Unlock => Some(("D", "unlock")),
+        Privilege::All => Some(("D", "all")),
         Privilege::ReadFreeBusy => Some(("C", "read-free-busy")),
         Privilege::Other(name) => {
             if !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'-') {
