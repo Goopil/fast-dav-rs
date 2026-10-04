@@ -92,6 +92,10 @@ features, and major releases introduce breaking changes when needed.
 - WebDAV-Sync (RFC 6578) for incremental sync.
 - Bounded parallelism for batch PROPFIND/REPORT operations.
 - Automatic request compression negotiation (br, zstd, gzip) with overrides.
+- Request-body builders: PROPFIND `allprop`/`propname`/prop-list helpers
+  (RFC 4918 §9.1), a typed `MkCalendarProps` MKCALENDAR body (RFC 4791 §9.5),
+  and `calendar-query` data limits via `CalendarDataLimits` (RFC 4791 §9.6.4)
+  with the extensible `CalendarQueryOptions` entry point.
 - Streaming send APIs for custom workflows.
 - RFC 6764 `.well-known` service discovery (`discover_caldav`/`discover_carddav`).
 - Retry with exponential backoff for transient failures (429/503/504) with `Retry-After` support.
@@ -445,6 +449,100 @@ Server support:
 | Radicale | Supported (3.7.6): the PROPPATCH set stores the object and the remove makes it read back absent (the read-back value has LF line endings — every conformant XML processor normalizes CRLF → LF in parsed content per XML 1.0 §2.11); verified against the fixture |
 | SabreDAV | Supported on calendar creation (set at `MKCALENDAR` time); the `PROPPATCH` write path is untested on this fixture |
 | Nextcloud | Supported on calendar creation, and the `PROPPATCH` write path round-trips (set → read back the stored object, remove → absent; the read-back value has LF line endings — every conformant XML processor normalizes CRLF → LF in parsed content per XML 1.0 §2.11; verified against the fixture) |
+
+### Request-body builders and query data limits (RFC 4791 §9.6.4)
+
+The `webdav` module exposes pure body builders that render wire-accurate
+request XML without a server. PROPFIND bodies (RFC 4918 §9.1) come in three
+flavors — all properties, property names only, or an explicit
+`(namespace, local-name)` list — and the typed `MkCalendarProps` renders a
+MKCALENDAR body (RFC 4791 §9.5) usable with
+[`CalDavClient::mkcalendar`](CalDavClient::mkcalendar):
+
+```rust
+use fast_dav_rs::webdav::{MkCalendarProps, build_mkcalendar_body, build_propfind_allprop,
+    build_propfind_propname, build_propfind_props};
+
+// All properties / property names only (RFC 4918 §9.1).
+assert_eq!(
+    build_propfind_allprop(),
+    "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>"
+);
+assert_eq!(
+    build_propfind_propname(),
+    "<D:propfind xmlns:D=\"DAV:\"><D:propname/></D:propfind>"
+);
+
+// Explicit property list: namespace declarations are grouped on the root
+// (DAV: keeps the conventional D: prefix, others get sequential ns1, ns2, ...)
+// and every namespace URI / local name is escaped.
+let propfind = build_propfind_props(&[
+    ("DAV:", "displayname"),
+    ("urn:ietf:params:xml:ns:caldav", "calendar-description"),
+]);
+assert_eq!(
+    propfind,
+    "<D:propfind xmlns:D=\"DAV:\" xmlns:ns1=\"urn:ietf:params:xml:ns:caldav\">\
+<D:prop><D:displayname/><ns1:calendar-description/></D:prop></D:propfind>"
+);
+
+// Typed MKCALENDAR properties (RFC 4791 §9.5): component names are
+// validated (ASCII alphanumeric + '-', non-empty) and text values escaped;
+// an empty property set renders the minimal skeleton.
+let mkcalendar = build_mkcalendar_body(
+    &MkCalendarProps::new()
+        .with_displayname("Work")
+        .with_description("Work events")
+        .with_supported_components(["VEVENT", "VTODO"]),
+)?;
+assert!(mkcalendar.contains("<C:comp name=\"VEVENT\"/>"));
+# Ok::<(), fast_dav_rs::Error>(())
+```
+
+[`CalendarQueryOptions`](caldav::CalendarQueryOptions) is the extensible
+`calendar-query` entry point: one struct carrying the filter window, data
+inclusion, server-side expansion (RFC 4791 §9.6.5) and data-return limits
+(`CalendarDataLimits`, RFC 4791 §9.6.4) — new options are added to the struct
+instead of new positional method variants. Setting `expand` or `limits`
+implies requesting `<C:calendar-data>` (a server cannot expand or limit data
+it does not return):
+
+```rust,no_run
+use fast_dav_rs::caldav::CalendarQueryOptions;
+use fast_dav_rs::webdav::CalendarDataLimits;
+use fast_dav_rs::{CalDavClient, Result, TimeRange};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let client = CalDavClient::new("https://caldav.example.com/users/alice/", None, None)?;
+    let calendar_path = "calendars/alice/work/";
+
+    // Create a calendar advertising its supported components (RFC 4791 §9.5).
+    let body = fast_dav_rs::webdav::build_mkcalendar_body(
+        &fast_dav_rs::webdav::MkCalendarProps::new()
+            .with_displayname("Work")
+            .with_supported_components(["VEVENT", "VTODO"]),
+    )?;
+    client.mkcalendar(calendar_path, &body).await?;
+
+    // Expanded VEVENTs for 2024, with the recurrence-set expansion limited
+    // to one year server-side (RFC 4791 §9.6.4 limit-recurrence-set).
+    let options = CalendarQueryOptions::new("VEVENT")
+        .with_start("20240101T000000Z")
+        .with_end("20250101T000000Z")
+        .with_expand(TimeRange::new("20240101T000000Z").with_end("20250101T000000Z"))
+        .with_limits(
+            CalendarDataLimits::new()
+                .with_recurrence_set(
+                    TimeRange::new("20240101T000000Z").with_end("20250101T000000Z"),
+                ),
+        );
+    let events = client.calendar_query_options(calendar_path, &options).await?;
+    println!("{} events", events.len());
+
+    Ok(())
+}
+```
 
 ### CalDAV scheduling (RFC 6638)
 
