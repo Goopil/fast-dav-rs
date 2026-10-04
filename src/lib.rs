@@ -46,5 +46,6 @@ pub use webdav::{
     OAuth2RefreshProvider, Prefer, Privilege, PropStat, RequestCompressionMode, SyncCapability,
     SyncDelta, SyncEntry, SyncLevel, SyncSession, SyncSnapshot, TokenProvider, WebDavClient,
     WebDavError, conditional_write_error, discover_caldav, discover_carddav, etag_from_headers,
-    normalize_etag, normalize_sync_token, preference_applied_from_headers,
+    if_header_for_lock_token, normalize_etag, normalize_sync_token,
+    preference_applied_from_headers,
 };

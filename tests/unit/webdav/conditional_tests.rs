@@ -1,4 +1,4 @@
-use fast_dav_rs::webdav::conditional_write_error;
+use fast_dav_rs::webdav::{conditional_write_error, if_header_for_lock_token};
 use fast_dav_rs::{Error, Operation};
 use hyper::{Response, StatusCode};
 
@@ -91,4 +91,33 @@ fn conditional_write_error_maps_other_statuses_to_unexpected_status() {
 fn put_if_match_and_delete_if_match_operations_render() {
     assert_eq!(Operation::PutIfMatch.to_string(), "PUT If-Match");
     assert_eq!(Operation::DeleteIfMatch.to_string(), "DELETE If-Match");
+}
+
+#[test]
+fn if_header_for_lock_token_builds_parenthesized_coded_url() {
+    let header = if_header_for_lock_token("urn:uuid:8a2f1d3c-4b5e-4f6a-9c8b-7d6e5f4a3b2c").unwrap();
+    assert_eq!(
+        header, "(<urn:uuid:8a2f1d3c-4b5e-4f6a-9c8b-7d6e5f4a3b2c>)",
+        "the RFC 4918 §10.4 parenthesized form must wrap the token in <…> and (…)"
+    );
+}
+
+#[test]
+fn if_header_for_lock_token_rejects_empty_token() {
+    let err = if_header_for_lock_token("").unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "an empty lock token must be rejected with InvalidInput, got: {err:?}"
+    );
+}
+
+#[test]
+fn if_header_for_lock_token_rejects_parentheses_and_control_characters() {
+    for bad in ["(token)", "tok(en", "tok)en", "tok\nen", "tok\ten"] {
+        let err = if_header_for_lock_token(bad).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidInput(_)),
+            "parentheses and control characters must be rejected with InvalidInput, got: {err:?}"
+        );
+    }
 }

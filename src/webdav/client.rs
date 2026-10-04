@@ -223,6 +223,45 @@ pub fn conditional_write_error(operation: Operation, resp: &Response<Bytes>) -> 
     }
 }
 
+/// Build an RFC 4918 §10.4 `If` header for a lock-token-guarded write: the
+/// parenthesized Coded-URL form `(<lock-token>)`.
+///
+/// This client keeps no implicit lock state, so writes issued while a lock
+/// is held must carry the token themselves — pass the returned value as the
+/// `If` header of the request (e.g. through
+/// [`WebDavClient::send`](WebDavClient::send)). The token is validated
+/// against the Coded-URL rules the locking API already applies (RFC 4918
+/// §10.5): an empty token, parentheses, or characters that cannot appear in
+/// a Coded-URL fail with [`Error::InvalidInput`] before anything is built.
+///
+/// # Example
+///
+/// ```no_run
+/// use fast_dav_rs::Operation;
+/// use fast_dav_rs::webdav::{
+///     LockScope, WebDavClient, conditional_write_error, if_header_for_lock_token,
+/// };
+/// use hyper::{Method, http::HeaderMap};
+///
+/// # async fn run(client: &WebDavClient) -> fast_dav_rs::Result<()> {
+/// let lock = client
+///     .lock("docs/plan.txt", LockScope::Exclusive, "", Some(300))
+///     .await?;
+/// let mut headers = HeaderMap::new();
+/// headers.insert("If", if_header_for_lock_token(&lock.token)?.parse()?);
+/// let resp = client
+///     .send(Method::DELETE, "docs/plan.txt", headers, None, None)
+///     .await?;
+/// // A server enforcing the lock answers 412 when the token does not apply.
+/// conditional_write_error(Operation::DeleteIfMatch, &resp)?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn if_header_for_lock_token(lock_token: &str) -> Result<String> {
+    WebDavClient::validate_lock_token(lock_token)?;
+    Ok(format!("(<{lock_token}>)"))
+}
+
 /// Extract the `Preference-Applied` response header (RFC 7240 §3) and map it
 /// to a [`Prefer`] preference the client supports.
 ///
