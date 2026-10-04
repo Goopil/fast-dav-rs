@@ -360,6 +360,69 @@ pub(crate) fn validate_param_filter_exclusivity<'a>(
     Ok(())
 }
 
+/// Options for a CardDAV `addressbook-query` REPORT (RFC 6352 §10.3):
+/// the raw filter, the `address-data` payload shape, and the result-count
+/// limit.
+///
+/// Use [`AddressQueryOptions::new`] plus the `with_*` builders; execute with
+/// [`CardDavClient::addressbook_query_options`](crate::CardDavClient::addressbook_query_options).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct AddressQueryOptions {
+    /// `<C:filter>…</C:filter>` XML inserted verbatim as the filter child.
+    /// Build it from [`CardDavFilter`](crate::CardDavFilter::to_filter_xml)
+    /// or the `build_addressbook_query_filter*` helpers.
+    pub filter_xml: String,
+    /// Request the full vCard payload as the bare `<C:address-data/>` form.
+    /// Ignored when `address_data_props` is non-empty (the limited form is
+    /// sent instead).
+    pub include_data: bool,
+    /// Limited `address-data` property names (RFC 6352 §10.4.2): the request
+    /// carries `<C:address-data><C:prop name="…"/></C:address-data>` so the
+    /// server returns only those vCard properties. Non-empty values must
+    /// match `[A-Za-z0-9-]+` (validated by
+    /// [`addressbook_query_options`](crate::CardDavClient::addressbook_query_options));
+    /// duplicates are dropped, keeping the first occurrence.
+    pub address_data_props: Vec<String>,
+    /// Maximum number of results the server may return, serialized as
+    /// `<D:limit><D:nresults>N</D:nresults></D:limit>` (RFC 6352 §10.6).
+    /// A server may return fewer; truncation is signaled by the response.
+    pub limit: Option<u32>,
+}
+
+impl AddressQueryOptions {
+    /// Options querying the raw `filter_xml` with the defaults of the legacy
+    /// builder: no vCard payload and no result limit.
+    pub fn new(filter_xml: impl Into<String>) -> Self {
+        Self {
+            filter_xml: filter_xml.into(),
+            include_data: false,
+            address_data_props: Vec::new(),
+            limit: None,
+        }
+    }
+
+    /// Request the full vCard payload (bare `<C:address-data/>` form).
+    pub fn with_include_data(mut self, include_data: bool) -> Self {
+        self.include_data = include_data;
+        self
+    }
+
+    /// Set the limited `address-data` property names (RFC 6352 §10.4.2).
+    /// Overrides [`with_include_data`](Self::with_include_data): a non-empty
+    /// list is serialized as the limited form.
+    pub fn with_address_data_props(mut self, props: Vec<String>) -> Self {
+        self.address_data_props = props;
+        self
+    }
+
+    /// Set the result-count limit (RFC 6352 §10.6).
+    pub fn with_limit(mut self, limit: Option<u32>) -> Self {
+        self.limit = limit;
+        self
+    }
+}
+
 /// WebDAV Depth
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

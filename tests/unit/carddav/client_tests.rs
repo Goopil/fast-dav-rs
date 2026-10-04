@@ -1386,3 +1386,229 @@ async fn items_stream_delegates_yield_events_in_order() {
     }
     assert_eq!(hrefs, ["/books/a.vcf", "/books/b.vcf"]);
 }
+
+#[test]
+fn test_build_addressbook_query_body_with_options_limited_props_and_limit() {
+    use fast_dav_rs::AddressQueryOptions;
+
+    let options = AddressQueryOptions::new("<C:filter/>")
+        .with_include_data(true)
+        .with_address_data_props(vec!["FN".to_string(), "EMAIL".to_string()])
+        .with_limit(Some(25));
+    let body = fast_dav_rs::carddav::client::build_addressbook_query_body_with_options(&options);
+    assert!(body.contains("<C:addressbook-query"));
+    assert!(
+        body.contains(
+            "<C:address-data><C:prop name=\"FN\"/><C:prop name=\"EMAIL\"/></C:address-data>"
+        ),
+        "limited address-data form (RFC 6352 §10.4.2) expected, got: {body}"
+    );
+    // §10.6: `<D:limit>` is the last child of `addressbook-query`.
+    let limit = "<D:limit><D:nresults>25</D:nresults></D:limit>";
+    let limit_pos = body.find(limit).expect("nresults limit serialized");
+    let close = body.find("</C:addressbook-query>").expect("root closed");
+    assert!(
+        limit_pos + limit.len() == close,
+        "limit must be the last child of addressbook-query: {body}"
+    );
+}
+
+#[test]
+fn test_build_addressbook_query_body_with_options_bare_form_when_no_props() {
+    use fast_dav_rs::AddressQueryOptions;
+
+    // Empty props + include_data keeps today's bare `<C:address-data/>`.
+    let options = AddressQueryOptions::new("<C:filter/>").with_include_data(true);
+    let body = fast_dav_rs::carddav::client::build_addressbook_query_body_with_options(&options);
+    assert!(
+        body.contains("<C:address-data/>"),
+        "bare form expected, got: {body}"
+    );
+    assert!(
+        !body.contains("<C:address-data><C:prop"),
+        "limited form must not appear without props: {body}"
+    );
+    assert!(
+        !body.contains("<D:limit>"),
+        "no limit must be serialized when unset: {body}"
+    );
+
+    // No data requested at all: no address-data element.
+    let options = AddressQueryOptions::new("<C:filter/>");
+    let body = fast_dav_rs::carddav::client::build_addressbook_query_body_with_options(&options);
+    assert!(
+        !body.contains("<C:address-data"),
+        "no address-data expected without include_data/props: {body}"
+    );
+    assert!(body.contains("<C:filter/>"), "filter kept verbatim: {body}");
+}
+
+#[tokio::test]
+async fn addressbook_query_options_sends_limited_address_data_and_limit() {
+    let body = r#"<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:response>
+    <D:href>/contacts/a.vcf</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-a"</D:getetag><C:address-data>BEGIN:VCARD</C:address-data></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/contacts/b.vcf</D:href>
+    <D:propstat>
+      <D:prop><D:getetag>"etag-b"</D:getetag><C:address-data>BEGIN:VCARD</C:address-data></D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body,
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    use fast_dav_rs::AddressQueryOptions;
+    let options = AddressQueryOptions::new(
+        "<C:filter><C:prop-filter name=\"UID\">\
+         <C:text-match collation=\"i;octet\">contact-1</C:text-match>\
+         </C:prop-filter></C:filter>",
+    )
+    .with_include_data(true)
+    .with_address_data_props(vec![
+        "FN".to_string(),
+        "EMAIL".to_string(),
+        "FN".to_string(), // duplicate: must be dropped (stable)
+    ])
+    .with_limit(Some(10));
+
+    let contacts = client
+        .addressbook_query_options("contacts/", &options)
+        .await
+        .unwrap();
+    assert_eq!(contacts.len(), 2, "two objects mapped: {contacts:?}");
+    assert_eq!(contacts[0].href, "/contacts/a.vcf");
+    assert_eq!(contacts[0].etag.as_deref(), Some("etag-a"));
+    assert_eq!(contacts[0].address_data.as_deref(), Some("BEGIN:VCARD"));
+    assert_eq!(contacts[1].href, "/contacts/b.vcf");
+
+    let req = {
+        let guard = captured.lock().unwrap();
+        String::from_utf8_lossy(&guard).into_owned()
+    };
+    assert!(
+        req.contains("REPORT") && req.contains("addressbook-query"),
+        "expected an addressbook-query REPORT: {req}"
+    );
+    assert!(
+        req.contains(
+            "<C:address-data><C:prop name=\"FN\"/><C:prop name=\"EMAIL\"/></C:address-data>"
+        ),
+        "limited address-data with the duplicate prop dropped expected: {req}"
+    );
+    // §10.6: limit is the last child of the addressbook-query element.
+    let limit = "<D:limit><D:nresults>10</D:nresults></D:limit>";
+    let limit_pos = req.find(limit).expect("limit on the wire");
+    let close = req.find("</C:addressbook-query>").expect("root closed");
+    assert!(
+        limit_pos + limit.len() == close,
+        "limit must be the last child of addressbook-query: {req}"
+    );
+}
+
+#[tokio::test]
+async fn addressbook_query_options_maps_error_status() {
+    let base = crate::common::http_helpers::serve_once(
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_owned(),
+        Vec::new(),
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    use fast_dav_rs::AddressQueryOptions;
+    let options = AddressQueryOptions::new("<C:filter/>").with_include_data(true);
+    let Err(err) = client
+        .addressbook_query_options("contacts/", &options)
+        .await
+    else {
+        panic!("a 500 status must surface as UnexpectedStatus");
+    };
+    assert!(
+        matches!(
+            &err,
+            fast_dav_rs::Error::UnexpectedStatus { operation, status, .. }
+                if *operation == fast_dav_rs::Operation::ReportAddressbookQuery
+                    && status.as_u16() == 500
+        ),
+        "expected UnexpectedStatus(ReportAddressbookQuery, 500), got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn addressbook_query_options_rejects_invalid_prop_names_before_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+
+    for bad in ["", "FN<TEL>", "mé", "FN EMAIL"] {
+        use fast_dav_rs::AddressQueryOptions;
+        let options = AddressQueryOptions::new("<C:filter/>")
+            .with_include_data(true)
+            .with_address_data_props(vec![bad.to_string()]);
+        let Err(err) = client
+            .addressbook_query_options("contacts/", &options)
+            .await
+        else {
+            panic!("invalid address-data prop name must be rejected before any network I/O");
+        };
+        assert!(
+            matches!(err, fast_dav_rs::Error::InvalidInput(ref msg)
+                if msg.contains("address-data") && msg.contains("[A-Za-z0-9-]")),
+            "expected InvalidInput for prop name, got: {err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn addressbook_query_options_deduplicates_props_stably() {
+    // A repeated prop must appear exactly once, keeping its first position.
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", 0),
+        Vec::new(),
+    )
+    .await;
+    let client = CardDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    use fast_dav_rs::AddressQueryOptions;
+    let options = AddressQueryOptions::new("<C:filter/>")
+        .with_include_data(true)
+        .with_address_data_props(vec![
+            "EMAIL".to_string(),
+            "FN".to_string(),
+            "EMAIL".to_string(),
+        ]);
+    let _ = client
+        .addressbook_query_options("contacts/", &options)
+        .await;
+
+    let req = {
+        let guard = captured.lock().unwrap();
+        String::from_utf8_lossy(&guard).into_owned()
+    };
+    assert_eq!(
+        req.matches("<C:prop name=\"EMAIL\"/>").count(),
+        1,
+        "duplicate prop names must be dropped: {req}"
+    );
+    assert!(
+        req.find("<C:prop name=\"EMAIL\"/>").expect("EMAIL present")
+            < req.find("<C:prop name=\"FN\"/>").expect("FN present"),
+        "first-occurrence order must be preserved: {req}"
+    );
+}

@@ -15,6 +15,36 @@ fn builds_addressbook_query_with_filter() {
 }
 
 #[test]
+fn builds_addressbook_query_body_with_options_limited_and_limit() {
+    use fast_dav_rs::AddressQueryOptions;
+
+    // Limited `address-data` (RFC 6352 §10.4.2) + `<D:limit>` as last child
+    // (§10.6); the legacy `build_addressbook_query_body` delegates to the
+    // same builder with empty props and no limit.
+    let options = AddressQueryOptions::new("<C:filter/>")
+        .with_include_data(true)
+        .with_address_data_props(vec!["FN".to_string(), "EMAIL".to_string()])
+        .with_limit(Some(7));
+    let body = fast_dav_rs::carddav::client::build_addressbook_query_body_with_options(&options);
+    assert!(
+        body.contains(
+            "<C:address-data><C:prop name=\"FN\"/><C:prop name=\"EMAIL\"/></C:address-data>"
+        ),
+        "limited address-data form expected, got: {body}"
+    );
+    assert!(
+        body.ends_with("<D:limit><D:nresults>7</D:nresults></D:limit></C:addressbook-query>"),
+        "limit must be the last child, got: {body}"
+    );
+
+    let legacy = build_addressbook_query_body("<C:filter/>", false);
+    assert!(
+        !legacy.contains("<C:address-data") && !legacy.contains("<D:limit>"),
+        "legacy delegate must keep the bare behavior, got: {legacy}"
+    );
+}
+
+#[test]
 fn builds_addressbook_multiget_and_escapes() {
     let body = build_addressbook_multiget_body(
         vec![

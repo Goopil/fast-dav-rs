@@ -33,8 +33,8 @@ pub use caldav::{
 };
 pub use carddav::builder::CardDavClientBuilder;
 pub use carddav::{
-    AddressBookInfo, AddressObject, CardDavClient, CardDavFilter, Collation, MatchType,
-    ParamFilter, TextMatch, map_address_object, map_address_objects,
+    AddressBookInfo, AddressObject, AddressQueryOptions, CardDavClient, CardDavFilter, Collation,
+    MatchType, ParamFilter, TextMatch, map_address_object, map_address_objects,
 };
 pub use common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, detect_encoding,
