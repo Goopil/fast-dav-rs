@@ -239,32 +239,49 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let mut href_xml = String::new();
-    let mut total = 0usize;
-    for href in hrefs {
-        let href = href.as_ref();
-        if href.is_empty() {
-            continue;
-        }
-        total += 1;
-        href_xml.push_str("<D:href>");
-        href_xml.push_str(&escape_xml(href));
-        href_xml.push_str("</D:href>");
-    }
-    if total == 0 {
+    const HREF_OPEN: &str = "<D:href>";
+    const HREF_CLOSE: &str = "</D:href>";
+
+    // Buffer the hrefs so the body can be sized exactly in one allocation:
+    // growing it through repeated `push_str` (and a final bulk copy of the
+    // `href_xml` scratch buffer) left `capacity` up to 2× above `len`,
+    // depending on whether realloc had to relocate the buffer mid-growth —
+    // which made the 1k-hrefs request-body cost bimodal. Metacharacter
+    // escaping can still exceed the estimate (`escape_xml` expands up to 6×
+    // per char); amortized growth handles that rare case.
+    let hrefs: Vec<S> = hrefs.into_iter().collect();
+    let href_capacity: usize = hrefs
+        .iter()
+        .filter(|href| !href.as_ref().is_empty())
+        .map(|href| HREF_OPEN.len() + HREF_CLOSE.len() + href.as_ref().len())
+        .sum();
+    if href_capacity == 0 {
         return None;
     }
 
-    let mut body = format!(
+    let mut prop = format!(
         r#"<C:{} xmlns:D="DAV:" xmlns:C="{}"><D:prop><D:getetag/>"#,
         escape_xml(root_element),
         escape_xml(namespace)
     );
     if include_data || expand.is_some() {
-        body.push_str(&data_element_xml(data_element, expand));
+        prop.push_str(&data_element_xml(data_element, expand));
     }
-    body.push_str("</D:prop>");
-    body.push_str(&href_xml);
+    prop.push_str("</D:prop>");
+
+    let mut body = String::with_capacity(
+        prop.len() + href_capacity + "</C:".len() + root_element.len() + ">".len(),
+    );
+    body.push_str(&prop);
+    for href in &hrefs {
+        let href = href.as_ref();
+        if href.is_empty() {
+            continue;
+        }
+        body.push_str(HREF_OPEN);
+        body.push_str(&escape_xml(href));
+        body.push_str(HREF_CLOSE);
+    }
     body.push_str("</C:");
     body.push_str(root_element);
     body.push('>');
