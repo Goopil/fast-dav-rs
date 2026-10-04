@@ -2859,6 +2859,15 @@ macro_rules! impl_dav_client_delegates {
                 self.webdav.proppatch(path, xml_body).await
             }
 
+            /// Send a WebDAV `ACL` request (RFC 3744 §8.1) with a pre-built XML body.
+            pub async fn acl(
+                &self,
+                path: &str,
+                xml_body: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.acl(path, xml_body).await
+            }
+
             /// Send a `REPORT` with a custom XML body and `Depth`.
             pub async fn report(
                 &self,

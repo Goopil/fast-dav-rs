@@ -459,6 +459,10 @@ pub enum Operation {
     PropfindAddressbookHomeSet,
     /// `PROPFIND` to list calendars or addressbooks.
     PropfindCollections,
+    /// `PROPFIND` to read the calendar-proxy companion properties
+    /// (`calendar-proxy-read-for`/`calendar-proxy-write-for`) or a proxy
+    /// group's `group-member-set`.
+    PropfindCalendarProxy,
     /// `PROPFIND` to read a calendar's `calendar-timezone` (RFC 4791 §5.2.2).
     PropfindCalendarTimezone,
     /// `REPORT` calendar-query.
@@ -512,6 +516,7 @@ impl std::fmt::Display for Operation {
             Self::PropfindCalendarHomeSet => "PROPFIND calendar-home-set",
             Self::PropfindAddressbookHomeSet => "PROPFIND addressbook-home-set",
             Self::PropfindCollections => "PROPFIND collections",
+            Self::PropfindCalendarProxy => "PROPFIND calendar-proxy",
             Self::PropfindCalendarTimezone => "PROPFIND calendar-timezone",
             Self::ReportCalendarQuery => "REPORT calendar-query",
             Self::ReportCalendarMultiget => "REPORT calendar-multiget",
