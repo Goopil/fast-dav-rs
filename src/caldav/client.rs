@@ -16,8 +16,10 @@ use crate::common::unfold_ical_lines;
 use crate::impl_dav_client_delegates;
 use crate::webdav::client::WebDavClient;
 use crate::webdav::types::map_sync_rows;
+use crate::webdav::types::{CalendarDataLimits, CalendarQueryOptions};
 use crate::webdav::xml::{
-    data_element_xml, time_range_xml, validate_component_name, validate_utc_datetime,
+    build_calendar_query_body_with_limits, time_range_xml, validate_component_name,
+    validate_utc_datetime,
 };
 use crate::{Error, Operation, Result};
 
@@ -529,6 +531,83 @@ impl CalDavClient {
                 }
             }),
         ))
+    }
+
+    /// Execute a CalDAV `calendar-query` with structured
+    /// [`CalendarQueryOptions`].
+    ///
+    /// One extensible entry point combining the filter window, data
+    /// inclusion, server-side expansion (RFC 4791 §9.6.5), and data-return
+    /// limits (RFC 4791 §9.6.4) of the existing query methods — new options
+    /// can be added to the struct without new positional method variants.
+    ///
+    /// The `<C:calendar-data>` element is requested when
+    /// [`CalendarQueryOptions::include_data`] is set, and implied when
+    /// `expand` or `limits` is set (a server cannot expand or limit data it
+    /// does not return).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error **before any network I/O** with the same rules as
+    /// [`calendar_query_timerange`](Self::calendar_query_timerange) — invalid
+    /// component name, invalid UTC date-times, `expand` without `end`
+    /// ([`Error::InvalidInput`]), `end <= start`
+    /// ([`Error::InvalidDateTime`]) — plus the same validation for each
+    /// [`CalendarDataLimits`] window: a set window carries both bounds (both
+    /// are `#REQUIRED` attributes of the `limit-recurrence-set` /
+    /// `limit-freebusy-set` elements, RFC 4791 §9.6.4) and `end` must be
+    /// after `start`. Also returns an error if the REPORT request fails or
+    /// the server responds with a non-success status
+    /// ([`Error::UnexpectedStatus`] with [`Operation::ReportCalendarQuery`]).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use fast_dav_rs::{CalDavClient, TimeRange};
+    /// use fast_dav_rs::caldav::CalendarQueryOptions;
+    /// use fast_dav_rs::webdav::CalendarDataLimits;
+    ///
+    /// # async fn example(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+    /// let options = CalendarQueryOptions::new("VEVENT")
+    ///     .with_start("20240101T000000Z")
+    ///     .with_end("20240201T000000Z")
+    ///     .with_include_data(true)
+    ///     .with_expand(TimeRange::new("20240101T000000Z").with_end("20240201T000000Z"))
+    ///     .with_limits(
+    ///         CalendarDataLimits::new()
+    ///             .with_recurrence_set(TimeRange::new("20240101T000000Z").with_end("20241231T235959Z")),
+    ///     );
+    /// let events = client.calendar_query_options("calendars/user/work/", &options).await?;
+    /// for event in &events {
+    ///     println!("{} -> {:?}", event.href, event.etag);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn calendar_query_options(
+        &self,
+        calendar_path: &str,
+        options: &CalendarQueryOptions,
+    ) -> Result<Vec<CalendarObject>> {
+        Self::validate_timerange_query(
+            &options.component,
+            options.start.as_deref(),
+            options.end.as_deref(),
+            options.expand.as_ref(),
+        )?;
+        validate_data_limits("invalid calendar-query", options.limits.as_ref())?;
+
+        let xml = build_calendar_query_body_with_limits(options);
+
+        let resp = self.report(calendar_path, Depth::One, &xml).await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: Operation::ReportCalendarQuery,
+                status: resp.status(),
+            });
+        }
+        let body = resp.into_body();
+        Ok(map_calendar_objects(parse_multistatus_bytes(&body)?.items))
     }
 
     /// Execute a CalDAV `calendar-query` with a [`CalendarQueryFilter`].
@@ -1096,6 +1175,34 @@ fn validate_expand(context: &str, expand: Option<&TimeRange>) -> Result<()> {
     validate_time_range_order(&format!("{context} expand"), &tr.start, end)
 }
 
+/// Validate the data-return limits of a `calendar-data` element
+/// (RFC 4791 §9.6.4) before any network I/O: a set window carries both
+/// bounds (`#REQUIRED` attributes of the `limit-recurrence-set` /
+/// `limit-freebusy-set` elements) and `end` must be after `start`.
+fn validate_data_limits(context: &str, limits: Option<&CalendarDataLimits>) -> Result<()> {
+    let Some(limits) = limits else {
+        return Ok(());
+    };
+    for (element, range) in [
+        ("limit-recurrence-set", limits.recurrence_set.as_ref()),
+        ("limit-freebusy-set", limits.freebusy_set.as_ref()),
+    ] {
+        let Some(range) = range else {
+            continue;
+        };
+        validate_utc_datetime(&range.start, &format!("{context} {element} start"))?;
+        let Some(end) = range.end.as_deref() else {
+            return Err(Error::InvalidInput(format!(
+                "{context} {element} requires an `end`: RFC 4791 §9.6.4 makes \
+                 both start and end mandatory"
+            )));
+        };
+        validate_utc_datetime(end, &format!("{context} {element} end"))?;
+        validate_time_range_order(&format!("{context} {element}"), &range.start, end)?;
+    }
+    Ok(())
+}
+
 /// Extract `FreeBusyPeriod`s from the `FREEBUSY` properties of a `VFREEBUSY`
 /// component (minimal line-based parser — no full iCalendar parser).
 ///
@@ -1190,36 +1297,14 @@ pub fn build_calendar_query_body(
     include_data: bool,
     expand: Option<&TimeRange>,
 ) -> String {
-    let mut prop = String::from("<D:prop><D:getetag/>");
-    if include_data || expand.is_some() {
-        prop.push_str(&data_element_xml(
-            "calendar-data",
-            expand.map(|tr| (tr.start.as_str(), tr.end.as_deref())),
-        ));
-    }
-    prop.push_str("</D:prop>");
-
-    let mut filter = format!(
-        "<C:filter>\
-           <C:comp-filter name=\"VCALENDAR\">\
-             <C:comp-filter name=\"{}\">",
-        escape_xml(component)
-    );
-    if start.is_some() || end.is_some() {
-        filter.push_str("<C:time-range");
-        if let Some(s) = start {
-            filter.push_str(&format!(" start=\"{}\"", escape_xml(s)));
-        }
-        if let Some(e) = end {
-            filter.push_str(&format!(" end=\"{}\"", escape_xml(e)));
-        }
-        filter.push_str("/>");
-    }
-    filter.push_str("</C:comp-filter></C:comp-filter></C:filter>");
-
-    format!(
-        r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">{prop}{filter}</C:calendar-query>"#
-    )
+    crate::webdav::xml::build_calendar_query_body_with_limits(&CalendarQueryOptions {
+        component: component.to_owned(),
+        start: start.map(ToOwned::to_owned),
+        end: end.map(ToOwned::to_owned),
+        include_data,
+        expand: expand.cloned(),
+        limits: None,
+    })
 }
 
 /// Build a `calendar-multiget` REPORT request body (RFC 4791 §7.9).

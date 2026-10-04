@@ -1,5 +1,6 @@
 use fast_dav_rs::caldav::{
-    CalendarQueryFilter, FreeBusyType, ParamFilter, PropFilter, TextMatch, TimeRange,
+    CalendarDataLimits, CalendarQueryFilter, CalendarQueryOptions, FreeBusyType, ParamFilter,
+    PropFilter, TextMatch, TimeRange, build_calendar_query_body_with_limits,
 };
 use fast_dav_rs::{CalDavClient, Depth, Error, RequestCompressionMode, SyncLevel};
 use futures::StreamExt;
@@ -1982,4 +1983,260 @@ async fn calendar_query_stream_rejects_invalid_component_before_io() {
         err,
         Error::InvalidComponentName { ref name, bad_char: None, .. } if name.is_empty()
     ));
+}
+
+/// S4.2 — `build_calendar_query_body_with_limits` serializes the limit
+/// elements inside `<C:calendar-data>` and keeps the classic filter shape.
+#[test]
+fn build_calendar_query_body_with_limits_serializes_limits() {
+    let options =
+        CalendarQueryOptions::new("VEVENT")
+            .with_start("20240101T000000Z")
+            .with_end("20240201T000000Z")
+            .with_include_data(true)
+            .with_expand(TimeRange::new("20240101T000000Z").with_end("20240201T000000Z"))
+            .with_limits(CalendarDataLimits::new().with_recurrence_set(
+                TimeRange::new("20240101T000000Z").with_end("20241231T235959Z"),
+            ));
+    let body = build_calendar_query_body_with_limits(&options);
+    assert!(
+        body.contains(
+            "<C:calendar-query xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
+        ),
+        "calendar-query root missing: {body}"
+    );
+    assert!(
+        body.contains(
+            "<C:limit-recurrence-set start=\"20240101T000000Z\" end=\"20241231T235959Z\"/>"
+        ),
+        "limit-recurrence-set missing: {body}"
+    );
+    assert!(
+        body.contains("<C:comp-filter name=\"VEVENT\">"),
+        "component filter missing: {body}"
+    );
+    assert!(
+        body.contains("<C:time-range start=\"20240101T000000Z\" end=\"20240201T000000Z\"/>"),
+        "filter time-range missing: {body}"
+    );
+    // DTD order: expand before limits.
+    let expand = body.find("<C:expand").expect("expand element missing");
+    let limit = body.find("<C:limit-recurrence-set").expect("limit missing");
+    assert!(expand < limit, "expand must precede limits: {body}");
+}
+
+/// S4.2 — limits imply calendar data (like expand): the data element is
+/// requested even with `include_data: false`.
+#[test]
+fn build_calendar_query_body_with_limits_implies_data() {
+    let options = CalendarQueryOptions::new("VEVENT").with_limits(
+        CalendarDataLimits::new()
+            .with_recurrence_set(TimeRange::new("20240101T000000Z").with_end("20241231T235959Z")),
+    );
+    assert!(!options.include_data);
+    let body = build_calendar_query_body_with_limits(&options);
+    assert!(
+        body.contains("<C:calendar-data><C:limit-recurrence-set"),
+        "limits must imply calendar-data: {body}"
+    );
+}
+
+/// S4.2 — wire test: the REPORT carries the full options shape and the
+/// multistatus maps to `Vec<CalendarObject>`.
+#[tokio::test]
+async fn calendar_query_options_sends_report_with_limits_and_parses_objects() {
+    let ical = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20240115T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR";
+    let body = format!(
+        "<?xml version=\"1.0\"?>\
+<D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">\
+<D:response><D:href>/cal/e1.ics</D:href><D:propstat><D:prop>\
+<D:getetag>\"etag-1\"</D:getetag>\
+<C:calendar-data><![CDATA[{ical}]]></C:calendar-data>\
+</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>\
+</D:multistatus>"
+    );
+    let (base, captured) = crate::common::http_helpers::serve_capture(
+        crate::common::http_helpers::response_head("", body.len()),
+        body.into_bytes(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let options = CalendarQueryOptions::new("VEVENT")
+        .with_start("20240101T000000Z")
+        .with_end("20240201T000000Z")
+        .with_include_data(true)
+        .with_expand(TimeRange::new("20240101T000000Z").with_end("20240201T000000Z"))
+        .with_limits(
+            CalendarDataLimits::new()
+                .with_recurrence_set(
+                    TimeRange::new("20240101T000000Z").with_end("20241231T235959Z"),
+                )
+                .with_freebusy_set(TimeRange::new("20240101T000000Z").with_end("20240201T000000Z")),
+        );
+    let objects = client
+        .calendar_query_options("cal/", &options)
+        .await
+        .unwrap();
+
+    let raw = captured.lock().unwrap();
+    let req = String::from_utf8_lossy(&raw);
+    assert!(req.contains("REPORT"), "expected REPORT method: {req}");
+    assert!(
+        req.contains(
+            "<C:calendar-query xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
+        ),
+        "calendar-query root missing: {req}"
+    );
+    assert!(
+        req.contains("<C:expand start=\"20240101T000000Z\" end=\"20240201T000000Z\"/>"),
+        "expand missing: {req}"
+    );
+    assert!(
+        req.contains(
+            "<C:limit-recurrence-set start=\"20240101T000000Z\" end=\"20241231T235959Z\"/>"
+        ),
+        "limit-recurrence-set missing: {req}"
+    );
+    assert!(
+        req.contains("<C:limit-freebusy-set start=\"20240101T000000Z\" end=\"20240201T000000Z\"/>"),
+        "limit-freebusy-set missing: {req}"
+    );
+
+    assert_eq!(objects.len(), 1);
+    assert_eq!(objects[0].href, "/cal/e1.ics");
+    // ETags are normalized (surrounding quotes stripped).
+    assert_eq!(objects[0].etag.as_deref(), Some("etag-1"));
+    assert!(
+        objects[0]
+            .calendar_data
+            .as_deref()
+            .unwrap_or("")
+            .contains("BEGIN:VEVENT")
+    );
+}
+
+/// S4.2 — a non-success status maps to `UnexpectedStatus`
+/// (`Operation::ReportCalendarQuery`).
+#[tokio::test]
+async fn calendar_query_options_maps_http_error_to_unexpected_status() {
+    let (base, _captured) = crate::common::http_helpers::serve_capture(
+        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_string(),
+        Vec::new(),
+    )
+    .await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+    client.set_request_compression_mode(RequestCompressionMode::Disabled);
+
+    let err = client
+        .calendar_query_options("cal/", &CalendarQueryOptions::new("VEVENT"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            Error::UnexpectedStatus {
+                operation,
+                status,
+                ..
+            } if *operation == fast_dav_rs::Operation::ReportCalendarQuery
+                && status.as_u16() == 500
+        ),
+        "expected UnexpectedStatus(500), got: {err:?}"
+    );
+}
+
+/// S4.2 — pre-I/O validation: empty component name.
+#[tokio::test]
+async fn calendar_query_options_rejects_empty_component_before_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let err = client
+        .calendar_query_options("cal/", &CalendarQueryOptions::new(""))
+        .await
+        .unwrap_err();
+    // Mirrors `calendar_query_timerange`: component names are rejected with
+    // the typed `InvalidComponentName` variant (AGENTS.md error-variant rule).
+    assert!(
+        matches!(err, Error::InvalidComponentName { .. }),
+        "expected InvalidComponentName, got: {err:?}"
+    );
+}
+
+/// S4.2 — pre-I/O validation: expand without end (RFC 4791 §9.6.5).
+#[tokio::test]
+async fn calendar_query_options_rejects_expand_without_end_before_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    let err = client
+        .calendar_query_options(
+            "cal/",
+            &CalendarQueryOptions::new("VEVENT").with_expand(TimeRange::new("20240101T000000Z")),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "expected InvalidInput, got: {err:?}"
+    );
+}
+
+/// S4.2 — pre-I/O validation of the limit windows: invalid UTC date-time,
+/// end before start, and a limit range without its mandatory `end`.
+#[tokio::test]
+async fn calendar_query_options_rejects_invalid_limit_ranges_before_io() {
+    let base = crate::common::http_helpers::unreachable_base().await;
+    let client = CalDavClient::new(&base, None, None).unwrap();
+
+    // Malformed start → InvalidDateTime.
+    let err = client
+        .calendar_query_options(
+            "cal/",
+            &CalendarQueryOptions::new("VEVENT")
+                .with_limits(CalendarDataLimits::new().with_recurrence_set(
+                    TimeRange::new("not-a-date").with_end("20241231T235959Z"),
+                )),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDateTime { .. }),
+        "expected InvalidDateTime, got: {err:?}"
+    );
+
+    // end <= start → InvalidDateTime.
+    let err = client
+        .calendar_query_options(
+            "cal/",
+            &CalendarQueryOptions::new("VEVENT").with_limits(
+                CalendarDataLimits::new().with_recurrence_set(
+                    TimeRange::new("20240201T000000Z").with_end("20240101T000000Z"),
+                ),
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidDateTime { .. }),
+        "expected InvalidDateTime, got: {err:?}"
+    );
+
+    // Missing end (RFC 4791 §9.6.4 makes both attributes #REQUIRED).
+    let err = client
+        .calendar_query_options(
+            "cal/",
+            &CalendarQueryOptions::new("VEVENT").with_limits(
+                CalendarDataLimits::new().with_freebusy_set(TimeRange::new("20240101T000000Z")),
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "expected InvalidInput, got: {err:?}"
+    );
 }

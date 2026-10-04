@@ -980,3 +980,93 @@ impl CalendarDataLimits {
         self
     }
 }
+
+/// Structured options for a CalDAV `calendar-query` REPORT
+/// (RFC 4791 §7.8), consumed by
+/// [`CalDavClient::calendar_query_options`](crate::CalDavClient::calendar_query_options).
+///
+/// One extensible struct instead of new positional method variants: the
+/// `start`/`end` filter window, data inclusion, server-side expansion, and
+/// data-return limits are all optional. Build with
+/// [`CalendarQueryOptions::new`] plus the `with_*` constructors:
+///
+/// ```
+/// use fast_dav_rs::{TimeRange, caldav::CalendarQueryOptions, webdav::CalendarDataLimits};
+///
+/// let options = CalendarQueryOptions::new("VEVENT")
+///     .with_start("20240101T000000Z")
+///     .with_end("20240201T000000Z")
+///     .with_include_data(true)
+///     .with_expand(TimeRange::new("20240101T000000Z").with_end("20240201T000000Z"))
+///     .with_limits(CalendarDataLimits::new());
+/// assert_eq!(options.component, "VEVENT");
+/// assert!(options.include_data);
+/// ```
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct CalendarQueryOptions {
+    /// iCalendar component to filter on (e.g. `VEVENT`, `VTODO`), validated
+    /// by the client before any network I/O.
+    pub component: String,
+    /// Optional inclusive filter-window start (`<C:time-range start>`,
+    /// iCalendar UTC date-time).
+    pub start: Option<String>,
+    /// Optional filter-window end (`<C:time-range end>`); must be after
+    /// `start` when both are set.
+    pub end: Option<String>,
+    /// Request the calendar data body (`<C:calendar-data>`). Implied when
+    /// `expand` or `limits` is set.
+    pub include_data: bool,
+    /// Optional server-side recurrence expansion (RFC 4791 §9.6.5); both
+    /// bounds are mandatory, `end` after `start`.
+    pub expand: Option<TimeRange>,
+    /// Optional data-return limits (RFC 4791 §9.6.4). Implies calendar data
+    /// like `expand` does.
+    pub limits: Option<CalendarDataLimits>,
+}
+
+impl CalendarQueryOptions {
+    /// Create options for `component` with everything else unset (no filter
+    /// window, no data, no expansion, no limits).
+    pub fn new(component: impl Into<String>) -> Self {
+        Self {
+            component: component.into(),
+            start: None,
+            end: None,
+            include_data: false,
+            expand: None,
+            limits: None,
+        }
+    }
+
+    /// Set the filter-window start.
+    pub fn with_start(mut self, start: impl Into<String>) -> Self {
+        self.start = Some(start.into());
+        self
+    }
+
+    /// Set the filter-window end (must be after `start`).
+    pub fn with_end(mut self, end: impl Into<String>) -> Self {
+        self.end = Some(end.into());
+        self
+    }
+
+    /// Request the calendar data body.
+    pub fn with_include_data(mut self, include_data: bool) -> Self {
+        self.include_data = include_data;
+        self
+    }
+
+    /// Request server-side recurrence expansion (RFC 4791 §9.6.5). Implies
+    /// calendar data.
+    pub fn with_expand(mut self, expand: TimeRange) -> Self {
+        self.expand = Some(expand);
+        self
+    }
+
+    /// Set data-return limits (RFC 4791 §9.6.4). Implies calendar data.
+    pub fn with_limits(mut self, limits: CalendarDataLimits) -> Self {
+        self.limits = Some(limits);
+        self
+    }
+}

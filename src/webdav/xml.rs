@@ -1,5 +1,7 @@
 use crate::caldav::types::TimeRange;
-use crate::webdav::types::{CalendarDataLimits, Collation, MatchType, SyncLevel};
+use crate::webdav::types::{
+    CalendarDataLimits, CalendarQueryOptions, Collation, MatchType, SyncLevel,
+};
 use crate::{Error, Result};
 
 pub fn escape_xml(input: &str) -> String {
@@ -240,6 +242,71 @@ pub fn build_sync_collection_body(
     }
     body.push_str("</D:sync-collection>");
     body
+}
+
+/// Build a `calendar-query` REPORT body (RFC 4791 §7.8) from structured
+/// options, with optional data-return limits (RFC 4791 §9.6.4).
+///
+/// Pure XML renderer: no validation happens here. The validating entry point
+/// is [`CalDavClient::calendar_query_options`](crate::CalDavClient::calendar_query_options),
+/// which rejects invalid component names, UTC date-times, and limit windows
+/// before any network I/O.
+///
+/// The `<C:calendar-data>` element is included when `include_data` is set —
+/// and implied when `expand` or `limits` is set (a server cannot expand or
+/// limit data it does not return).
+///
+/// # Example
+///
+/// ```
+/// use fast_dav_rs::{TimeRange, caldav::CalendarQueryOptions, webdav::CalendarDataLimits};
+///
+/// let options = CalendarQueryOptions::new("VEVENT")
+///     .with_start("20240101T000000Z")
+///     .with_end("20240201T000000Z")
+///     .with_limits(
+///         CalendarDataLimits::new()
+///             .with_recurrence_set(TimeRange::new("20240101T000000Z").with_end("20241231T235959Z")),
+///     );
+/// let body = fast_dav_rs::caldav::build_calendar_query_body_with_limits(&options);
+/// assert!(body.contains("<C:limit-recurrence-set start=\"20240101T000000Z\" end=\"20241231T235959Z\"/>"));
+/// assert!(body.contains("<C:calendar-data><C:limit-recurrence-set"));
+/// ```
+pub fn build_calendar_query_body_with_limits(options: &CalendarQueryOptions) -> String {
+    let mut prop = String::from("<D:prop><D:getetag/>");
+    if options.include_data || options.expand.is_some() || options.limits.is_some() {
+        prop.push_str(&data_element_xml_inner(
+            "calendar-data",
+            options
+                .expand
+                .as_ref()
+                .map(|tr| (tr.start.as_str(), tr.end.as_deref())),
+            options.limits.as_ref(),
+        ));
+    }
+    prop.push_str("</D:prop>");
+
+    let mut filter = format!(
+        "<C:filter>\
+           <C:comp-filter name=\"VCALENDAR\">\
+             <C:comp-filter name=\"{}\">",
+        escape_xml(&options.component)
+    );
+    if options.start.is_some() || options.end.is_some() {
+        filter.push_str("<C:time-range");
+        if let Some(s) = &options.start {
+            filter.push_str(&format!(" start=\"{}\"", escape_xml(s)));
+        }
+        if let Some(e) = &options.end {
+            filter.push_str(&format!(" end=\"{}\"", escape_xml(e)));
+        }
+        filter.push_str("/>");
+    }
+    filter.push_str("</C:comp-filter></C:comp-filter></C:filter>");
+
+    format!(
+        r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">{prop}{filter}</C:calendar-query>"#
+    )
 }
 
 /// Render a `<C:text-match>` element.
