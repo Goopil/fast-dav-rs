@@ -737,6 +737,21 @@ pub struct DavItem {
     /// RFC 8607 defines `MANAGED-ID` only as an iCalendar `ATTACH`
     /// parameter, §4.3).
     pub managed_ids: Vec<String>,
+    /// `calendar-proxy-read-for` hrefs (calendar-proxy companion spec of
+    /// RFC 6638): principals for which this principal acts as a read
+    /// proxy/delegate. Empty when the property was not requested or the
+    /// server omitted it.
+    pub calendar_proxy_read_for: Vec<String>,
+    /// `calendar-proxy-write-for` hrefs (calendar-proxy companion spec of
+    /// RFC 6638): principals for which this principal acts as a write
+    /// proxy/delegate. Empty when the property was not requested or the
+    /// server omitted it.
+    pub calendar_proxy_write_for: Vec<String>,
+    /// `group-member-set` hrefs (RFC 3744 §5.4): members of a group
+    /// principal — for the calendar-proxy spec, the delegates of a
+    /// `calendar-proxy-read`/`calendar-proxy-write` group. Empty when the
+    /// property was not requested or the server omitted it.
+    pub group_member_set: Vec<String>,
     /// Privileges granted to the authenticated user, from
     /// `current-user-privilege-set` (RFC 3744 §5.4). Empty when the property
     /// was not requested or the server omitted it.
@@ -784,6 +799,9 @@ impl DavItem {
             schedule_outbox: None,
             calendar_user_addresses: Vec::new(),
             managed_ids: Vec::new(),
+            calendar_proxy_read_for: Vec::new(),
+            calendar_proxy_write_for: Vec::new(),
+            group_member_set: Vec::new(),
             current_user_privileges: Vec::new(),
             current_user_principal: Vec::new(),
             owner: None,

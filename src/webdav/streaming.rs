@@ -324,6 +324,9 @@ pub enum ElementName {
     ManagedId,
     CurrentUserPrivilegeSet,
     Privilege,
+    CalendarProxyReadFor,
+    CalendarProxyWriteFor,
+    GroupMemberSet,
 }
 
 /// Map a raw XML element name (`prefix:local` or `local`) to an
@@ -415,6 +418,12 @@ pub fn element_from_bytes(raw: &[u8]) -> ElementName {
         ElementName::CurrentUserPrivilegeSet
     } else if local.eq_ignore_ascii_case(b"privilege") {
         ElementName::Privilege
+    } else if local.eq_ignore_ascii_case(b"calendar-proxy-read-for") {
+        ElementName::CalendarProxyReadFor
+    } else if local.eq_ignore_ascii_case(b"calendar-proxy-write-for") {
+        ElementName::CalendarProxyWriteFor
+    } else if local.eq_ignore_ascii_case(b"group-member-set") {
+        ElementName::GroupMemberSet
     } else if local.eq_ignore_ascii_case(b"owner") {
         ElementName::Owner
     } else if local.eq_ignore_ascii_case(b"getcontenttype") {
@@ -1056,6 +1065,34 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             // only as an iCalendar ATTACH parameter); a suffix match on the
             // element name keeps this independent of the parent nesting.
             self.current.managed_ids.push(trimmed.to_string());
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::CalendarProxyReadFor,
+            ElementName::Href,
+        ]) {
+            self.current
+                .calendar_proxy_read_for
+                .push(trimmed.to_string());
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::CalendarProxyWriteFor,
+            ElementName::Href,
+        ]) {
+            self.current
+                .calendar_proxy_write_for
+                .push(trimmed.to_string());
+        } else if self.path_ends_with(&[
+            ElementName::Response,
+            ElementName::Propstat,
+            ElementName::Prop,
+            ElementName::GroupMemberSet,
+            ElementName::Href,
+        ]) {
+            self.current.group_member_set.push(trimmed.to_string());
         }
         Ok(())
     }
