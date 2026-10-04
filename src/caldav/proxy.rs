@@ -14,7 +14,13 @@
 //!
 //! [`CalDavClient::grant_calendar_proxy`] /
 //! [`CalDavClient::revoke_calendar_proxy`] change a delegation through an
-//! `ACL` request on the proxy group principal.
+//! `ACL` request on the proxy group principal. Both match the caller-supplied
+//! delegate href against the server-listed members with href normalization
+//! (absolute URIs are reduced to their path and percent-escapes are decoded,
+//! the same equivalence rule the multiget reconciliation uses), so
+//! `https://host/principals/users/bob/` and `/principals/users/bob/` are the
+//! same member; revoke fails with [`Error::InvalidInput`] when the delegate
+//! is not a current member instead of silently re-issuing an unchanged ACL.
 //!
 //! # Wire form caveat
 //!
@@ -28,9 +34,12 @@
 //! against the SabreDAV fixture record the observed behavior of a real
 //! server (see `tests/e2e/sabredav/caldav/proxy_tests.rs`).
 
+use std::collections::HashSet;
+
 use crate::Result;
 use crate::caldav::streaming::parse_multistatus_bytes;
 use crate::webdav::acl::{Ace, AcePrincipal, build_acl_body, principal_href_for_acl};
+use crate::webdav::multiget::normalize_href;
 use crate::webdav::types::Privilege;
 use crate::{CalDavClient, Depth, Error, Operation};
 
@@ -78,6 +87,33 @@ fn proxy_group_path(principal_path: &str, write: bool) -> String {
         "{trimmed}/calendar-proxy-{}",
         if write { "write" } else { "read" }
     )
+}
+
+/// Partition the server-returned `group-member-set` hrefs for ACL
+/// re-issuance: members equivalent to `delegate_key` collapse into the
+/// returned `Option` (first server-returned spelling wins), the remaining
+/// members are de-duplicated by normalized href (equivalent spellings of the
+/// same principal must not produce two ACEs).
+fn partition_members<'a>(
+    members: &'a [String],
+    delegate_key: &str,
+) -> (Vec<&'a String>, Option<&'a String>) {
+    let mut kept: Vec<&String> = Vec::new();
+    let mut delegate_member: Option<&String> = None;
+    let mut seen: HashSet<String> = HashSet::new();
+    for member in members {
+        let key = normalize_href(member);
+        if key == delegate_key {
+            if delegate_member.is_none() {
+                delegate_member = Some(member);
+            }
+            continue;
+        }
+        if seen.insert(key) {
+            kept.push(member);
+        }
+    }
+    (kept, delegate_member)
 }
 
 impl CalDavClient {
@@ -198,6 +234,14 @@ impl CalDavClient {
     /// `write`) to `delegate_href` — keeping an ACE for every existing
     /// member so no current delegation is clobbered.
     ///
+    /// `delegate_href` must identify the same principal the server lists in
+    /// `group-member-set`; href equivalence follows the multiget
+    /// reconciliation rule (absolute URIs are reduced to their path and
+    /// percent-escapes are decoded), so `https://host/principals/users/bob/`
+    /// and `/principals/users/bob/` are the same member. When the delegate is
+    /// already listed, its ACE reuses the server-returned href form, so
+    /// equivalent spellings never produce two ACEs for the same principal.
+    ///
     /// # Wire form caveat
     ///
     /// The ACL-based wire form is **server-dependent** (see the module
@@ -230,9 +274,12 @@ impl CalDavClient {
             .calendar_proxy_group_members(principal_path, write)
             .await?;
 
-        let mut aces: Vec<Ace> = members
-            .iter()
-            .filter(|member| *member != &delegate)
+        // One ACE per server-listed member; when the delegate is already a
+        // member the ACE reuses the server's href form so an absolute-URL
+        // caller spelling never duplicates the entry.
+        let (kept, delegate_member) = partition_members(&members, &normalize_href(&delegate));
+        let mut aces: Vec<Ace> = kept
+            .into_iter()
             .map(|member| Ace {
                 principal: AcePrincipal::Href(member.clone()),
                 grant: vec![privilege.clone()],
@@ -241,7 +288,10 @@ impl CalDavClient {
             })
             .collect();
         aces.push(Ace {
-            principal: AcePrincipal::Href(delegate),
+            principal: AcePrincipal::Href(match delegate_member {
+                Some(member) => member.clone(),
+                None => delegate,
+            }),
             grant: vec![privilege],
             deny: Vec::new(),
             protected: false,
@@ -261,6 +311,15 @@ impl CalDavClient {
     /// `<D:acl>` (zero ACEs is schema-valid per RFC 3744 §5.5 and clears the
     /// explicitly granted access).
     ///
+    /// `delegate_href` must identify a principal the server currently lists
+    /// in `group-member-set`; href equivalence follows the multiget
+    /// reconciliation rule (absolute URIs are reduced to their path and
+    /// percent-escapes are decoded), so `https://host/principals/users/bob/`
+    /// and `/principals/users/bob/` are the same member. When the delegate is
+    /// **not** among the members, [`Error::InvalidInput`] is returned before
+    /// any `ACL` request is sent — revoke never silently re-issues an ACL
+    /// that omits nothing.
+    ///
     /// # Wire form caveat
     ///
     /// The ACL-based wire form is **server-dependent** (see the module
@@ -270,7 +329,9 @@ impl CalDavClient {
     /// # Errors
     ///
     /// Returns [`Error::InvalidInput`] **before any network I/O** when
-    /// `delegate_href` is empty. Returns
+    /// `delegate_href` is empty, and when `delegate_href` does not match any
+    /// current `group-member-set` member (href comparison normalizes absolute
+    /// URIs to their path and percent-escapes). Returns
     /// [`Error::UnexpectedStatus`] with [`Operation::PropfindCalendarProxy`]
     /// when the member lookup fails, with [`Operation::Acl`] when the `ACL`
     /// request fails, and an error when the transport itself fails.
@@ -291,7 +352,15 @@ impl CalDavClient {
             .calendar_proxy_group_members(principal_path, write)
             .await?;
 
-        let remaining: Vec<&String> = members.iter().filter(|m| *m != &delegate).collect();
+        let (remaining, delegate_member) = partition_members(&members, &normalize_href(&delegate));
+        if delegate_member.is_none() {
+            return Err(Error::InvalidInput(
+                "delegate is not a member of the calendar-proxy group; revoke_calendar_proxy \
+                 requires a delegate_href matching a group-member-set entry (href comparison \
+                 normalizes absolute URIs to their path and percent-escapes)"
+                    .to_string(),
+            ));
+        }
         let body = if remaining.is_empty() {
             // Zero ACEs is valid per the RFC 3744 §5.5 DTD (`<!ELEMENT acl
             // (ace*)>`); `build_acl_body` requires at least one entry, so the

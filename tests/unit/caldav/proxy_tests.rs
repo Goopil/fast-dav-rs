@@ -271,3 +271,236 @@ async fn grant_rejects_empty_delegate_before_io() {
         "empty delegate must fail pre-I/O validation, got: {err:?}"
     );
 }
+
+#[tokio::test]
+async fn calendar_proxy_group_members_non_success_maps_to_unexpected_status() {
+    let base = serve_once(
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+        Vec::new(),
+    )
+    .await;
+    let client = make_client(&base);
+    let err = client
+        .calendar_proxy_group_members("principals/users/test/", false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            Error::UnexpectedStatus { operation, .. } if *operation == Operation::PropfindCalendarProxy
+        ),
+        "got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn grant_calendar_proxy_acl_non_success_maps_to_unexpected_status() {
+    let body = group_member_set_body();
+    let (base, captured) = serve_sequence(vec![
+        (response_head("", body.len()), body),
+        (
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+            Vec::new(),
+        ),
+    ])
+    .await;
+    let client = make_client(&base);
+    let err = client
+        .grant_calendar_proxy(
+            "principals/users/test/",
+            "/principals/users/delegate/",
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::UnexpectedStatus { operation, .. } if *operation == Operation::Acl),
+        "the failing ACL step must surface as Operation::Acl, got: {err:?}"
+    );
+    assert_eq!(captured.lock().unwrap().len(), 2, "PROPFIND then ACL");
+}
+
+#[tokio::test]
+async fn revoke_calendar_proxy_acl_non_success_maps_to_unexpected_status() {
+    let body = group_member_set_body();
+    let (base, captured) = serve_sequence(vec![
+        (response_head("", body.len()), body),
+        (
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+            Vec::new(),
+        ),
+    ])
+    .await;
+    let client = make_client(&base);
+    let err = client
+        .revoke_calendar_proxy(
+            "principals/users/test/",
+            "/principals/users/delegate/",
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::UnexpectedStatus { operation, .. } if *operation == Operation::Acl),
+        "the failing ACL step must surface as Operation::Acl, got: {err:?}"
+    );
+    assert_eq!(captured.lock().unwrap().len(), 2, "PROPFIND then ACL");
+}
+
+#[tokio::test]
+async fn revoke_last_member_sends_empty_acl_body() {
+    let body = r#"<?xml version="1.0" encoding="utf-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/principals/users/test/calendar-proxy-read/</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:group-member-set>
+          <D:href>/principals/users/delegate/</D:href>
+        </D:group-member-set>
+      </D:prop>
+      <D:status>HTTP/1.1 200 OK</D:status>
+    </D:propstat>
+  </D:response>
+</D:multistatus>"#
+        .as_bytes()
+        .to_vec();
+    let (base, captured) = serve_sequence(vec![
+        (response_head("", body.len()), body),
+        (response_head("", 0), Vec::new()),
+    ])
+    .await;
+    let client = make_client(&base);
+
+    client
+        .revoke_calendar_proxy(
+            "principals/users/test/",
+            "/principals/users/delegate/",
+            false,
+        )
+        .await
+        .unwrap();
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.len(), 2, "PROPFIND then ACL");
+    let acl = String::from_utf8_lossy(&captured[1]);
+    let acl_body = &acl[acl.find("\r\n\r\n").map(|pos| pos + 4).unwrap_or(0)..];
+    assert_eq!(
+        acl_body, "<D:acl xmlns:D=\"DAV:\"></D:acl>",
+        "revoking the last member must send the empty <D:acl> document: {acl}"
+    );
+}
+
+#[tokio::test]
+async fn revoke_rejects_empty_delegate_before_io() {
+    let base = unreachable_base().await;
+    let client = make_client(&base);
+    let err = client
+        .revoke_calendar_proxy("principals/users/test/", "", false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "empty delegate must fail pre-I/O validation, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn revoke_calendar_proxy_normalizes_delegate_href_form() {
+    let body = group_member_set_body();
+    let (base, captured) = serve_sequence(vec![
+        (response_head("", body.len()), body),
+        (response_head("", 0), Vec::new()),
+    ])
+    .await;
+    let client = make_client(&base);
+
+    // The server lists the delegate as a path href; the caller passes the
+    // same principal as an absolute URL — href normalization must still
+    // revoke it instead of re-issuing an unchanged ACL.
+    let delegate = format!("{base}principals/users/delegate/");
+    client
+        .revoke_calendar_proxy("principals/users/test/", &delegate, false)
+        .await
+        .unwrap();
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.len(), 2, "PROPFIND then ACL");
+    let acl = String::from_utf8_lossy(&captured[1]);
+    assert!(
+        !acl.contains("/principals/users/delegate/"),
+        "the revoked delegate must be absent from the ACL body: {acl}"
+    );
+    assert!(
+        acl.contains("/principals/users/other/"),
+        "the other group member must keep its grant: {acl}"
+    );
+    assert!(
+        !acl.contains("http://"),
+        "members must be re-issued in the server's path form: {acl}"
+    );
+}
+
+#[tokio::test]
+async fn revoke_non_member_fails_without_sending_acl() {
+    let body = group_member_set_body();
+    let (base, captured) = serve_sequence(vec![(response_head("", body.len()), body)]).await;
+    let client = make_client(&base);
+
+    let err = client
+        .revoke_calendar_proxy(
+            "principals/users/test/",
+            "/principals/users/stranger/",
+            false,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "revoking a non-member must fail with InvalidInput, got: {err:?}"
+    );
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.len(), 1, "only the member PROPFIND is sent");
+    assert!(
+        String::from_utf8_lossy(&captured[0]).starts_with("PROPFIND "),
+        "the single captured request must be the member PROPFIND"
+    );
+}
+
+#[tokio::test]
+async fn grant_calendar_proxy_normalizes_delegate_href_form() {
+    let body = group_member_set_body();
+    let (base, captured) = serve_sequence(vec![
+        (response_head("", body.len()), body),
+        (response_head("", 0), Vec::new()),
+    ])
+    .await;
+    let client = make_client(&base);
+
+    // The delegate is already a member in path form; granting through the
+    // absolute-URL spelling must reuse the server's href, not emit a second
+    // ACE for the same principal.
+    let delegate = format!("{base}principals/users/delegate/");
+    client
+        .grant_calendar_proxy("principals/users/test/", &delegate, false)
+        .await
+        .unwrap();
+
+    let captured = captured.lock().unwrap();
+    assert_eq!(captured.len(), 2, "PROPFIND then ACL");
+    let acl = String::from_utf8_lossy(&captured[1]);
+    assert_eq!(
+        acl.matches("/principals/users/delegate/").count(),
+        1,
+        "the delegate must appear in exactly one ACE: {acl}"
+    );
+    assert!(
+        !acl.contains("http://"),
+        "the delegate ACE must reuse the server's path form: {acl}"
+    );
+    assert!(
+        acl.contains("/principals/users/other/"),
+        "the other group member must keep its grant: {acl}"
+    );
+}

@@ -7,6 +7,12 @@
 //! extension, RFC 4791 §6.1.1) and one of the RFC 3744 §5.2 principals
 //! exposed as [`AcePrincipal`].
 //!
+//! Privilege elements carry their RFC namespace: WebDAV privileges serialize
+//! as `<D:…/>` (`DAV:`, declared on the root), while `read-free-busy`
+//! serializes as `<C:read-free-busy/>` in the CalDAV namespace
+//! (`urn:ietf:params:xml:ns:caldav`, RFC 4791 §6.1.1), declared as `xmlns:C`
+//! on the root `<D:acl>` element.
+//!
 //! # Example
 //! ```no_run
 //! use fast_dav_rs::webdav::acl::{Ace, AcePrincipal, build_acl_body};
@@ -64,22 +70,25 @@ pub struct Ace {
     pub protected: bool,
 }
 
-/// Map a typed [`Privilege`] to its XML element local name (RFC 3744 §3,
-/// RFC 4791 §6.1.1). `Privilege::Other(name)` passes through when the name
+/// Map a typed [`Privilege`] to its XML namespace prefix and element local
+/// name. WebDAV privileges (RFC 3744 §3) live in `DAV:` (prefix `D`); the
+/// CalDAV `read-free-busy` extension lives in
+/// `urn:ietf:params:xml:ns:caldav` (prefix `C`, RFC 4791 §6.1.1).
+/// `Privilege::Other(name)` passes through as a `D:` element when the name
 /// is a conforming lowercase element local name, `None` otherwise.
-fn privilege_xml_name(privilege: &Privilege) -> Option<&str> {
+fn privilege_xml_parts(privilege: &Privilege) -> Option<(&'static str, &str)> {
     match privilege {
-        Privilege::Read => Some("read"),
-        Privilege::Write => Some("write"),
-        Privilege::WriteProperties => Some("write-properties"),
-        Privilege::WriteContent => Some("write-content"),
-        Privilege::Bind => Some("bind"),
-        Privilege::Unbind => Some("unbind"),
-        Privilege::Unlock => Some("unlock"),
-        Privilege::ReadFreeBusy => Some("read-free-busy"),
+        Privilege::Read => Some(("D", "read")),
+        Privilege::Write => Some(("D", "write")),
+        Privilege::WriteProperties => Some(("D", "write-properties")),
+        Privilege::WriteContent => Some(("D", "write-content")),
+        Privilege::Bind => Some(("D", "bind")),
+        Privilege::Unbind => Some(("D", "unbind")),
+        Privilege::Unlock => Some(("D", "unlock")),
+        Privilege::ReadFreeBusy => Some(("C", "read-free-busy")),
         Privilege::Other(name) => {
             if !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'-') {
-                Some(name)
+                Some(("D", name))
             } else {
                 None
             }
@@ -87,14 +96,17 @@ fn privilege_xml_name(privilege: &Privilege) -> Option<&str> {
     }
 }
 
-/// Serialize one privilege into `<D:privilege><D:{name}/></D:privilege>`.
+/// Serialize one privilege into
+/// `<D:privilege><{prefix}:{name}/></D:privilege>`.
 fn append_privilege(body: &mut String, privilege: &Privilege, context: &str) -> Result<()> {
-    let name = privilege_xml_name(privilege).ok_or_else(|| {
+    let (prefix, name) = privilege_xml_parts(privilege).ok_or_else(|| {
         Error::InvalidInput(format!(
             "cannot serialize {context} privilege: unrecognized privilege element name"
         ))
     })?;
-    body.push_str("<D:privilege><D:");
+    body.push_str("<D:privilege><");
+    body.push_str(prefix);
+    body.push(':');
     body.push_str(name);
     body.push_str("/></D:privilege>");
     Ok(())
@@ -159,9 +171,12 @@ fn append_ace(body: &mut String, ace: &Ace) -> Result<()> {
 
 /// Build the XML body of an `ACL` request (RFC 3744 §8.1) from typed ACEs.
 ///
-/// The result is a `<D:acl xmlns:D="DAV:">` document carrying one `<D:ace>`
-/// per entry (RFC 3744 §8.1.1), ready for
-/// [`WebDavClient::acl`](crate::webdav::WebDavClient::acl).
+/// The result is a `<D:acl>` document carrying one `<D:ace>` per entry
+/// (RFC 3744 §8.1.1), ready for
+/// [`WebDavClient::acl`](crate::webdav::WebDavClient::acl). The root element
+/// declares both namespaces privileges live in: `xmlns:D` → `DAV:` and
+/// `xmlns:C` → `urn:ietf:params:xml:ns:caldav` — the CalDAV namespace carries
+/// `read-free-busy`, serialized as `<C:read-free-busy/>` per RFC 4791 §6.1.1.
 ///
 /// # Errors
 ///
@@ -193,7 +208,8 @@ pub fn build_acl_body(aces: &[Ace]) -> Result<String> {
             "an ACL body requires at least one access control entry (ace)".to_string(),
         ));
     }
-    let mut body = String::from("<D:acl xmlns:D=\"DAV:\">");
+    let mut body =
+        String::from("<D:acl xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">");
     for ace in aces {
         append_ace(&mut body, ace)?;
     }
@@ -226,14 +242,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn privilege_xml_name_rejects_non_lowercase_other() {
-        assert_eq!(privilege_xml_name(&Privilege::Read), Some("read"));
+    fn privilege_xml_parts_maps_namespaces_and_validates_other() {
+        assert_eq!(privilege_xml_parts(&Privilege::Read), Some(("D", "read")));
         assert_eq!(
-            privilege_xml_name(&Privilege::Other("all".into())),
-            Some("all")
+            privilege_xml_parts(&Privilege::ReadFreeBusy),
+            Some(("C", "read-free-busy"))
         );
-        assert_eq!(privilege_xml_name(&Privilege::Other("Read".into())), None);
-        assert_eq!(privilege_xml_name(&Privilege::Other(String::new())), None);
+        assert_eq!(
+            privilege_xml_parts(&Privilege::Other("all".into())),
+            Some(("D", "all"))
+        );
+        assert_eq!(privilege_xml_parts(&Privilege::Other("Read".into())), None);
+        assert_eq!(privilege_xml_parts(&Privilege::Other(String::new())), None);
     }
 
     #[test]

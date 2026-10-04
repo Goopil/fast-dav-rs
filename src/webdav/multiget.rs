@@ -137,7 +137,11 @@ where
 /// references are reduced to their path component and percent-escapes are
 /// decoded, so `/cal/a.ics`, `https://host/cal/a.ics` and
 /// `https://host/cal/%61.ics` compare equal.
-fn normalize_href(href: &str) -> String {
+///
+/// Shared with the calendar-proxy membership reconciliation
+/// ([`crate::caldav::proxy`]), which matches caller-supplied delegate hrefs
+/// against server-returned `group-member-set` hrefs.
+pub(crate) fn normalize_href(href: &str) -> String {
     let path = match href.find("://") {
         Some(idx) => {
             let rest = &href[idx + 3..];

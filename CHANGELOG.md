@@ -18,9 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolves the `group-member-set` of a principal's
   `calendar-proxy-read`/`calendar-proxy-write` group principals; and
   `grant_calendar_proxy`/`revoke_calendar_proxy` change delegations via
-  an `ACL` request on the proxy group principal. The delegation wire
-  form is server-dependent — the e2e suite records observed server
-  behavior instead of assuming conformance.
+  an `ACL` request on the proxy group principal. Delegate hrefs are
+  matched against the server-listed members with href normalization
+  (absolute URIs reduce to their path, percent-escapes are decoded);
+  `revoke_calendar_proxy` fails with `Error::InvalidInput` instead of
+  silently re-issuing an unchanged ACL when the delegate is not a
+  current member. The delegation wire form is server-dependent — the
+  e2e suite records observed server behavior instead of assuming
+  conformance.
 - Typed ACL body builder (RFC 3744): `webdav::acl::build_acl_body`
   renders `Ace`s (`AcePrincipal` × granted/denied `Privilege`, optional
   `protected` flag) into the RFC 3744 §8.1.1 XML body, rejecting

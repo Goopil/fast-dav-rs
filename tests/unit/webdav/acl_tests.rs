@@ -57,7 +57,7 @@ fn build_acl_body_grant_deny() {
         protected: false,
     }])
     .unwrap();
-    assert!(body.contains("<D:acl xmlns:D=\"DAV:\">"));
+    assert!(body.contains("<D:acl xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"));
     assert!(body.contains("<D:ace>"));
     assert!(body.contains("<D:principal><D:href>/principals/users/bob/</D:href></D:principal>"));
     assert!(body.contains("<D:grant><D:privilege><D:read/></D:privilege></D:grant>"));
@@ -111,6 +111,67 @@ fn build_acl_body_principal_elements_and_protection() {
     assert!(body.contains("<D:principal><D:all/></D:principal>"));
     assert!(body.contains("<D:privilege><D:unlock/></D:privilege>"));
     assert!(body.ends_with("</D:acl>"));
+}
+
+#[test]
+fn build_acl_body_read_free_busy_uses_caldav_namespace() {
+    use fast_dav_rs::webdav::Privilege;
+    use fast_dav_rs::webdav::acl::{Ace, AcePrincipal};
+
+    let body = fast_dav_rs::webdav::acl::build_acl_body(&[Ace {
+        principal: AcePrincipal::All,
+        grant: vec![Privilege::ReadFreeBusy],
+        deny: Vec::new(),
+        protected: false,
+    }])
+    .unwrap();
+    assert!(
+        body.starts_with("<D:acl xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"),
+        "the root element must declare the CalDAV namespace: {body}"
+    );
+    assert!(
+        body.contains("<D:privilege><C:read-free-busy/></D:privilege>"),
+        "read-free-busy must serialize in the CalDAV namespace (RFC 4791 §6.1.1): {body}"
+    );
+    assert!(
+        !body.contains("<D:read-free-busy"),
+        "the WebDAV-namespace spelling must not be emitted: {body}"
+    );
+}
+
+#[test]
+fn build_acl_body_rejects_empty_href_principal() {
+    use fast_dav_rs::webdav::Privilege;
+    use fast_dav_rs::webdav::acl::{Ace, AcePrincipal};
+
+    let err = fast_dav_rs::webdav::acl::build_acl_body(&[Ace {
+        principal: AcePrincipal::Href("   ".into()),
+        grant: vec![Privilege::Read],
+        deny: Vec::new(),
+        protected: false,
+    }])
+    .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "an empty principal href must be rejected, got: {err:?}"
+    );
+}
+
+#[test]
+fn build_acl_body_rejects_ace_without_grant_or_deny() {
+    use fast_dav_rs::webdav::acl::{Ace, AcePrincipal};
+
+    let err = fast_dav_rs::webdav::acl::build_acl_body(&[Ace {
+        principal: AcePrincipal::All,
+        grant: Vec::new(),
+        deny: Vec::new(),
+        protected: false,
+    }])
+    .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidInput(_)),
+        "an ACE without grant or deny must be rejected, got: {err:?}"
+    );
 }
 
 #[test]
