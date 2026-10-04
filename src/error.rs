@@ -258,6 +258,41 @@ pub enum Error {
         dav: WebDavError,
     },
 
+    /// A conditional write answered `412 Precondition Failed`: the validator
+    /// (`ETag`/lock/schedule-tag) did not match; reload the item and retry.
+    ///
+    /// The conditional write methods (`put_if_match`, `delete_if_match`,
+    /// `put_if_schedule_tag`, …) return the raw response for **any** status
+    /// by design — a `412` on a stale ETag is an expected outcome, not a
+    /// transport failure. Apply
+    /// [`conditional_write_error`](crate::webdav::conditional_write_error)
+    /// to the raw response to get this typed error.
+    #[error(
+        "{operation} failed with 412 Precondition Failed: the validator \
+         (ETag/lock/schedule-tag) did not match; reload the item and retry"
+    )]
+    #[non_exhaustive]
+    PreconditionFailed {
+        /// The conditional write that failed.
+        operation: Operation,
+    },
+
+    /// A conditional write answered `428 Precondition Required` (RFC 6585
+    /// §3): the server requires a conditional header on this write.
+    ///
+    /// Retry once a validator is known, with a conditional method such as
+    /// `put_if_match` — or surface the situation to the caller: the server
+    /// is refusing unconditional writes.
+    #[error(
+        "{operation} failed with 428 Precondition Required: the server \
+         requires a conditional header on this write"
+    )]
+    #[non_exhaustive]
+    PreconditionRequired {
+        /// The conditional write that failed.
+        operation: Operation,
+    },
+
     /// A `sync-collection` REPORT result set was truncated (RFC 6578 §3.6:
     /// a `507` status inside the 207 multistatus) and the answer does not
     /// allow continuing it — the server sent no sync token, or repeated the
@@ -496,6 +531,11 @@ pub enum Operation {
     /// `PROPPATCH` to set/remove a calendar's `calendar-timezone`
     /// (RFC 4791 §5.2.2).
     ProppatchCalendarTimezone,
+    /// Conditional `PUT` guarded by `If-Match` / `If-None-Match`
+    /// (`put_if_match`, `put_if_none_match`, `put_if_match_prefer`).
+    PutIfMatch,
+    /// Conditional `DELETE` guarded by `If-Match` (`delete_if_match`).
+    DeleteIfMatch,
     /// `PROPFIND` whose multistatus is streamed item by item.
     Propfind,
     /// `REPORT` whose multistatus is streamed item by item.
@@ -528,6 +568,8 @@ impl std::fmt::Display for Operation {
             Self::Propfind => "PROPFIND",
             Self::Report => "REPORT",
             Self::ProppatchCalendarTimezone => "PROPPATCH calendar-timezone",
+            Self::PutIfMatch => "PUT If-Match",
+            Self::DeleteIfMatch => "DELETE If-Match",
         };
         f.write_str(s)
     }

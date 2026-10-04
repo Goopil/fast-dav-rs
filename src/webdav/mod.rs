@@ -13,8 +13,8 @@ pub use crate::common::http::HyperClient;
 pub use auth::{OAuth2RefreshProvider, TokenProvider};
 pub use builder::WebDavClientBuilder;
 pub use client::{
-    RequestCompressionMode, WebDavClient, etag_from_headers, normalize_etag, normalize_sync_token,
-    preference_applied_from_headers,
+    RequestCompressionMode, WebDavClient, conditional_write_error, etag_from_headers,
+    normalize_etag, normalize_sync_token, preference_applied_from_headers,
 };
 pub use discovery::{discover_caldav, discover_carddav};
 pub use streaming::{

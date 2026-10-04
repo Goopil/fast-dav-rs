@@ -175,6 +175,54 @@ pub fn etag_from_headers(headers: &HeaderMap) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Classify the raw response of a conditional write (RFC 9110 §13, WebDAV
+/// lock tokens RFC 4918 §7, schedule-tag RFC 6638 §8.2).
+///
+/// The conditional write methods (`put_if_match`, `put_if_none_match`,
+/// `delete_if_match`, `put_if_schedule_tag`, …) return the raw
+/// [`Response`] for **any** status by design — e.g. a `412` on a stale ETag
+/// is an expected outcome the caller must handle, not a transport failure.
+/// This helper turns such a raw response into a typed [`Result`]:
+///
+/// - any `2xx` → `Ok(())` — the write happened;
+/// - `412 Precondition Failed` → [`Error::PreconditionFailed`] — the
+///   validator (`ETag`/lock/schedule-tag) did not match; reload the item and
+///   retry;
+/// - `428 Precondition Required` → [`Error::PreconditionRequired`] — the
+///   server requires a conditional header on this write (RFC 6585 §3);
+/// - any other status → [`Error::UnexpectedStatus`].
+///
+/// # Example
+///
+/// ```no_run
+/// use fast_dav_rs::webdav::conditional_write_error;
+/// use fast_dav_rs::{Error, Operation, WebDavClient};
+///
+/// # async fn run(client: &WebDavClient) -> fast_dav_rs::Result<()> {
+/// let resp = client.delete_if_match("cal/event.ics", "\"etag\"").await?;
+/// match conditional_write_error(Operation::DeleteIfMatch, &resp) {
+///     Ok(()) => println!("deleted"),
+///     Err(Error::PreconditionFailed { .. }) => {
+///         // The ETag went stale: reload the item, re-apply the change,
+///         // then retry the conditional delete with the fresh ETag.
+///     }
+///     Err(other) => return Err(other),
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn conditional_write_error(operation: Operation, resp: &Response<Bytes>) -> Result<()> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    match status {
+        StatusCode::PRECONDITION_FAILED => Err(Error::PreconditionFailed { operation }),
+        StatusCode::PRECONDITION_REQUIRED => Err(Error::PreconditionRequired { operation }),
+        _ => Err(Error::UnexpectedStatus { operation, status }),
+    }
+}
+
 /// Extract the `Preference-Applied` response header (RFC 7240 §3) and map it
 /// to a [`Prefer`] preference the client supports.
 ///
