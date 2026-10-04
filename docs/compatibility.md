@@ -34,6 +34,7 @@ Fixtures and test targets:
 | LOCK (RFC 4918 class 2) | ✅ | ❌ (R1) | ◐ (N2) | — |
 | Managed attachments (RFC 8607) | — | ❌ (R2) | — | — |
 | Scheduling (RFC 6638) | ✅ (S1) | — | — | — |
+| Calendar proxies (RFC 6638 companion) | — (S4) | — | — | — |
 | `calendar-timezone` (RFC 4791 §5.2.2) | — (S2) | ✅ | ✅ | — |
 | Compression (gzip / brotli / zstd) | ✅ | — | — | — |
 | OAuth / Bearer auth | — (S3) | — | — (N1) | — |
@@ -61,6 +62,13 @@ Notes:
   schedule-inbox listing. Two gaps: the fixture (SabreDAV 4.7.1) does not
   implement the RFC 6638 §8 schedule-tag mechanism — the e2e records the
   observed behavior — and the outbox `POST` flow has no e2e coverage.
+- **(S4) Calendar proxies on SabreDAV** are discovery-only: the fixture as
+  shipped answers the `calendar-proxy-*-for` properties with 404 propstats
+  and has no `calendar-proxy-read`/`-write` group principals (observed,
+  recorded by `sabredav/caldav/proxy_tests.rs`), and the fixture seeds a
+  single principal, so the grant/revoke `ACL` round-trip has no second
+  principal to delegate to. The library side is wire-mocked in
+  `tests/unit/caldav/proxy_tests.rs`.
 - **(S2) SabreDAV `calendar-timezone`** has no read-back assertion:
   `test_parsing_edge_case_timezones` sets the property at `MKCALENDAR` time
   but only logs the outcome, and the `PROPPATCH` write path is untested on

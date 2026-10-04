@@ -1741,6 +1741,47 @@ impl WebDavClient {
         .await
     }
 
+    /// Send a WebDAV `ACL` request (RFC 3744 §8.1) with a pre-built XML body.
+    ///
+    /// The body carries one or more `<D:ace>` elements; build it with
+    /// [`build_acl_body`](crate::webdav::acl::build_acl_body). A successful
+    /// ACL returns `200 OK` (or `204 No Content`); any other status is
+    /// surfaced as [`Error::UnexpectedStatus`] with [`Operation::Acl`].
+    ///
+    /// Note that ACL wire support varies widely across servers (many expose
+    /// delegation through `PROPPATCH` of `group-member-set` instead); check
+    /// the observed server behavior before relying on this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UnexpectedStatus`] with [`Operation::Acl`] when the
+    /// server responds with a non-success status, and an error when the
+    /// transport itself fails.
+    pub async fn acl(&self, path: &str, xml_body: &str) -> Result<Response<Bytes>> {
+        let mut h = HeaderMap::new();
+        h.insert("Depth", header::HeaderValue::from_static("0"));
+        h.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/xml; charset=utf-8"),
+        );
+        let resp = self
+            .send(
+                Method::from_bytes(b"ACL")?,
+                path,
+                h,
+                Some(Bytes::from(xml_body.to_owned())),
+                None,
+            )
+            .await?;
+        if !resp.status().is_success() {
+            return Err(Error::UnexpectedStatus {
+                operation: crate::Operation::Acl,
+                status: resp.status(),
+            });
+        }
+        Ok(resp)
+    }
+
     /// Send a WebDAV `REPORT` with a custom XML body and `Depth`.
     pub async fn report(
         &self,
@@ -3007,6 +3048,15 @@ macro_rules! impl_dav_client_delegates {
                 xml_body: &str,
             ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
                 self.webdav.proppatch(path, xml_body).await
+            }
+
+            /// Send a WebDAV `ACL` request (RFC 3744 §8.1) with a pre-built XML body.
+            pub async fn acl(
+                &self,
+                path: &str,
+                xml_body: &str,
+            ) -> $crate::Result<hyper::Response<bytes::Bytes>> {
+                self.webdav.acl(path, xml_body).await
             }
 
             /// Send a `REPORT` with a custom XML body and `Depth`.

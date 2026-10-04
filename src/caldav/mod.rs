@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod client;
+pub mod proxy;
 pub mod scheduling;
 pub mod streaming;
 pub mod types;
@@ -17,6 +18,7 @@ pub use client::{
     build_sync_collection_body, map_calendar_list, map_calendar_object, map_calendar_objects,
     map_sync_response,
 };
+pub use proxy::CalendarProxyInfo;
 pub use scheduling::{InboxItem, ScheduleEndpoints, SchedulingResponse};
 // Deprecation propagated from the source items; see `streaming.rs`.
 #[allow(deprecated)]

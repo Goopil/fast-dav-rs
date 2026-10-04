@@ -26,7 +26,7 @@ pub use caldav::streaming::{
 // NOT re-exported here: CalDAV and CardDAV define distinct same-named items —
 // import them from `caldav::` or `carddav::` instead.
 pub use caldav::{
-    BatchItem, CalDavClient, CalendarDataLimits, CalendarInfo, CalendarObject,
+    BatchItem, CalDavClient, CalendarDataLimits, CalendarInfo, CalendarObject, CalendarProxyInfo,
     CalendarQueryOptions, DavItem, Depth, InboxItem, ManagedAttachment, MediaType, MkCalendarProps,
     ScheduleEndpoints, SchedulingResponse, TimeRange, ValidationLevel,
     build_calendar_multiget_body, build_calendar_query_body, build_calendar_query_body_with_limits,
@@ -44,11 +44,12 @@ pub use common::compression::{
 };
 pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
-    DavCapabilities, DavCompliance, DavStreamEvent, HyperClient, ItemStream, LockInfo, LockScope,
-    OAuth2RefreshProvider, Prefer, Privilege, PropStat, RequestCompressionMode, SyncCapability,
-    SyncDelta, SyncEntry, SyncLevel, SyncSession, SyncSnapshot, TokenProvider, WebDavClient,
-    WebDavError, build_propfind_allprop, build_propfind_propname, build_propfind_props,
-    conditional_write_error, data_element_xml_with_limits, discover_caldav, discover_carddav,
-    etag_from_headers, if_header_for_lock_token, normalize_etag, normalize_sync_token,
-    preference_applied_from_headers, schedule_tag_from_headers,
+    Ace, AcePrincipal, DavCapabilities, DavCompliance, DavStreamEvent, HyperClient, ItemStream,
+    LockInfo, LockScope, OAuth2RefreshProvider, Prefer, Privilege, PropStat,
+    RequestCompressionMode, SyncCapability, SyncDelta, SyncEntry, SyncLevel, SyncSession,
+    SyncSnapshot, TokenProvider, WebDavClient, WebDavError, build_acl_body, build_propfind_allprop,
+    build_propfind_propname, build_propfind_props, conditional_write_error,
+    data_element_xml_with_limits, discover_caldav, discover_carddav, etag_from_headers,
+    if_header_for_lock_token, normalize_etag, normalize_sync_token,
+    preference_applied_from_headers, principal_href_for_acl, schedule_tag_from_headers,
 };

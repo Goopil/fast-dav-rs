@@ -1,3 +1,4 @@
+pub mod acl;
 pub mod auth;
 pub mod builder;
 pub mod client;
@@ -10,6 +11,7 @@ pub mod types;
 pub mod xml;
 
 pub use crate::common::http::HyperClient;
+pub use acl::{Ace, AcePrincipal, build_acl_body, principal_href_for_acl};
 pub use auth::{OAuth2RefreshProvider, TokenProvider};
 pub use builder::WebDavClientBuilder;
 pub use client::{

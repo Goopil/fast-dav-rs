@@ -12,7 +12,11 @@ $pdo = new PDO(
 // SabreDAV server setup
 // Create collections
 $principalBackend = new Sabre\DAVACL\PrincipalBackend\PDO($pdo);
-$principalCollection = new Sabre\DAVACL\PrincipalCollection($principalBackend);
+// Calendar-proxy support (companion spec of RFC 6638): the CalDAV principal
+// collection exposes per-user calendar-proxy-read / calendar-proxy-write
+// group principals plus the calendar-proxy-read-for/-write-for properties;
+// the plain DAVACL principal collection lacks them.
+$principalCollection = new Sabre\CalDAV\Principal\Collection($principalBackend);
 
 $calendarBackend = new Sabre\CalDAV\Backend\PDO($pdo);
 $calendarRoot = new Sabre\CalDAV\CalendarRoot($principalBackend, $calendarBackend);

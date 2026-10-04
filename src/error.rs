@@ -484,6 +484,8 @@ pub enum Error {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Operation {
+    /// `ACL` to modify the access control list of a resource (RFC 3744 §8.1).
+    Acl,
     /// `PROPFIND` to discover the current-user-principal.
     PropfindCurrentUserPrincipal,
     /// `PROPFIND` to discover the calendar-home-set.
@@ -492,6 +494,10 @@ pub enum Operation {
     PropfindAddressbookHomeSet,
     /// `PROPFIND` to list calendars or addressbooks.
     PropfindCollections,
+    /// `PROPFIND` to read the calendar-proxy companion properties
+    /// (`calendar-proxy-read-for`/`calendar-proxy-write-for`) or a proxy
+    /// group's `group-member-set`.
+    PropfindCalendarProxy,
     /// `PROPFIND` to read a calendar's `calendar-timezone` (RFC 4791 §5.2.2).
     PropfindCalendarTimezone,
     /// `REPORT` calendar-query.
@@ -551,10 +557,12 @@ pub enum Operation {
 impl std::fmt::Display for Operation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
+            Self::Acl => "ACL",
             Self::PropfindCurrentUserPrincipal => "PROPFIND current-user-principal",
             Self::PropfindCalendarHomeSet => "PROPFIND calendar-home-set",
             Self::PropfindAddressbookHomeSet => "PROPFIND addressbook-home-set",
             Self::PropfindCollections => "PROPFIND collections",
+            Self::PropfindCalendarProxy => "PROPFIND calendar-proxy",
             Self::PropfindCalendarTimezone => "PROPFIND calendar-timezone",
             Self::ReportCalendarQuery => "REPORT calendar-query",
             Self::ReportCalendarMultiget => "REPORT calendar-multiget",

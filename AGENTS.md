@@ -107,6 +107,7 @@ src/
 ├── lib.rs              # Main library entry point with comprehensive examples
 ├── webdav/             # Core WebDAV functionality
 │   ├── client.rs       # WebDavClient and HTTP operations
+│   ├── acl.rs          # Typed ACL body builder (RFC 3744)
 │   ├── types.rs        # Common types and enums
 │   ├── streaming.rs    # Streaming XML parsing
 │   ├── sync.rs         # RFC 6578 sync sessions (SyncSession engine)
@@ -115,6 +116,7 @@ src/
 │   └── mod.rs
 ├── caldav/             # CalDAV-specific functionality
 │   ├── client.rs       # CalDavClient
+│   ├── proxy.rs        # Calendar-proxy listing, resolution, grant/revoke
 │   ├── types.rs        # Calendar-specific types
 │   ├── streaming.rs    # Calendar-specific streaming
 │   ├── scheduling.rs   # RFC 6638 scheduling (endpoints, outbox, inbox, schedule-tag)

@@ -81,6 +81,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Privilege::All` — the RFC 3744 §3.11 aggregate `all` privilege now maps
   to a typed variant (case-insensitively) instead of surfacing as
   `Other("all")`; the enum doc carries the migration caveat.
+- Calendar proxies (calendar-proxy companion spec of RFC 6638, #247):
+  `CalDavClient::list_calendar_proxies` reads the
+  `calendar-proxy-read-for`/`calendar-proxy-write-for` principal
+  properties into `CalendarProxyInfo`; `calendar_proxy_group_members`
+  resolves the `group-member-set` of a principal's
+  `calendar-proxy-read`/`calendar-proxy-write` group principals; and
+  `grant_calendar_proxy`/`revoke_calendar_proxy` change delegations via
+  an `ACL` request on the proxy group principal. Delegate hrefs are
+  matched against the server-listed members with href normalization
+  (absolute URIs reduce to their path, percent-escapes are decoded);
+  `revoke_calendar_proxy` fails with `Error::InvalidInput` instead of
+  silently re-issuing an unchanged ACL when the delegate is not a
+  current member. The delegation wire form is server-dependent — the
+  e2e suite records observed server behavior instead of assuming
+  conformance.
+- Typed ACL body builder (RFC 3744): `webdav::acl::build_acl_body`
+  renders `Ace`s (`AcePrincipal` × granted/denied `Privilege`, optional
+  `protected` flag) into the RFC 3744 §8.1.1 XML body, rejecting
+  conflicting or unserializable ACEs; `principal_href_for_acl`
+  validates principal hrefs.
+- Low-level `WebDavClient::acl` primitive (RFC 3744 §8.1) with the new
+  `Operation::Acl` variant, plus `Operation::PropfindCalendarProxy` for
+  the calendar-proxy lookups.
+- `DavItem.calendar_proxy_read_for`, `DavItem.calendar_proxy_write_for`
+  and `DavItem.group_member_set`: hrefs collected by the shared
+  multistatus streaming parser.
 
 ### Changed — 0.19 cycle (RFC punch list #225)
 

@@ -1,3 +1,4 @@
+pub mod acl_tests;
 pub mod auth_tests;
 pub mod body_builder_tests;
 pub mod builder_tests;
@@ -13,6 +14,7 @@ pub mod prefer_tests;
 pub mod principal_url_tests;
 pub mod privileges_tests;
 pub mod protocol_tests;
+pub mod proxy_parse_tests;
 pub mod redirect_tests;
 pub mod retry_tests;
 pub mod streaming_tests;

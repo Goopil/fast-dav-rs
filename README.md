@@ -75,6 +75,7 @@ features, and major releases introduce breaking changes when needed.
 - CalDAV calendar discovery, queries, and event CRUD.
 - CalDAV `free-busy-query` reports and server-side recurrence expansion (`expand`, RFC 4791 §9.6-9.7).
 - CalDAV scheduling (RFC 6638): schedule endpoint discovery, outbox `POST`, schedule-inbox listing, schedule-tag retrieval (`Schedule-Tag` header + `schedule-tag` property), and `If-Schedule-Tag-Match` conditional writes.
+- CalDAV calendar proxies (calendar-proxy companion spec of RFC 6638): list delegations (`list_calendar_proxies`), resolve proxy group members, and grant/revoke delegations through the low-level `ACL` method with the typed body builder (`webdav::acl::{Ace, AcePrincipal, build_acl_body}`); delegate hrefs are normalized before comparison and `revoke_calendar_proxy` fails with `Error::InvalidInput` when the delegate is not a current group member. The delegation wire form is server-dependent.
 - CalDAV `calendar-timezone` read + write (RFC 4791 §5.2.2): per-calendar read and via `CalendarInfo.timezone`; `set_calendar_timezone` stores/removes the property via `PROPPATCH`.
 - CalDAV managed attachments (RFC 8607, sent in the non-IETF CalendarServer collection-targeted form): `post_managed_attachment` stores an attachment via `?action=attachment-add` and returns its href + `Cal-Managed-ID`; `put_managed_attachment` / `delete_managed_attachment` update/remove it with the `Cal-Managed-ID` header (§5.2/§5.3); the streaming parser reads the `managed-ids` property into `DavItem.managed_ids`.
 - Client-side iCalendar validation for CalDAV writes (`ValidationLevel`, default `Structural`). CardDAV vCard writes are sent verbatim — no client-side vCard validation.
@@ -678,6 +679,7 @@ async fn main() -> Result<()> {
             .await?;
         println!("conditional PUT returned {}", status.status());
     }
+
     Ok(())
 }
 ```
@@ -692,6 +694,43 @@ Provider quirks (outbox `POST`): SabreDAV 4.7.1 answers a well-formed
 whose `request-status` is `2.0;Success` (RFC 6638 §5.2 success family), and
 rejects a malformed (non-iCalendar) body with `400 Bad Request` and a
 `<D:error>` body (verified against the fixture).
+
+### Calendar proxies (RFC 6638 companion)
+
+```rust,no_run
+use fast_dav_rs::webdav::acl::{Ace, AcePrincipal, build_acl_body};
+use fast_dav_rs::webdav::Privilege;
+use fast_dav_rs::{CalDavClient, Result};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let client = CalDavClient::new("https://dav.example.com/", Some("user01"), Some("secret"))?;
+    let principal = client
+        .discover_current_user_principal()
+        .await?
+        .ok_or_else(|| fast_dav_rs::Error::other("no principal returned"))?;
+
+    // Which principals does user01 act as a calendar proxy for?
+    let proxies = client.list_calendar_proxies(&principal).await?;
+    println!("read proxy for: {:?}", proxies.read_for);
+    println!("write proxy for: {:?}", proxies.write_for);
+
+    // Grant a delegate read access on the read proxy group principal.
+    // The delegation wire form is server-dependent — see the
+    // grant/revoke method docs before relying on it.
+    let body = build_acl_body(&[Ace {
+        principal: AcePrincipal::Href("/principals/users/bob/".into()),
+        grant: vec![Privilege::Read],
+        deny: Vec::new(),
+        protected: false,
+    }])?;
+    client
+        .acl("principals/users/user01/calendar-proxy-read/", &body)
+        .await?;
+
+    Ok(())
+}
+```
 
 ### CardDAV contact CRUD
 
@@ -848,6 +887,7 @@ Feature coverage per fixture — every ✅ cites the e2e test that asserts it
 | WebDAV-Sync (RFC 6578) | ✅ | ✅ | ✅ | — |
 | LOCK (RFC 4918 class 2) | ✅ | ❌ | ◐ | — |
 | Scheduling (RFC 6638) | ✅ | — | — | — |
+| Calendar proxies (RFC 6638 companion) | — | — | — | — |
 | `calendar-timezone` (RFC 4791 §5.2.2) | — | ✅ | ✅ | — |
 | Managed attachments (RFC 8607) | — | ❌ | — | — |
 | Compression | ✅ | — | — | — |
