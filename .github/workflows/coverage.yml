@@ -22,6 +22,12 @@ concurrency:
 jobs:
   coverage-and-analysis:
     name: Coverage (Codecov + SonarCloud)
+    # Dependabot PR runs cannot read repo secrets (CODECOV_TOKEN /
+    # SONAR_TOKEN), so the Codecov upload fails with "Token required
+    # because branch is protected". Skip the job for Dependabot PRs:
+    # the bumps are Cargo.lock-only and every real check (tests, e2e,
+    # MSRV, semver, audit) runs in the CI workflow.
+    if: github.actor != 'dependabot[bot]'
     # ci-base ships llvm-tools-preview, cargo-llvm-cov and cargo-nextest plus
     # an instrumented (-Cinstrument-coverage) dependency build in
     # /opt/warm-target, so only the crate itself recompiles with coverage.
@@ -61,7 +67,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report-type: test_results
-          files: target/nextest/junit.xml
+          files: target/nextest/ci/junit.xml
 
       - name: SonarCloud analysis
         uses: SonarSource/sonarqube-scan-action@v8.3.0

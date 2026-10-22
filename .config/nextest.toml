@@ -1,2 +1,6 @@
+# nextest configuration — https://nexte.st/docs/configuration/
 [profile.ci.junit]
-path = "target/nextest/junit.xml"
+# Relative to the profile's store directory (target/nextest/ci/),
+# so the report is written to target/nextest/ci/junit.xml, which is
+# the path uploaded by the coverage workflow.
+path = "junit.xml"
