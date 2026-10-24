@@ -117,6 +117,10 @@ pub struct AddressBookInfo {
     pub etag: Option<String>,
     pub sync_token: Option<String>,
     pub supported_address_data: Vec<String>,
+    /// Raw capture of every property the server returned for this
+    /// address book (vendor namespaces included) — see
+    /// [`crate::RawProperty`].
+    pub properties: Vec<crate::RawProperty>,
 }
 
 /// Address object (vCard) returned by a `REPORT`.
