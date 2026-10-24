@@ -71,15 +71,24 @@ fn strip_userinfo(uri: &Uri) -> String {
     clean
 }
 
-/// Shared implementation behind [`discover_caldav`] / [`discover_carddav`]:
-/// probe `{base}/.well-known/{service}` and resolve the service URL from the
-/// redirect chain.
-async fn discover_well_known(
+/// Shared implementation behind [`discover_caldav`] / [`discover_carddav`]
+/// (and the `srv` feature's `discover_*_srv`): probe
+/// `{probe_target}/.well-known/{service}` and resolve the service URL from
+/// the redirect chain.
+///
+/// `probe_target` is either a root-anchored path (relative to the client's
+/// base, the plain flow) or an absolute URL (the SRV flow, where the probe
+/// targets the SRV-resolved authority). `fallback_base` is what a `404` (or
+/// a success answered directly on the probe URI) returns: the client's base
+/// URL in the plain flow, the SRV-resolved candidate base in the SRV flow.
+pub(crate) async fn discover_well_known(
     client: &WebDavClient,
+    probe_target: &str,
+    fallback_base: &str,
     service: &str,
     operation: Operation,
 ) -> Result<String> {
-    let path = format!("/.well-known/{service}");
+    let probe_uri = client.build_uri(probe_target)?;
     let mut headers = HeaderMap::new();
     headers.insert("Depth", header::HeaderValue::from_static("0"));
     headers.insert(
@@ -90,7 +99,7 @@ async fn discover_well_known(
     let (final_uri, resp) = client
         .build_and_send(
             Method::from_bytes(b"PROPFIND")?,
-            &path,
+            probe_target,
             headers,
             Some(Bytes::from_static(PROBE_BODY.as_bytes())),
             None,
@@ -101,7 +110,7 @@ async fn discover_well_known(
     if status == StatusCode::NOT_FOUND {
         // RFC 6764 §6: a 404 on the initial "context path" means the server
         // does not advertise the service there — fall back to the base URL.
-        return Ok(client.base().to_string());
+        return Ok(fallback_base.to_string());
     }
     if !status.is_success() {
         if status.is_redirection() {
@@ -111,16 +120,16 @@ async fn discover_well_known(
             // unresolvable `Location`, or an https→http downgrade.
             return Err(Error::other(format!(
                 "discovery probe received redirect status {status} that was not followed \
-                 (is follow_redirects disabled?); the {path} service URL cannot be resolved"
+                 (is follow_redirects disabled?); the {probe_target} service URL cannot be resolved"
             )));
         }
         return Err(Error::UnexpectedStatus { operation, status });
     }
-    if final_uri.path() == path {
-        // Success served directly on the .well-known URI, without a redirect.
+    if final_uri == probe_uri {
+        // Success served directly on the probe URI, without a redirect.
         // Per RFC 5785 §1.1 the actual service endpoint must not live there,
-        // so the base URL is returned unchanged.
-        Ok(client.base().to_string())
+        // so the fallback base is returned unchanged.
+        Ok(fallback_base.to_string())
     } else {
         // Redirects were followed by the pipeline: the final request URL is
         // the discovered service URL. Redirect hops are server-controlled:
@@ -184,7 +193,14 @@ async fn discover_well_known(
 /// # }
 /// ```
 pub async fn discover_caldav(client: &WebDavClient) -> Result<String> {
-    discover_well_known(client, "caldav", Operation::DiscoverWellKnownCaldav).await
+    discover_well_known(
+        client,
+        "/.well-known/caldav",
+        &client.base_url_string(),
+        "caldav",
+        Operation::DiscoverWellKnownCaldav,
+    )
+    .await
 }
 
 /// Discover the CardDAV service "context path" for the client's base URL
@@ -214,5 +230,12 @@ pub async fn discover_caldav(client: &WebDavClient) -> Result<String> {
 /// # }
 /// ```
 pub async fn discover_carddav(client: &WebDavClient) -> Result<String> {
-    discover_well_known(client, "carddav", Operation::DiscoverWellKnownCarddav).await
+    discover_well_known(
+        client,
+        "/.well-known/carddav",
+        &client.base_url_string(),
+        "carddav",
+        Operation::DiscoverWellKnownCarddav,
+    )
+    .await
 }
