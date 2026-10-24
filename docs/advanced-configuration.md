@@ -203,12 +203,7 @@ except a 3xx that could not be followed (redirect following disabled, unresolvab
 credentials are attached to the probe and stripped
 automatically on cross-origin redirect hops, and the discovered service URL is returned
 without userinfo (redirect targets are server-controlled; see "Base-URL credentials are
-rejected"). RFC 6764's DNS-based discovery steps are deliberately out of scope: SRV
-record lookup (§3) and TXT record lookup (§6) are excluded to keep the dependency tree
-lean (no DNS resolver crate). Supply the base URL the DNS records would have resolved
-to — the `.well-known` probe above covers the RFC 6764 §5 step and implements the §6
-base-URL fallback (a `404` returns the base URL). DNS SRV/TXT record lookup is not
-implemented:
+rejected").
 
 ```rust
 use fast_dav_rs::{WebDavClient, discover_caldav};
@@ -221,6 +216,43 @@ let service_url = discover_caldav(&client).await?;
 Ok(())
 }
 ```
+
+### DNS SRV/TXT discovery (opt-in `srv` feature)
+
+DNS SRV/TXT lookup (RFC 6764 §3/§6) ships behind the **opt-in `srv` cargo
+feature** — default builds stay DNS-free (no resolver crate in the dependency
+tree). `discover_caldav_srv(&client, domain)` / `discover_carddav_srv(&client,
+domain)` resolve, in order: the TLS SRV record (`_caldavs._tcp.{domain}`, then
+`_caldav._tcp.{domain}` unless the client sets `require_https(true)`, which
+skips plain-http records entirely), the TXT `path=` hint on the same owner
+name, then the `.well-known` probe against the resolved authority, falling
+back to the SRV+TXT candidate base on `404` (§6). When no record exists — or
+the DNS lookup fails — the plain `.well-known` flow on the client's base URL
+runs unchanged (graceful degradation); when a record IS found, its URL is
+authoritative and probe failures propagate as real errors. Record selection:
+lowest priority wins, highest weight first among ties. The probe follows the
+crate's credential invariant: credentials are only ever sent to the client's
+base origin, so a cross-origin SRV authority is probed unauthenticated.
+
+Inject a custom resolver with `.srv_resolver(Arc<dyn SrvResolver>)` — the
+default is a `hickory-resolver` stub resolver built from the system
+configuration (once per process); tests mock DNS through the same trait:
+
+```rust
+use fast_dav_rs::{WebDavClient, discover_caldav_srv};
+
+async fn example() -> fast_dav_rs::Result<()> {
+let client = WebDavClient::builder("https://dav.example.com/")
+    .basic_auth("user", "pass")
+    .build()?;
+// `domain` comes from user input and may differ from the base URL's host.
+let service_url = discover_caldav_srv(&client, "example.com").await?;
+Ok(())
+}
+```
+
+The plain `.well-known` flow above remains the §5 step for callers that
+already know their base URL — no caller gains an implicit DNS hop.
 
 ### Retry & backoff
 
