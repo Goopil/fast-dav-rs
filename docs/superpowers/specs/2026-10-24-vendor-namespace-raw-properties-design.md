@@ -70,8 +70,11 @@ pub struct RawProperty {
   order, duplicates across propstats, collision case (true ns preserved,
   typed fields unpolluted), undeclared-namespace tolerance, self-closing
   empty value, caps.
-- e2e: PROPFIND `allprop` on SabreDAV (emits sabre-namespaced props) +
-  provider-A smoke assertion.
+- e2e: PROPFIND `allprop` on SabreDAV (emits sabre-namespaced props,
+  CalendarServer `getctag`, Apple `calendar-order`). The provider-A tier
+  stays credential-free by design (unauthenticated shape recording), so
+  vendor-property inventory on provider A is done manually with real
+  credentials — an unauthenticated PROPFIND there would only 401.
 - All existing tests must stay green (purely additive change).
 
 ## Docs
