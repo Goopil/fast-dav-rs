@@ -641,6 +641,7 @@ pub struct WebDavClient {
     retry_backoff_cap: Duration,
     /// Custom DNS resolver for SRV/TXT service discovery (the `srv`
     /// feature); `None` = the hickory default (system configuration).
+    #[cfg_attr(not(feature = "srv"), allow(dead_code))]
     srv_resolver: Option<Arc<dyn SrvResolver>>,
 }
 
@@ -768,11 +769,13 @@ impl WebDavClient {
     }
 
     /// The configured custom SRV resolver, if any.
+    #[cfg_attr(not(feature = "srv"), allow(dead_code))]
     pub(crate) fn srv_resolver(&self) -> Option<&Arc<dyn SrvResolver>> {
         self.srv_resolver.as_ref()
     }
 
     /// Whether the client enforces `https://` (builder `require_https(true)`).
+    #[cfg_attr(not(feature = "srv"), allow(dead_code))]
     pub(crate) fn require_https(&self) -> bool {
         self.require_https
     }
