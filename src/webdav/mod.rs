@@ -29,8 +29,7 @@ pub use types::CalendarDataLimits;
 pub use types::{
     AddressQueryOptions, BatchItem, DavCapabilities, DavCompliance, DavItem, DavItemCommon, Depth,
     LockInfo, LockScope, Prefer, Privilege, PropStat, RawProperty, SyncCapability, SyncLevel,
-    WebDavError,
-    parse_dav_header,
+    WebDavError, parse_dav_header,
 };
 pub use xml::{
     MkCalendarProps, build_mkcalendar_body, build_propfind_allprop, build_propfind_propname,
