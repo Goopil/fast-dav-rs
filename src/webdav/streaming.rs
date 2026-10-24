@@ -1,6 +1,8 @@
 use crate::common::compression::ContentEncoding;
 use crate::webdav::client::{normalize_etag, normalize_sync_token};
-use crate::webdav::types::{DavItemCommon, Depth, LockInfo, LockScope, PropStat, WebDavError};
+use crate::webdav::types::{
+    DavItemCommon, Depth, LockInfo, LockScope, PropStat, RawProperty, WebDavError,
+};
 use crate::{Error, Result};
 use quick_xml::escape::{EscapeError, unescape};
 use std::time::Duration;
@@ -269,6 +271,11 @@ pub const STREAM_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// `calendar-data` / `address-data` / `calendar-timezone` payloads). Matches the
 /// aggregate [`MAX_DECOMPRESSED_SIZE`] cap enforced on response bodies.
 const MAX_ITEM_TEXT_BYTES: usize = MAX_DECOMPRESSED_SIZE as usize;
+
+/// Upper bound on raw properties captured per `<D:response>` item
+/// (defensive: no real collection report comes anywhere near this; bounds
+/// memory on hostile bodies).
+const MAX_RAW_PROPERTIES: usize = 1024;
 
 /// Append `text` to `target` unless that would push it past `limit`; aborts
 /// with [`Error::BodyTooLarge`] (leaving `target` unchanged) instead of
@@ -703,6 +710,9 @@ pub(crate) struct MultistatusParser<C> {
     text_buf: String,
     common: CommonParser,
     ns: NsScopes,
+    /// In-progress raw property capture; `Some` while inside a property
+    /// element's subtree.
+    raw_prop: Option<RawProperty>,
     sink: C,
 }
 
@@ -715,6 +725,7 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             text_buf: String::new(),
             common: CommonParser::new(),
             ns: NsScopes::new(),
+            raw_prop: None,
             sink,
         }
     }
@@ -883,6 +894,32 @@ impl<C: ItemConsumer> MultistatusParser<C> {
             self.current.current_user_privileges.push(privilege);
         }
 
+        // Raw property capture: every direct child of <D:prop> becomes a
+        // RawProperty (resolved namespace + local name + flattened text),
+        // including properties that also map to typed fields — typed
+        // fields are projections, the raw list stays stable across crate
+        // versions. Nested elements only deepen the current capture.
+        if self.raw_prop.is_none()
+            && self.stack.len() >= 4
+            && self.stack[self.stack.len() - 4] == ElementName::Response
+            && self.stack[self.stack.len() - 3] == ElementName::Propstat
+            && self.stack[self.stack.len() - 2] == ElementName::Prop
+            && self.common.current.properties.len() < MAX_RAW_PROPERTIES
+        {
+            // The original (pre-rewrite) element name: the true local
+            // name is recorded even when ns_qualified_name rewrote a
+            // foreign colliding name.
+            let name = binding.as_ref();
+            self.raw_prop = Some(RawProperty {
+                namespace: self
+                    .ns
+                    .resolve(name)
+                    .map(|ns| String::from_utf8_lossy(ns).into_owned()),
+                name: String::from_utf8_lossy(local_name(name)).into_owned(),
+                value: String::new(),
+            });
+        }
+
         Ok(())
     }
 
@@ -915,6 +952,21 @@ impl<C: ItemConsumer> MultistatusParser<C> {
                 let finished = std::mem::take(&mut self.current);
                 self.sink.consume(finished)?;
             }
+            // A raw property completes when its own element closes, i.e.
+            // the stack is back to [Response, Propstat, Prop].
+            if path_ends_with(
+                &self.stack,
+                &[
+                    ElementName::Response,
+                    ElementName::Propstat,
+                    ElementName::Prop,
+                ],
+            ) {
+                if let Some(mut capture) = self.raw_prop.take() {
+                    capture.value = capture.value.trim().to_string();
+                    self.common.current.properties.push(capture);
+                }
+            }
         }
         Ok(())
     }
@@ -944,6 +996,13 @@ impl<C: ItemConsumer> MultistatusParser<C> {
     fn handle_text(&mut self, text: String) -> Result<()> {
         if text.is_empty() {
             return Ok(());
+        }
+
+        // Flatten every text chunk into the in-progress raw property
+        // (entities/CDATA arrive through the same buffer); typed
+        // extraction below continues unchanged.
+        if let Some(capture) = self.raw_prop.as_mut() {
+            append_capped(&mut capture.value, &text, MAX_ITEM_TEXT_BYTES)?;
         }
 
         self.common.on_text(&text);
