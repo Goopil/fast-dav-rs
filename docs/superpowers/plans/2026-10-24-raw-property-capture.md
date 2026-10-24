@@ -33,7 +33,7 @@
 **Interfaces:**
 - Produces: `pub struct RawProperty { pub namespace: Option<String>, pub name: String, pub value: String }` (Debug, Clone, Default, PartialEq, `#[non_exhaustive]`), exported as `fast_dav_rs::webdav::RawProperty` and `fast_dav_rs::RawProperty`. `DavItem.properties: Vec<RawProperty>` and `DavItemCommon.properties: Vec<RawProperty>` (both public).
 
-- [ ] **Step 1: Add the `RawProperty` struct in `src/webdav/types.rs`** right after the `PropStat` struct (line 514, before the `WebDavError` doc comment):
+- [x] **Step 1: Add the `RawProperty` struct in `src/webdav/types.rs`** right after the `PropStat` struct (line 514, before the `WebDavError` doc comment):
 
 ```rust
 /// A raw, untyped property captured from a multistatus response.
@@ -73,7 +73,7 @@ pub struct RawProperty {
 }
 ```
 
-- [ ] **Step 2: Add the field to `DavItemCommon`** (line ~940, after `response_status`):
+- [x] **Step 2: Add the field to `DavItemCommon`** (line ~940, after `response_status`):
 
 ```rust
     /// Raw capture of every property element in every propstat, in
@@ -82,26 +82,26 @@ pub struct RawProperty {
     pub properties: Vec<RawProperty>,
 ```
 
-- [ ] **Step 3: Add the same field to `DavItem`** (after its `response_status` field — same doc comment) and to `DavItem::new()`:
+- [x] **Step 3: Add the same field to `DavItem`** (after its `response_status` field — same doc comment) and to `DavItem::new()`:
 
 ```rust
             properties: Vec::new(),
 ```
 
-- [ ] **Step 4: Extend the `apply_common_fields!` macro** (add after the `response_status` line):
+- [x] **Step 4: Extend the `apply_common_fields!` macro** (add after the `response_status` line):
 
 ```rust
         $self.properties = $common.properties;
 ```
 
-- [ ] **Step 5: Re-export.** In `src/webdav/mod.rs` add `RawProperty` to the `pub use types::{…}` list (alphabetical: after `Privilege`, before `PropStat`). In `src/lib.rs` add `RawProperty` to the `pub use webdav::{…}` list the same way.
+- [x] **Step 5: Re-export.** In `src/webdav/mod.rs` add `RawProperty` to the `pub use types::{…}` list (alphabetical: after `Privilege`, before `PropStat`). In `src/lib.rs` add `RawProperty` to the `pub use webdav::{…}` list the same way.
 
-- [ ] **Step 6: Verify it compiles + doctest passes**
+- [x] **Step 6: Verify it compiles + doctest passes**
 
 Run: `cargo build --all-features && cargo test --doc --all-features RawProperty`
 Expected: build OK; the `RawProperty` doctest passes.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/webdav/types.rs src/webdav/mod.rs src/lib.rs
@@ -121,7 +121,7 @@ git commit -m "feat(webdav): Add RawProperty type for raw property capture"
 - Consumes: `RawProperty` (Task 1), `MultistatusParser.raw_prop` state, `append_capped` (existing, streaming.rs), `path_ends_with` (existing), `local_name` (existing).
 - Produces: `DavItem.properties` populated for every parsed multistatus (sync + streaming paths — both share `dispatch_event`). `const MAX_RAW_PROPERTIES: usize = 1024;`
 
-- [ ] **Step 1: Write the failing tests** — create `tests/unit/webdav/raw_property_tests.rs`:
+- [x] **Step 1: Write the failing tests** — create `tests/unit/webdav/raw_property_tests.rs`:
 
 ```rust
 //! Raw property capture (universal vendor-namespace support): every
@@ -330,12 +330,12 @@ Register the module in `tests/unit/webdav/mod.rs` (alphabetical, after `proxy_pa
 pub mod raw_property_tests;
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo nextest run --all-features --test unit_tests raw_property`
 Expected: FAIL — `item.properties` is empty (capture not implemented), struct-literal field count mismatches compile only after Task 1 (already merged).
 
-- [ ] **Step 3: Implement the capture in `src/webdav/streaming.rs`.**
+- [x] **Step 3: Implement the capture in `src/webdav/streaming.rs`.**
 
 3a. Near `MAX_ITEM_TEXT_BYTES` (line ~271):
 
@@ -418,17 +418,17 @@ and in `MultistatusParser::new()`: `raw_prop: None,`.
             }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo nextest run --all-features --test unit_tests raw_property`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Verify no regression in the whole unit suite**
+- [x] **Step 5: Verify no regression in the whole unit suite**
 
 Run: `cargo nextest run --all-features --locked --test unit_tests`
 Expected: all PASS (existing streaming/foreign-ns tests unchanged).
 
-- [ ] **Step 6: Lint + format, then commit**
+- [x] **Step 6: Lint + format, then commit**
 
 Run: `cargo fmt && cargo clippy --all-targets --all-features -- -D warnings`
 
@@ -450,7 +450,7 @@ git commit -m "feat(webdav): Capture raw properties in multistatus parsing"
 - Consumes: `DavItem.properties` (Task 2), `RawProperty` (Task 1).
 - Produces: `CalendarInfo.properties: Vec<RawProperty>`, `AddressBookInfo.properties: Vec<RawProperty>` (public, `#[non_exhaustive]` structs — additive).
 
-- [ ] **Step 1: Write the failing tests.** Append to `tests/unit/caldav/client_tests.rs`:
+- [x] **Step 1: Write the failing tests.** Append to `tests/unit/caldav/client_tests.rs`:
 
 ```rust
 #[test]
@@ -487,11 +487,11 @@ fn map_addressbook_list_passes_raw_properties_through() {
 }
 ```
 
-- [ ] **Step 2: Run to verify failure** (compile error: no field `properties` on `CalendarInfo`/`AddressBookInfo`).
+- [x] **Step 2: Run to verify failure** (compile error: no field `properties` on `CalendarInfo`/`AddressBookInfo`).
 
 Run: `cargo nextest run --all-features --test unit_tests passes_raw_properties`
 
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
 
 `src/caldav/types.rs`, in `CalendarInfo` (after `privileges`):
 
@@ -523,12 +523,12 @@ Run: `cargo nextest run --all-features --test unit_tests passes_raw_properties`
                 properties: item.properties,
 ```
 
-- [ ] **Step 4: Run to verify pass + no regression**
+- [x] **Step 4: Run to verify pass + no regression**
 
 Run: `cargo nextest run --all-features --locked --test unit_tests`
 Expected: all PASS.
 
-- [ ] **Step 5: Lint + format, then commit**
+- [x] **Step 5: Lint + format, then commit**
 
 Run: `cargo fmt && cargo clippy --all-targets --all-features -- -D warnings`
 
@@ -548,7 +548,7 @@ git commit -m "feat(caldav,carddav): Expose raw properties on collection info"
 **Interfaces:**
 - Consumes: `WebDavClient::propfind(path, depth, xml_body)` (src/webdav/client.rs:1701), `build_propfind_allprop()` (src/webdav/xml.rs:317), `Depth::One`, `RawProperty` (Task 1).
 
-- [ ] **Step 1: Add the SabreDAV e2e test** to `tests/e2e/sabredav/webdav/discovery_tests.rs`:
+- [x] **Step 1: Add the SabreDAV e2e test** to `tests/e2e/sabredav/webdav/discovery_tests.rs`:
 
 ```rust
 /// Raw property capture (universal vendor-namespace support): an allprop
@@ -595,7 +595,7 @@ async fn test_allprop_propfind_captures_raw_properties() {
 
 (If the fixture's calendar path differs, reuse the path constant the file's other tests use; `/calendars/test/` is the SabreDAV fixture default.)
 
-- [ ] **Step 2: Add the provider-A smoke** to `tests/e2e/provider_a/mod.rs`, next to the existing discovery smoke (same env gating as the file's other tests):
+- [x] **Step 2: Add the provider-A smoke** to `tests/e2e/provider_a/mod.rs`, next to the existing discovery smoke (same env gating as the file's other tests):
 
 ```rust
 /// Raw capture smoke: an allprop PROPFIND must return at least one raw
@@ -627,12 +627,12 @@ async fn test_allprop_captures_raw_properties() {
 
 (Match the file's existing client/path helpers — replace `provider_a_client()`/`provider_a_calendar_path()` with the helpers already defined in `tests/e2e/provider_a/mod.rs`; do not invent new auth plumbing.)
 
-- [ ] **Step 3: Run**
+- [x] **Step 3: Run**
 
 Run: `./radicale-test/setup.sh >/dev/null 2>&1; ./sabredav-test/setup.sh >/dev/null 2>&1; cargo test --test e2e_tests test_allprop_propfind_captures_raw_properties`
 Expected: PASS against the live SabreDAV fixture. (Provider A smoke runs only with `PROVIDER_A_DAV_URL` set: `cargo test --test e2e_provider_a_smoke -- --ignored`.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/e2e/sabredav/webdav/discovery_tests.rs tests/e2e/provider_a/mod.rs
@@ -648,7 +648,7 @@ git commit -m "test(e2e): Assert raw property capture on live fixtures"
 - Modify: `docs/advanced-configuration.md` (new "Vendor namespace properties" section)
 - Modify: `CHANGELOG.md` (new `## [Unreleased]` section above `## [0.19.0]`)
 
-- [ ] **Step 1: README.** Add a bullet to the feature list and a short example (keep it 10-15 lines; use `no_run` if it needs a live server, mirroring the style of neighboring examples):
+- [x] **Step 1: README.** Add a bullet to the feature list and a short example (keep it 10-15 lines; use `no_run` if it needs a live server, mirroring the style of neighboring examples):
 
 ```rust
 // Every property — vendor namespaces included — is captured raw:
@@ -657,7 +657,7 @@ for prop in &calendar.properties {
 }
 ```
 
-- [ ] **Step 2: `docs/advanced-configuration.md`.** Add a "Vendor namespace properties" section after the SRV/TXT exclusion notes (~line 203-211):
+- [x] **Step 2: `docs/advanced-configuration.md`.** Add a "Vendor namespace properties" section after the SRV/TXT exclusion notes (~line 203-211):
 
 ```markdown
 ## Vendor namespace properties
@@ -691,7 +691,7 @@ docs, Nextcloud `apps/dav/lib/Connector/Sabre/`, and
 `davx5.com/tested-with` (which lists servers with vendor extensions).
 ```
 
-- [ ] **Step 3: CHANGELOG.** New section:
+- [x] **Step 3: CHANGELOG.** New section:
 
 ```markdown
 ## [Unreleased]
@@ -705,7 +705,7 @@ docs, Nextcloud `apps/dav/lib/Connector/Sabre/`, and
   Always-on; typed fields are unchanged projections. Read-side only.
 ```
 
-- [ ] **Step 4: Verify doctests + commit**
+- [x] **Step 4: Verify doctests + commit**
 
 Run: `cargo test --doc --all-features`
 
@@ -720,7 +720,7 @@ git commit -m "docs: Document raw vendor property capture"
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: All gates**
+- [x] **Step 1: All gates**
 
 ```bash
 cargo fmt --all --check
@@ -731,17 +731,17 @@ cargo build --examples --all-features --locked
 ```
 Expected: all green.
 
-- [ ] **Step 2: Semver check** (additive change must be clean)
+- [x] **Step 2: Semver check** (additive change must be clean)
 
 Run: `cargo semver-checks 2>&1 | tail -5`
 Expected: pass (new public struct + new fields on `#[non_exhaustive]` structs = minor-compatible).
 
-- [ ] **Step 3: No stray TODOs**
+- [x] **Step 3: No stray TODOs**
 
 Run: `grep -rn "TODO\|FIXME" src/ tests/unit/webdav/raw_property_tests.rs | grep -v target`
 Expected: no new matches introduced by this change.
 
-- [ ] **Step 4: Push + open PR** (title: `feat: Universal raw vendor-namespace property capture`; body references the spec doc; note 0.20.0 target)
+- [x] **Step 4: Push + open PR** (title: `feat: Universal raw vendor-namespace property capture`; body references the spec doc; note 0.20.0 target)
 
 ```bash
 git push -u origin feat/raw-property-capture
