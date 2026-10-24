@@ -5,6 +5,7 @@ pub mod client;
 pub mod discovery;
 pub(crate) mod multiget;
 pub mod retry;
+pub mod srv;
 pub mod streaming;
 pub mod sync;
 pub mod types;
@@ -20,6 +21,7 @@ pub use client::{
     preference_applied_from_headers, schedule_tag_from_headers,
 };
 pub use discovery::{discover_caldav, discover_carddav};
+pub use srv::{SrvRecord, SrvResolver};
 pub use streaming::{
     DavStreamEvent, ItemStream, STREAM_READ_IDLE_TIMEOUT, multistatus_events,
     multistatus_events_with_timeout, parse_error_body, parse_lock_discovery_bytes,

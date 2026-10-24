@@ -10,6 +10,8 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, sleep, timeout};
 use zeroize::Zeroize;
 
+use crate::webdav::srv::SrvResolver;
+
 use crate::common::compression::{
     ContentEncoding, add_accept_encoding, add_content_encoding, compress_payload, decompress_body,
     detect_encodings, detect_request_compression_preference,
@@ -637,6 +639,9 @@ pub struct WebDavClient {
     /// Upper bound for the exponential-backoff delay (shrinkable via the
     /// test seam).
     retry_backoff_cap: Duration,
+    /// Custom DNS resolver for SRV/TXT service discovery (the `srv`
+    /// feature); `None` = the hickory default (system configuration).
+    srv_resolver: Option<Arc<dyn SrvResolver>>,
 }
 
 impl WebDavClient {
@@ -701,6 +706,7 @@ impl WebDavClient {
         retry_all: bool,
         retry_initial_backoff: Duration,
         retry_backoff_cap: Duration,
+        srv_resolver: Option<Arc<dyn SrvResolver>>,
     ) -> Self {
         Self {
             base,
@@ -720,6 +726,7 @@ impl WebDavClient {
             retry_all,
             retry_initial_backoff,
             retry_backoff_cap,
+            srv_resolver,
         }
     }
 
@@ -753,6 +760,21 @@ impl WebDavClient {
     /// Get the base URI this client was constructed with.
     pub(crate) fn base(&self) -> &Uri {
         &self.base
+    }
+
+    /// The base URL rendered as a string (the plain-discovery fallback).
+    pub(crate) fn base_url_string(&self) -> String {
+        self.base.to_string()
+    }
+
+    /// The configured custom SRV resolver, if any.
+    pub(crate) fn srv_resolver(&self) -> Option<&Arc<dyn SrvResolver>> {
+        self.srv_resolver.as_ref()
+    }
+
+    /// Whether the client enforces `https://` (builder `require_https(true)`).
+    pub(crate) fn require_https(&self) -> bool {
+        self.require_https
     }
 
     /// Configure the request compression strategy.

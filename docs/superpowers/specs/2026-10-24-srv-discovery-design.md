@@ -39,7 +39,14 @@ hickory-resolver = { version = "…", optional = true, default-features = false,
 
 Default tree unchanged (`cargo tree` shows no hickory without the feature).
 
-## Public API (all `#[cfg(feature = "srv")]`)
+## Public API
+
+**Adjustment (implementation):** `SrvRecord`, `SrvResolver` and the builder
+option compile always (pure std, zero dependency cost) so `from_parts` and
+the builder carry no `#[cfg]` scatter; only the hickory default impl and the
+`discover_*_srv` functions are `#[cfg(feature = "srv")]`. The Cargo sketch
+below uses hickory's default features (`system-config` + `tokio`), which
+`Resolver::builder_tokio()` requires.
 
 ```rust
 /// Injectable DNS resolver for SRV/TXT service discovery.
