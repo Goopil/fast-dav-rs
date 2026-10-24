@@ -54,6 +54,10 @@ pub struct CalendarInfo {
     /// requests the property, but the set is empty when the server omitted
     /// it — the absence of a privilege is not proof of denial.
     pub privileges: Vec<Privilege>,
+    /// Raw capture of every property the server returned for this
+    /// collection (vendor namespaces included) — see
+    /// [`crate::RawProperty`].
+    pub properties: Vec<crate::RawProperty>,
 }
 
 /// Calendar object (event or task) returned by a `REPORT`.

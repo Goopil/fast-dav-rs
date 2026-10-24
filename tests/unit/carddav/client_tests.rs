@@ -1612,3 +1612,18 @@ async fn addressbook_query_options_deduplicates_props_stably() {
         "first-occurrence order must be preserved: {req}"
     );
 }
+
+#[test]
+fn map_addressbook_list_passes_raw_properties_through() {
+    let mut item = fast_dav_rs::carddav::types::DavItem::new();
+    item.is_addressbook = true;
+    item.properties.push(fast_dav_rs::RawProperty {
+        namespace: Some("http://nextcloud.com/ns".to_string()),
+        name: "fileid".to_string(),
+        value: "42".to_string(),
+    });
+    let infos = fast_dav_rs::carddav::client::map_addressbook_list(vec![item]);
+    assert_eq!(infos.len(), 1);
+    assert_eq!(infos[0].properties.len(), 1);
+    assert_eq!(infos[0].properties[0].name, "fileid");
+}

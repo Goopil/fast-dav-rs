@@ -1541,6 +1541,7 @@ pub fn map_calendar_list(mut items: Vec<DavItem>) -> Vec<CalendarInfo> {
                 supported_calendar_data: std::mem::take(&mut item.supported_calendar_data),
                 max_attendees_per_instance: item.max_attendees_per_instance,
                 privileges: std::mem::take(&mut item.current_user_privileges),
+                properties: std::mem::take(&mut item.properties),
             });
         }
     }

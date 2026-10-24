@@ -86,6 +86,7 @@ features, and major releases introduce breaking changes when needed.
 - ETag helpers and conditional methods for safe updates, with a typed 412/428 classifier (`conditional_write_error`) for conditional-write responses.
 - `Depth`-aware COPY/MOVE (`copy_with_depth`, `move_with_depth`) and an `If` header builder (`if_header_for_lock_token`) for lock-token-guarded writes.
 - Typed current-user privileges (`current_user_privileges`, RFC 3744 §5.4), also surfaced per calendar on `CalendarInfo.privileges` with the aggregate `all` mapped to `Privilege::All`.
+- Universal raw property capture: every property of every multistatus response — vendor namespaces included (`http://calendarserver.org/ns/`, `http://apple.com/ns/ical/`, Nextcloud, …) — is recorded as a `RawProperty { namespace, name, value }` on `DavItem` and passed through to `CalendarInfo.properties` / `AddressBookInfo.properties`. Always on; typed fields remain projections.
 
 ### Advanced Features
 
@@ -258,6 +259,41 @@ for privilege in &privileges {
 Ok(())
 }
 ```
+
+### Raw vendor-namespace properties
+
+Servers attach vendor-specific properties to collections and resources —
+CalendarServer (`getctag`, `me-card`), Apple iCal (`calendar-order`,
+`refreshrate`), Nextcloud (`fileid`), or your provider's own namespace. The
+crate captures **every** property of every multistatus response as a
+`RawProperty { namespace, name, value }` — no configuration, no per-vendor
+code:
+
+```rust
+use fast_dav_rs::CalDavClient;
+
+async fn show_vendor_properties(client: &CalDavClient) -> fast_dav_rs::Result<()> {
+    for calendar in client.list_calendars("calendars/alice/").await? {
+        for prop in &calendar.properties {
+            println!(
+                "{} {} = {}",
+                prop.namespace.as_deref().unwrap_or(""),
+                prop.name,
+                prop.value
+            );
+        }
+    }
+    Ok(())
+}
+```
+
+`value` is the flattened text of the property element (child-element text
+concatenated, entities/CDATA decoded, trimmed). Document order is preserved,
+duplicates are kept, and empty values still record the property's presence.
+Typed fields (`etag`, `calendar_color`, …) remain projections of convenience;
+the raw list is stable across crate versions. See
+[Vendor namespace properties](docs/advanced-configuration.md#vendor-namespace-properties)
+for the full recipe.
 
 ### Conditional writes: typed 412/428, `If` headers, `Depth` on COPY/MOVE
 
