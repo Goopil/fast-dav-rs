@@ -85,7 +85,6 @@ pub(crate) async fn discover_well_known(
     client: &WebDavClient,
     probe_target: &str,
     fallback_base: &str,
-    service: &str,
     operation: Operation,
 ) -> Result<String> {
     let probe_uri = client.build_uri(probe_target)?;
@@ -197,7 +196,6 @@ pub async fn discover_caldav(client: &WebDavClient) -> Result<String> {
         client,
         "/.well-known/caldav",
         &client.base_url_string(),
-        "caldav",
         Operation::DiscoverWellKnownCaldav,
     )
     .await
@@ -234,7 +232,6 @@ pub async fn discover_carddav(client: &WebDavClient) -> Result<String> {
         client,
         "/.well-known/carddav",
         &client.base_url_string(),
-        "carddav",
         Operation::DiscoverWellKnownCarddav,
     )
     .await

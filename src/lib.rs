@@ -53,3 +53,5 @@ pub use webdav::{
     if_header_for_lock_token, normalize_etag, normalize_sync_token,
     preference_applied_from_headers, principal_href_for_acl, schedule_tag_from_headers,
 };
+#[cfg(feature = "srv")]
+pub use webdav::{discover_caldav_srv, discover_carddav_srv};

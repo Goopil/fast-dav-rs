@@ -22,6 +22,8 @@ pub use client::{
 };
 pub use discovery::{discover_caldav, discover_carddav};
 pub use srv::{SrvRecord, SrvResolver};
+#[cfg(feature = "srv")]
+pub use srv::{discover_caldav_srv, discover_carddav_srv};
 pub use streaming::{
     DavStreamEvent, ItemStream, STREAM_READ_IDLE_TIMEOUT, multistatus_events,
     multistatus_events_with_timeout, parse_error_body, parse_lock_discovery_bytes,
