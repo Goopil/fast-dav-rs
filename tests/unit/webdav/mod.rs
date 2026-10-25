@@ -17,6 +17,8 @@ pub mod protocol_tests;
 pub mod proxy_parse_tests;
 pub mod redirect_tests;
 pub mod retry_tests;
+#[cfg(feature = "srv")]
+pub mod srv_discovery_tests;
 pub mod streaming_tests;
 pub mod sync_capability_tests;
 pub mod sync_session_tests;

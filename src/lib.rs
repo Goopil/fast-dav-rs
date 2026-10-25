@@ -46,10 +46,12 @@ pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
     Ace, AcePrincipal, DavCapabilities, DavCompliance, DavStreamEvent, HyperClient, ItemStream,
     LockInfo, LockScope, OAuth2RefreshProvider, Prefer, Privilege, PropStat,
-    RequestCompressionMode, SyncCapability, SyncDelta, SyncEntry, SyncLevel, SyncSession,
-    SyncSnapshot, TokenProvider, WebDavClient, WebDavError, build_acl_body, build_propfind_allprop,
-    build_propfind_propname, build_propfind_props, conditional_write_error,
+    RequestCompressionMode, SrvRecord, SrvResolver, SyncCapability, SyncDelta, SyncEntry,
+    SyncLevel, SyncSession, SyncSnapshot, TokenProvider, WebDavClient, WebDavError, build_acl_body,
+    build_propfind_allprop, build_propfind_propname, build_propfind_props, conditional_write_error,
     data_element_xml_with_limits, discover_caldav, discover_carddav, etag_from_headers,
     if_header_for_lock_token, normalize_etag, normalize_sync_token,
     preference_applied_from_headers, principal_href_for_acl, schedule_tag_from_headers,
 };
+#[cfg(feature = "srv")]
+pub use webdav::{discover_caldav_srv, discover_carddav_srv};
