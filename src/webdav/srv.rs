@@ -79,8 +79,7 @@ mod discover_impls {
             Arc::new(
                 hickory_resolver::Resolver::builder_tokio()
                     .expect("system DNS configuration must be readable")
-                    .build()
-                    .expect("system DNS resolver must build"),
+                    .build(),
             )
         }))
     }
@@ -96,19 +95,17 @@ mod discover_impls {
                     .await
                     .map_err(|e| Error::other(format!("SRV lookup {query} failed: {e}")))?;
                 let mut records = Vec::new();
-                for record in lookup.answers() {
-                    if let hickory_resolver::proto::rr::RData::SRV(srv) = &record.data {
-                        let mut target = srv.target.to_string();
-                        if target.ends_with('.') {
-                            target.pop();
-                        }
-                        records.push(SrvRecord {
-                            target,
-                            port: srv.port,
-                            priority: srv.priority,
-                            weight: srv.weight,
-                        });
+                for srv in lookup.iter() {
+                    let mut target = srv.target().to_string();
+                    if target.ends_with('.') {
+                        target.pop();
                     }
+                    records.push(SrvRecord {
+                        target,
+                        port: srv.port(),
+                        priority: srv.priority(),
+                        weight: srv.weight(),
+                    });
                 }
                 Ok(records)
             })
@@ -124,15 +121,13 @@ mod discover_impls {
                     .await
                     .map_err(|e| Error::other(format!("TXT lookup {query} failed: {e}")))?;
                 let mut strings = Vec::new();
-                for record in lookup.answers() {
-                    if let hickory_resolver::proto::rr::RData::TXT(txt) = &record.data {
-                        let joined: String = txt
-                            .txt_data
-                            .iter()
-                            .map(|s| String::from_utf8_lossy(s))
-                            .collect();
-                        strings.push(joined);
-                    }
+                for txt in lookup.iter() {
+                    let joined: String = txt
+                        .txt_data()
+                        .iter()
+                        .map(|s| String::from_utf8_lossy(s))
+                        .collect();
+                    strings.push(joined);
                 }
                 Ok(strings)
             })

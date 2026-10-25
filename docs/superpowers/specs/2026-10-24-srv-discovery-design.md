@@ -48,6 +48,11 @@ the builder carry no `#[cfg]` scatter; only the hickory default impl and the
 below uses hickory's default features (`system-config` + `tokio`), which
 `Resolver::builder_tokio()` requires.
 
+**MSRV note:** hickory is pinned to the `0.25` line (rust-version 1.71.1) —
+the whole `0.26` line requires rustc 1.88, which would break the crate's
+1.85 MSRV. The typed lookups (`SrvLookup`/`TxtLookup` iterators) and
+`builder_tokio()` API are identical for this crate's usage.
+
 ```rust
 /// Injectable DNS resolver for SRV/TXT service discovery.
 pub trait SrvResolver: Send + Sync {
