@@ -49,7 +49,7 @@ icalendar = { version = "0.17", default-features = false, features = ["parser"] 
 # of criterion (local `cargo bench` unchanged, CodSpeed instruments it in CI);
 # the extra hyper `server` feature powers the in-process DAV fixture (no
 # network).
-codspeed-criterion-compat = { version = "5", features = ["async_tokio"] }
+codspeed-criterion-compat = { version = "6", features = ["async_tokio"] }
 hyper = { version = "1", features = ["server"] }
 
 [[test]]
