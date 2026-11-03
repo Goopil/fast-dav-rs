@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Opt-in `srv` cargo feature: DNS SRV/TXT service discovery (RFC 6764 §3/§6)
+  via `discover_caldav_srv`/`discover_carddav_srv` and the injectable
+  `SrvResolver` trait (hickory-resolver default, builder option
+  `.srv_resolver`). Graceful fallback to the plain `.well-known` flow when
+  DNS yields nothing; strict errors when a found record's probe fails.
+  Default builds remain DNS-free.
+
 ## [0.19.0] - 2026-10-04
 
 ### Added — RFC coverage punch list (#225)

@@ -99,10 +99,14 @@ features, and major releases introduce breaking changes when needed.
   and `calendar-query` data limits via `CalendarDataLimits` (RFC 4791 §9.6.4)
   with the extensible `CalendarQueryOptions` entry point.
 - Streaming send APIs for custom workflows.
-- RFC 6764 `.well-known` service discovery (`discover_caldav`/`discover_carddav`).
-  DNS SRV (§3) and TXT (§6) record lookup are deliberately excluded (lean
-  dependency tree — no DNS resolver); callers supply the base URL, and the
-  `.well-known` probes cover the RFC 6764 §5 step plus the §6 base-URL fallback.
+- RFC 6764 `.well-known` service discovery (`discover_caldav`/`discover_carddav`),
+  plus **opt-in DNS SRV/TXT discovery** (RFC 6764 §3/§6) behind the `srv` cargo
+  feature: `discover_caldav_srv`/`discover_carddav_srv` resolve the SRV records
+  (`_caldavs._tcp` then `_caldav._tcp`, and the CardDAV pair), apply the TXT
+  `path=` hint, then run the same `.well-known` flow — graceful fallback to the
+  plain flow when DNS yields nothing, strict errors when a found record's probe
+  fails. Default builds stay DNS-free (no resolver in the dependency tree);
+  see [Advanced configuration](docs/advanced-configuration.md#dns-srvtxt-discovery-opt-in-srv-feature).
 - Retry with exponential backoff for transient failures (429/503/504) with `Retry-After` support.
 - Optional `tracing` instrumentation behind the `tracing` feature (zero-cost when disabled).
 
@@ -189,12 +193,9 @@ step. The RFC 6764 `.well-known` probes (`discover_caldav` /
 `discover_carddav`) are the fallback for servers that host DAV under a
 context path; some providers answer `.well-known` unreliably.
 
-RFC 6764's DNS-based discovery steps are deliberately not implemented:
-SRV record lookup (§3) and TXT record lookup (§6) are excluded to keep
-the dependency tree lean (no DNS resolver crate). Callers resolve the
-base URL themselves; the `.well-known` probes cover the RFC 6764 §5 step
-and implement the §6 base-URL fallback (`404` on `.well-known` returns
-the base URL).
+RFC 6764's DNS-based SRV/TXT discovery steps (§3/§6) are available as the
+**opt-in `srv` cargo feature** (default builds stay DNS-free); see
+[DNS SRV/TXT discovery](#dns-srvtxt-discovery-opt-in-srv-feature) below.
 
 If authentication succeeds but the principal `PROPFIND` returns `404` (the
 server never answers `401`), discovery fails with `Error::PrincipalNotFound`.
@@ -228,6 +229,35 @@ typed view: `WebDavClient::capabilities` parses the header into
 `CalendarAccess`, `Addressbook`, `ExtendedMkcol`, `CalendarProxy`), with
 `calendarserver-*` vendor tokens and unknown extensions passing through as
 `DavCompliance::Other`.
+
+### DNS SRV/TXT discovery (opt-in `srv` feature)
+
+With the `srv` cargo feature enabled (`cargo add fast-dav-rs --features srv`),
+`discover_caldav_srv`/`discover_carddav_srv` take the **domain** (from user
+input, e.g. the account domain — not necessarily the base URL's host) and
+resolve RFC 6764 §3/§6 in order: SRV record (`_caldavs._tcp.{domain}` TLS
+first, then `_caldav._tcp.{domain}`) → TXT `path=` context → `.well-known`
+probe on the resolved authority → base-URL fallback on `404`. DNS absence —
+or any lookup error — degrades gracefully to the plain `.well-known` flow on
+the client's base URL; a found record makes its URL authoritative (probe
+failures propagate). Default builds compile zero DNS code.
+
+```rust,no_run
+use fast_dav_rs::{WebDavClient, discover_caldav_srv};
+
+# async fn run() -> fast_dav_rs::Result<()> {
+let client = WebDavClient::builder("https://dav.example.com/")
+    .basic_auth("user", "pass")
+    .build()?;
+// Domain from user input — not necessarily the base URL's host.
+let service_url = discover_caldav_srv(&client, "example.com").await?;
+println!("CalDAV service (via SRV) lives at {service_url}");
+# Ok(())
+# }
+```
+
+Plug a custom resolver (or a test mock) with
+`.srv_resolver(Arc<dyn SrvResolver>)`.
 
 ### Current-user privileges (RFC 3744 §5.4)
 

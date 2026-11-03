@@ -22,6 +22,7 @@ use crate::common::dav_warn;
 use crate::common::http::{HyperClient, MaybeProxied};
 use crate::webdav::auth::TokenProvider;
 use crate::webdav::client::{RequestCompressionMode, WebDavClient};
+use crate::webdav::srv::SrvResolver;
 use crate::webdav::types::Prefer;
 use crate::{Error, Result};
 
@@ -74,6 +75,7 @@ pub struct WebDavClientBuilder {
     prefer: Option<Prefer>,
     max_retries: usize,
     retry_all: bool,
+    srv_resolver: Option<Arc<dyn SrvResolver>>,
     hyper_client: Option<HyperClient>,
 }
 
@@ -146,6 +148,7 @@ impl Default for WebDavClientBuilder {
             prefer: None,
             max_retries: 0,
             retry_all: false,
+            srv_resolver: None,
             hyper_client: None,
         }
     }
@@ -424,6 +427,14 @@ impl WebDavClientBuilder {
         self
     }
 
+    /// Set a custom DNS resolver for SRV/TXT service discovery (the `srv`
+    /// feature). When unset, the default hickory resolver (system
+    /// configuration) is used by the `discover_*_srv` functions.
+    pub fn srv_resolver(mut self, resolver: Arc<dyn SrvResolver>) -> Self {
+        self.srv_resolver = Some(resolver);
+        self
+    }
+
     /// Maximum number of retries for **transient failures** (`429`, `503`,
     /// `504`) before the last response is returned as-is. Default: **0**
     /// (retrying disabled — each request is sent exactly once).
@@ -692,6 +703,7 @@ impl WebDavClientBuilder {
             self.retry_all,
             crate::webdav::retry::RETRY_BACKOFF_INITIAL,
             crate::webdav::retry::RETRY_BACKOFF_CAP,
+            self.srv_resolver.take(),
         ))
     }
 }
