@@ -45,7 +45,7 @@ pub use common::compression::{
 pub use webdav::builder::WebDavClientBuilder;
 pub use webdav::{
     Ace, AcePrincipal, DavCapabilities, DavCompliance, DavStreamEvent, HyperClient, ItemStream,
-    LockInfo, LockScope, OAuth2RefreshProvider, Prefer, Privilege, PropStat,
+    LockInfo, LockScope, OAuth2RefreshProvider, Prefer, Privilege, PropStat, RawProperty,
     RequestCompressionMode, SyncCapability, SyncDelta, SyncEntry, SyncLevel, SyncSession,
     SyncSnapshot, TokenProvider, WebDavClient, WebDavError, build_acl_body, build_propfind_allprop,
     build_propfind_propname, build_propfind_props, conditional_write_error,

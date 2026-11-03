@@ -513,6 +513,41 @@ pub struct PropStat {
     pub prop_names: Vec<String>,
 }
 
+/// A raw, untyped property captured from a multistatus response.
+///
+/// Every property element of every `<D:propstat>` is recorded here —
+/// including properties in vendor namespaces the crate has no typed
+/// support for (CalendarServer, Apple iCal, Nextcloud, …) and properties
+/// that also map to typed fields (`etag`, …). Typed fields are
+/// projections of convenience; the raw list is stable across crate
+/// versions and always reflects the wire.
+///
+/// ```
+/// use fast_dav_rs::RawProperty;
+///
+/// let prop = RawProperty {
+///     namespace: Some("http://calendarserver.org/ns/".to_string()),
+///     name: "getctag".to_string(),
+///     value: "3119-117".to_string(),
+/// };
+/// assert_eq!(prop.name, "getctag");
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RawProperty {
+    /// Resolved namespace URI (e.g. `http://calendarserver.org/ns/`).
+    /// `None` when the element's prefix is undeclared in scope — the
+    /// parser's documented tolerance for servers that emit multistatus
+    /// bodies without namespace declarations.
+    pub namespace: Option<String>,
+    /// Local name, prefix stripped (e.g. `getctag`, `calendar-order`).
+    pub name: String,
+    /// Flattened text of the property element and its descendants
+    /// (entity references and CDATA decoded, child-element text
+    /// concatenated), trimmed. Empty for self-closing properties — the
+    /// entry still records the property's presence.
+    pub value: String,
+}
+
 /// Precondition/postcondition error body parsed from a `<D:error>` element
 /// (RFC 4918 §14.12).
 ///
@@ -858,6 +893,10 @@ pub struct DavItem {
     pub last_modified: Option<String>,
     pub propstats: Vec<PropStat>,
     pub response_status: Option<String>,
+    /// Raw capture of every property element in every propstat, in
+    /// document order (duplicates kept, empty values recorded). See
+    /// [`RawProperty`].
+    pub properties: Vec<RawProperty>,
 }
 
 impl Default for DavItem {
@@ -907,6 +946,7 @@ impl DavItem {
             last_modified: None,
             propstats: Vec::new(),
             response_status: None,
+            properties: Vec::new(),
         }
     }
 
@@ -938,6 +978,10 @@ pub struct DavItemCommon {
     /// Response-level `<D:status>` if present (distinct from propstat
     /// status).
     pub response_status: Option<String>,
+    /// Raw capture of every property element in every propstat, in
+    /// document order (duplicates kept, empty values recorded). See
+    /// [`RawProperty`].
+    pub properties: Vec<RawProperty>,
 }
 
 #[macro_export]
@@ -956,6 +1000,7 @@ macro_rules! apply_common_fields {
         $self.last_modified = $common.last_modified;
         $self.propstats = $common.propstats;
         $self.response_status = $common.response_status;
+        $self.properties = $common.properties;
     };
 }
 

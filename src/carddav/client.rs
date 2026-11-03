@@ -987,6 +987,7 @@ pub fn map_addressbook_list(mut items: Vec<DavItem>) -> Vec<AddressBookInfo> {
                 etag: item.etag,
                 sync_token: item.sync_token,
                 supported_address_data: item.supported_address_data,
+                properties: item.properties,
             });
         }
     }
