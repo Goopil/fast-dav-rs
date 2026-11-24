@@ -222,6 +222,54 @@ Ok(())
 }
 ```
 
+### Vendor namespace properties
+
+CalDAV/CardDAV servers attach vendor-specific properties to collections and
+resources — CalendarServer (`http://calendarserver.org/ns/`: `getctag`,
+`me-card`, `push-*`), Apple iCal (`http://apple.com/ns/ical/`:
+`calendar-order`, `refreshrate`, `timezone-id`), Nextcloud
+(`http://nextcloud.com/ns`: `fileid`, …), or your provider's own namespace.
+
+The crate captures **every** property of every multistatus response as a
+`RawProperty { namespace, name, value }` — always on, no configuration:
+
+- `value` is the flattened text of the property element (entities and CDATA
+  decoded, child-element text concatenated, trimmed).
+- Document order is preserved; duplicates are kept; empty values are
+  recorded (a self-closing property still signals presence).
+- Typed fields (`etag`, `displayname`, `calendar_color`, …) remain
+  projections of convenience; the raw list is stable across crate versions.
+- Capture is read-side only. To *write* vendor properties, use the raw-body
+  escape hatches (`proppatch`, `mkcol(Option<&str>)`, `acl`).
+
+The capture is available on every `DavItem` (queries, sync, streaming), and
+passed through to `CalendarInfo.properties` and `AddressBookInfo.properties`
+from `list_calendars`/`list_addressbooks`:
+
+```rust
+use fast_dav_rs::CalDavClient;
+
+async fn example() -> fast_dav_rs::Result<()> {
+let client = CalDavClient::builder("https://cal.example.com/")
+    .basic_auth("user", "pass")
+    .build()?;
+for calendar in client.list_calendars("calendars/user/").await? {
+    for prop in &calendar.properties {
+        println!("{} {} = {}", prop.namespace.as_deref().unwrap_or(""), prop.name, prop.value);
+    }
+}
+Ok(())
+}
+```
+
+To discover what a server exposes, send an allprop PROPFIND
+(`build_propfind_allprop`) and inspect `item.properties`. References for
+known vendor properties: the CalendarServer extension docs
+(`github.com/apple/ccs-calendarserver/doc/Extensions/`), the sabre.io plugin
+docs, the Nextcloud server sources (`apps/dav/lib/Connector/Sabre/`), and
+`davx5.com/tested-with`. Providers without a public property list (e.g.
+Infomaniak) are inventoried empirically with an allprop PROPFIND.
+
 ### Retry & backoff
 
 Transient failures are retried automatically in `send`/`send_stream` once you opt in with

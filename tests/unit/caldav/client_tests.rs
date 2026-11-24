@@ -2328,3 +2328,18 @@ async fn calendar_query_options_rejects_invalid_limit_ranges_before_io() {
         "expected InvalidInput, got: {err:?}"
     );
 }
+
+#[test]
+fn map_calendar_list_passes_raw_properties_through() {
+    let mut item = fast_dav_rs::caldav::types::DavItem::new();
+    item.is_calendar = true;
+    item.properties.push(fast_dav_rs::RawProperty {
+        namespace: Some("http://calendarserver.org/ns/".to_string()),
+        name: "getctag".to_string(),
+        value: "3119-117".to_string(),
+    });
+    let infos = fast_dav_rs::caldav::client::map_calendar_list(vec![item]);
+    assert_eq!(infos.len(), 1);
+    assert_eq!(infos[0].properties.len(), 1);
+    assert_eq!(infos[0].properties[0].name, "getctag");
+}
